@@ -1,0 +1,102 @@
+name: spike-origami-on-runner
+
+# One-off: can a GHA macos-15 runner install Origami Studio, open a pattern,
+# and produce its own render? If yes → Path B (live render + parser sanity via
+# inspecting Origami elements) unlocks. If no → we stay on cached references.
+# Manual trigger only — burns CI minutes.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  spike:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Origami DMG URL from Sparkle appcast
+        id: appcast
+        run: |
+          appcast="https://www.facebook.com/mobile_builds/appcast.xml?app_id=892075810923571&flavor=production"
+          url=$(curl -sL "$appcast" | grep -oE 'url="[^"]*\.dmg[^"]*"' | head -1 | sed 's/^url="//; s/"$//; s/\&amp;/\&/g')
+          version=$(curl -sL "$appcast" | grep -oE 'sparkle:shortVersionString="[^"]*"' | head -1 | sed 's/^sparkle:shortVersionString="//; s/"$//')
+          echo "url<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$url"     >> "$GITHUB_OUTPUT"
+          echo "EOF"      >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "==> Origami $version"
+
+      - name: Download DMG
+        run: curl -sL -o /tmp/Origami.dmg "${{ steps.appcast.outputs.url }}"
+
+      - name: Mount and install
+        run: |
+          hdiutil attach -nobrowse -quiet /tmp/Origami.dmg
+          MOUNT=$(ls -d "/Volumes/"* | grep -i origami | head -1)
+          echo "mount: $MOUNT"
+          ls "$MOUNT"
+          sudo cp -R "$MOUNT/Origami Studio.app" /Applications/
+          hdiutil detach "$MOUNT" -quiet
+          installed_version=$(defaults read "/Applications/Origami Studio.app/Contents/Info.plist" CFBundleShortVersionString)
+          echo "installed Origami $installed_version"
+
+      - name: Fetch a public test pattern from origami.design
+        run: |
+          mkdir -p work
+          curl -sL -o work/Layers_Flip.origami "https://origami.design/public/origami_files/patterns/Layers_Flip.origami"
+          ls -la work/
+
+      - name: Launch Origami with the pattern
+        run: |
+          open -a "Origami Studio" "$PWD/work/Layers_Flip.origami"
+          sleep 12
+          # Report what windows exist (via System Events — may already fail here on permissions)
+          osascript -e 'tell application "System Events" to tell process "Origami Studio" to return name of windows' 2>&1 || echo "(System Events failed — expected without TCC grant)"
+
+      - name: Attempt Take Screenshot via osascript (probably fails on fresh TCC)
+        continue-on-error: true
+        run: |
+          osascript <<'EOF'
+          tell application "System Events" to tell process "Origami Studio"
+            tell menu bar 1
+              tell menu "View"
+                click menu item "Take Screenshot"
+              end tell
+            end tell
+          end tell
+          EOF
+          sleep 3
+          find ~/Desktop -name "Origami-Studio Screenshot*" 2>/dev/null
+          ls -la ~/Desktop 2>&1 | head -10
+
+      - name: Fallback — screencapture of the visible screen
+        run: |
+          # -x = silent, no shutter sound. No permission needed for screen content.
+          screencapture -x /tmp/full-screen.png
+          # Optional: capture Origami's window specifically if we can find its id
+          window_id=$(osascript -e 'tell application "System Events" to tell process "Origami Studio" to return id of first window whose value of attribute "AXMain" is true' 2>/dev/null || echo "")
+          if [ -n "$window_id" ]; then
+            screencapture -x -l "$window_id" /tmp/origami-window.png || true
+          fi
+          ls -la /tmp/*.png
+
+      - name: Upload spike artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-origami-on-runner
+          path: |
+            /tmp/full-screen.png
+            /tmp/origami-window.png
+            /Users/runner/Desktop/Origami-Studio*
+          if-no-files-found: warn
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "==> Spike results summary"
+          echo "Origami version installed: ${{ steps.appcast.outputs.version }}"
+          echo "Desktop screenshots (Origami's own):"
+          ls ~/Desktop/Origami-Studio* 2>/dev/null || echo "  (none — osascript Take Screenshot did not fire)"
+          echo "Fallback screencapture:"
+          ls -la /tmp/*.png 2>/dev/null || echo "  (none)"
