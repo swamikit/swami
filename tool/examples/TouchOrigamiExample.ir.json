@@ -1,0 +1,18 @@
+{
+  "$comment": "IR for Touch Origami Example. Geometry/mechanism values are GRAPH-DERIVED (read from the Origami document via the Inspector oracle, pending parser extraction). Color hexes marked (approx) still need exact extraction from the graph — flagged as parser targets, NOT eyeballed fidelity claims.",
+  "document": { "name": "Touch Origami Example", "device": "iPhone 17 Pro" },
+
+  "artboard": { "background": "#DD70DF", "background_exact": true },
+  "group":    { "layout": "vertical", "spacing": 30, "spacing_exact": true, "alignment": "center" },
+
+  "frame_defaults": { "cornerRadius": 20, "cornerRadius_exact": true, "size": "grow", "strokeWidth": 0 },
+  "oval_defaults":  { "width": 100, "height": 100, "size_exact": true, "restScale": 0, "restScale_exact": true },
+  "animation":      { "patch": "classicAnimation", "curve": "quadratic", "duration": 0.5, "duration_exact": true, "endScale": 5, "endScale_exact": true },
+
+  "rows": [
+    { "id": "row_tap",       "title": "Tap",        "gesture": "tap",       "cardColor": "#FFFFFF", "cardColor_exact": true,  "ovalColor": "#DD70DF", "ovalColor_exact": true, "momentary": true  },
+    { "id": "row_down",      "title": "Down",       "gesture": "press",     "cardColor": "#F5D9F0", "cardColor_exact": false, "ovalColor": "#DD70DF", "ovalColor_exact": true, "momentary": false },
+    { "id": "row_doubletap", "title": "Double Tap", "gesture": "doubleTap", "cardColor": "#EEC6E8", "cardColor_exact": false, "ovalColor": "#DD70DF", "ovalColor_exact": true, "momentary": true  },
+    { "id": "row_longpress", "title": "Long Press", "gesture": "longPress", "cardColor": "#E7B6DE", "cardColor_exact": false, "ovalColor": "#DD70DF", "ovalColor_exact": true, "momentary": false }
+  ]
+}

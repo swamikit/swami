@@ -1,0 +1,34 @@
+# --- Meta / third-party assets (kept private, never in this public repo) ---
+patterns/
+*.origami
+*.origami.zip
+# generated catalog snapshots derived from the installed Origami Studio app
+tool/catalog/
+tool/**/catalog_snapshot*/
+
+# --- Local machine / editor state ---
+.claude/
+.DS_Store
+.idea/
+.vscode/
+
+# --- Xcode build state ---
+app/**/DerivedData/
+app/**/build/
+app/**/xcuserdata/
+app/**/*.xcuserstate
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Swift Package build state ---
+tool/harness/.build/
+tool/harness/.swiftpm/
+tool/harness/Package.resolved

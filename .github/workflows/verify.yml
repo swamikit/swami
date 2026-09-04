@@ -1,0 +1,7 @@
+# PLACEHOLDER — the real workflow is being handed over by the Cowork session.
+# When landed, this file drives: build_run_sim SwamiHost per pattern (via SWAMI_PATTERN env),
+# screenshot, push shots to a `ci-screenshots` branch, and post a sticky PR comment embedding
+# them so a reviewer sees the render next to the diff.
+name: verify
+on:
+  workflow_dispatch:

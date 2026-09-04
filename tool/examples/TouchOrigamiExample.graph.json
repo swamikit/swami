@@ -1,0 +1,269 @@
+{
+  "file": "examples/TouchOrigamiExample.origami",
+  "size": 468320,
+  "identifier": "ORGM",
+  "placed_node_count": 49,
+  "kinds": {
+    "builtin.classicAnimation": 2,
+    "builtin.comment": 8,
+    "builtin.layer.binding": 10,
+    "builtin.layer.ellipse": 4,
+    "builtin.layer.interaction": 4,
+    "builtin.layer.layer": 5,
+    "builtin.pulse": 1,
+    "builtin.sample": 4,
+    "builtin.switch": 2,
+    "builtin.transition": 3,
+    "ios.Screen": 2,
+    "origami.DoubleTap": 2,
+    "origami.LongPress": 2
+  },
+  "placed_nodes": [
+    {
+      "table": 362832,
+      "type": "builtin.comment",
+      "name": "category"
+    },
+    {
+      "table": 363824,
+      "type": "builtin.comment",
+      "name": null
+    },
+    {
+      "table": 366778,
+      "type": "builtin.comment",
+      "name": "An animation which scale the Oval layer from 0-5 based on the Down state of the Interaction patch"
+    },
+    {
+      "table": 367775,
+      "type": "builtin.switch",
+      "name": "Gray"
+    },
+    {
+      "table": 368044,
+      "type": "builtin.pulse",
+      "name": "Pulse"
+    },
+    {
+      "table": 368872,
+      "type": "builtin.comment",
+      "name": "hidden"
+    },
+    {
+      "table": 370124,
+      "type": "builtin.layer.binding",
+      "name": null
+    },
+    {
+      "table": 371454,
+      "type": "builtin.transition",
+      "name": "Transition"
+    },
+    {
+      "table": 371536,
+      "type": "builtin.comment",
+      "name": "important"
+    },
+    {
+      "table": 372204,
+      "type": "builtin.layer.binding",
+      "name": null
+    },
+    {
+      "table": 373372,
+      "type": "builtin.classicAnimation",
+      "name": "Classic Animation"
+    },
+    {
+      "table": 375783,
+      "type": "builtin.comment",
+      "name": "Green"
+    },
+    {
+      "table": 376072,
+      "type": "builtin.comment",
+      "name": null
+    },
+    {
+      "table": 377208,
+      "type": "builtin.comment",
+      "name": null
+    },
+    {
+      "table": 378812,
+      "type": "builtin.layer.binding",
+      "name": null
+    },
+    {
+      "table": 380172,
+      "type": "builtin.layer.binding",
+      "name": "Position"
+    },
+    {
+      "table": 380828,
+      "type": "builtin.sample",
+      "name": "Sample and Hold"
+    },
+    {
+      "table": 381629,
+      "type": "builtin.transition",
+      "name": "Scale"
+    },
+    {
+      "table": 383044,
+      "type": "builtin.classicAnimation",
+      "name": "Classic Animation"
+    },
+    {
+      "table": 384555,
+      "type": "builtin.layer.interaction",
+      "name": "important"
+    },
+    {
+      "table": 386015,
+      "type": "builtin.layer.binding",
+      "name": null
+    },
+    {
+      "table": 386772,
+      "type": "builtin.sample",
+      "name": "Sample and Hold"
+    },
+    {
+      "table": 387199,
+      "type": "builtin.layer.binding",
+      "name": "isDefaultVariant"
+    },
+    {
+      "table": 387943,
+      "type": "origami.LongPress",
+      "name": "category"
+    },
+    {
+      "table": 388004,
+      "type": "origami.LongPress",
+      "name": null
+    },
+    {
+      "table": 388876,
+      "type": "builtin.layer.interaction",
+      "name": "Interaction"
+    },
+    {
+      "table": 390435,
+      "type": "builtin.layer.binding",
+      "name": "Scale"
+    },
+    {
+      "table": 390728,
+      "type": "builtin.sample",
+      "name": "Position"
+    },
+    {
+      "table": 391724,
+      "type": "builtin.transition",
+      "name": "Transition"
+    },
+    {
+      "table": 394268,
+      "type": "builtin.switch",
+      "name": "Switch"
+    },
+    {
+      "table": 396332,
+      "type": "origami.DoubleTap",
+      "name": "Double Tap"
+    },
+    {
+      "table": 396380,
+      "type": "origami.DoubleTap",
+      "name": null
+    },
+    {
+      "table": 397167,
+      "type": "builtin.layer.interaction",
+      "name": "Tap"
+    },
+    {
+      "table": 397279,
+      "type": "builtin.sample",
+      "name": "Down"
+    },
+    {
+      "table": 398807,
+      "type": "builtin.layer.binding",
+      "name": null
+    },
+    {
+      "table": 399470,
+      "type": "builtin.layer.binding",
+      "name": "Scale"
+    },
+    {
+      "table": 400128,
+      "type": "builtin.layer.binding",
+      "name": "tags"
+    },
+    {
+      "table": 401180,
+      "type": "builtin.layer.ellipse",
+      "name": "previewImagesDarkWash"
+    },
+    {
+      "table": 402108,
+      "type": "builtin.layer.interaction",
+      "name": "Interaction"
+    },
+    {
+      "table": 409102,
+      "type": "builtin.layer.layer",
+      "name": "libraryInfo"
+    },
+    {
+      "table": 416552,
+      "type": "builtin.layer.ellipse",
+      "name": "Oval"
+    },
+    {
+      "table": 420586,
+      "type": "builtin.layer.layer",
+      "name": "Transform"
+    },
+    {
+      "table": 427631,
+      "type": "builtin.layer.ellipse",
+      "name": "Radius"
+    },
+    {
+      "table": 435048,
+      "type": "builtin.layer.layer",
+      "name": "Frame"
+    },
+    {
+      "table": 442403,
+      "type": "builtin.layer.ellipse",
+      "name": null
+    },
+    {
+      "table": 448160,
+      "type": "builtin.layer.layer",
+      "name": "Frame"
+    },
+    {
+      "table": 455760,
+      "type": "builtin.layer.layer",
+      "name": "Group"
+    },
+    {
+      "table": 463476,
+      "type": "ios.Screen",
+      "name": "Artboard 1"
+    },
+    {
+      "table": 463536,
+      "type": "ios.Screen",
+      "name": null
+    }
+  ],
+  "_todo": "edges (ports/connections), layer values vs oracle, generalize tail heuristic"
+}
