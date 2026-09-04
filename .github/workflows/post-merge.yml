@@ -1,0 +1,157 @@
+name: post-merge
+
+# Runs after a PR touching app/Swami/Patterns/** lands on main.
+# 1. Figure out which pattern the merge changed.
+# 2. Grab the PR's evidence PNGs from the ci-screenshots branch (or re-render
+#    if the cache is empty), copy them into the DocC catalog, and commit back
+#    to main. publish-docs then picks the commit up and re-publishes to
+#    gh-pages/.
+# 3. Package a mini Xcode project .zip for the pattern (Option A CTA on the
+#    doc page) and attach it — as a release asset when there is a tagged
+#    release, or as a workflow artifact otherwise.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/Swami/Patterns/**'
+
+permissions:
+  contents: write  # commit back to main; create/update releases
+
+concurrency:
+  # Serialize — every run commits to main, and two racing runs would collide.
+  group: post-merge
+  cancel-in-progress: false
+
+env:
+  APP_PROJECT: app/Swami.xcodeproj
+  DOCC_RESOURCES: app/Swami/Swami.docc/Resources/Patterns
+
+jobs:
+  renders-and-zip:
+    runs-on: macos-15
+    steps:
+      - name: Checkout main (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Identify changed patterns
+        id: patterns
+        run: |
+          set -euo pipefail
+          # Files under app/Swami/Patterns/ that changed in this push. Take the
+          # first path segment as the pattern name (e.g. Touch/…, LongPress/…).
+          changed=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" \
+                    -- 'app/Swami/Patterns/**' || true)
+          if [ -z "${changed}" ]; then
+            echo "no pattern files changed"
+            echo "names=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          names=$(printf '%s\n' "${changed}" \
+                    | awk -F/ '{print $4}' \
+                    | sort -u \
+                    | grep -v '^$' \
+                    | paste -sd, -)
+          echo "changed patterns: ${names}"
+          echo "names=${names}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract PR number from merge commit
+        id: pr
+        if: steps.patterns.outputs.names != ''
+        run: |
+          set -euo pipefail
+          # Merge commits from squash-merge PRs land as "… (#N)"; pull the N.
+          msg=$(git log -1 --pretty=%s "${{ github.sha }}")
+          pr=$(echo "$msg" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
+          echo "pr=${pr}" >> "$GITHUB_OUTPUT"
+          echo "merge commit PR: ${pr:-<none>}"
+
+      - name: Fetch evidence PNGs from ci-screenshots
+        id: evidence
+        if: steps.patterns.outputs.names != ''
+        run: |
+          set -euo pipefail
+          mkdir -p .evidence
+          if git ls-remote --exit-code --heads origin ci-screenshots >/dev/null; then
+            git fetch origin ci-screenshots:ci-screenshots
+            git --work-tree=.evidence checkout ci-screenshots -- . 2>/dev/null || true
+          else
+            echo "ci-screenshots branch does not exist — nothing cached"
+          fi
+          ls -la .evidence || true
+
+      - name: Copy PR renders into DocC Resources
+        if: steps.patterns.outputs.names != ''
+        run: |
+          set -euo pipefail
+          mkdir -p "${DOCC_RESOURCES}"
+          IFS=',' read -ra names <<<"${{ steps.patterns.outputs.names }}"
+          for name in "${names[@]}"; do
+            # Convention: ci-screenshots stores ours-<slug>.png (lowercased slug).
+            # Look under the PR dir first if present, else the branch root.
+            slug=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+            src=""
+            for candidate in \
+              ".evidence/pr-${{ steps.pr.outputs.pr }}/ours-${slug}.png" \
+              ".evidence/ours-${slug}.png"; do
+              if [ -f "$candidate" ]; then src="$candidate"; break; fi
+            done
+            if [ -z "$src" ]; then
+              echo "::warning::no cached render for ${name} — TODO: re-render via SwamiHost sim"
+              # TODO: boot SwamiHost sim with SWAMI_PATTERN=$slug and screenshot,
+              # mirroring verify.yml. Skipped for the first version.
+              continue
+            fi
+            dest="${DOCC_RESOURCES}/${name}.png"
+            echo "copy ${src} -> ${dest}"
+            cp "$src" "$dest"
+          done
+
+      - name: Commit renders back to main
+        if: steps.patterns.outputs.names != ''
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${DOCC_RESOURCES}" || true
+          if git diff --cached --quiet; then
+            echo "no render changes"
+            exit 0
+          fi
+          git commit -m "docs(patterns): update renders for ${{ steps.patterns.outputs.names }} [skip verify]"
+          git push origin HEAD:main
+
+      - name: Build pattern .zip bundle
+        id: bundle
+        if: steps.patterns.outputs.names != ''
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # TODO: real mini-Xcode-project bundling. For now, tarball the pattern's
+          # source directory so the CTA link resolves to something, and land the
+          # real bundler in a follow-up PR (Option A).
+          IFS=',' read -ra names <<<"${{ steps.patterns.outputs.names }}"
+          for name in "${names[@]}"; do
+            src="app/Swami/Patterns/${name}"
+            if [ ! -d "$src" ]; then continue; fi
+            out="dist/${name}.zip"
+            (cd "$(dirname "$src")" && zip -qr "${GITHUB_WORKSPACE}/${out}" "$(basename "$src")")
+            echo "built ${out}"
+          done
+          ls -la dist || true
+
+      - name: Upload as workflow artifact
+        if: steps.patterns.outputs.names != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pattern-bundles
+          path: dist/*.zip
+          if-no-files-found: ignore
+
+      # TODO: promote artifacts to release assets once we tag a release
+      # (softprops/action-gh-release, upload dist/*.zip against the tag that
+      # names the pattern set).
