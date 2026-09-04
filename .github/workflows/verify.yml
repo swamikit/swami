@@ -169,7 +169,6 @@ jobs:
           git config user.name "swami-ci"
           git config user.email "ci@swami.local"
           git fetch origin "$BR" && git checkout "$BR" || git checkout --orphan "$BR"
-          git rm -rf . >/dev/null 2>&1 || true
           mkdir -p "pr-$PR"
           cp -R out/* "pr-$PR/"
           git add "pr-$PR"
