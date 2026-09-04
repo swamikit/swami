@@ -1,32 +1,30 @@
 name: verify
 
-# swami pixel gate on a GitHub-hosted macOS runner (free on public repos).
-# Bulk by design: set up + build ONCE per run, then screenshot every pattern in a loop,
-# so runner setup cost is amortized across the whole corpus, not paid per pattern.
-# Evidence-first: screenshots are posted INTO the PR so a human can see the render without
-# downloading anything — this is verified-delivery's "evidence or it didn't happen" as CI.
+# swami pixel gate — Path B (ADR-0013).
+# One runner does both sides: installs Origami from its Sparkle appcast, opens
+# each pattern to render Origami's reference, then boots SwamiHost's sim to render
+# ours, then SSIM-compares. No cross-repo dep, no cached references.
 #
-# Assumes: Xcode project at app/Swami.xcodeproj, shared `SwamiHost` scheme, and SwamiHost's
-# ContentView switching on the `SWAMI_PATTERN` env var. Grow PATTERNS as the corpus grows.
+# Assumes: Xcode project at app/Swami.xcodeproj, shared `SwamiHost` scheme,
+# SwamiHost's ContentView switching on the `SWAMI_PATTERN` env var.
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write        # push screenshots to the evidence branch
-  pull-requests: write   # comment the screenshots onto the PR
+  contents: write        # push renders to the evidence branch
+  pull-requests: write   # comment onto the PR
 
 env:
   APP_PROJECT: app/Swami.xcodeproj
   SCHEME: SwamiHost
-  # Each entry: <slug>:<reference-filename-without-extension>.
-  # slug drives SWAMI_PATTERN + the CI screenshot name; reference-filename maps
-  # to swami-private/references/<origami-version>/<name>.png. Grow as patterns land.
+  # Each entry: <slug>:<origami-file-stem>. slug drives SWAMI_PATTERN + our screenshot
+  # naming; stem resolves to https://origami.design/public/origami_files/patterns/<stem>.origami.
   PATTERNS: "touch:Interaction_Touch"
-  ORIGAMI_VERSION: "227.0"
+  SSIM_THRESHOLD: "0.95"
 
 jobs:
   pixel-gate:
@@ -38,6 +36,24 @@ jobs:
         run: |
           xcodebuild -version
           xcrun simctl list runtimes
+          which compare && compare -version | head -1
+
+      - name: Install Origami Studio (Sparkle appcast)
+        id: origami
+        run: |
+          appcast="https://www.facebook.com/mobile_builds/appcast.xml?app_id=892075810923571&flavor=production"
+          url=$(curl -sL "$appcast" | grep -oE 'url="[^"]*\.dmg[^"]*"' | head -1 | sed 's/^url="//; s/"$//; s/\&amp;/\&/g')
+          version=$(curl -sL "$appcast" | grep -oE 'sparkle:shortVersionString="[^"]*"' | head -1 | sed 's/^sparkle:shortVersionString="//; s/"$//')
+          echo "==> Origami $version"
+          curl -sL -o /tmp/Origami.dmg "$url"
+          hdiutil attach -nobrowse -quiet /tmp/Origami.dmg
+          MOUNT=$(ls -d "/Volumes/"* | grep -i origami | head -1)
+          sudo cp -R "$MOUNT/Origami Studio.app" /Applications/
+          hdiutil detach "$MOUNT" -quiet
+          /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+            -f -R -domain local -domain system "/Applications/Origami Studio.app" 2>&1 | tail -3 || true
+          sudo xattr -dr com.apple.quarantine "/Applications/Origami Studio.app" 2>&1 || true
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Pick + boot a simulator
         id: sim
@@ -55,77 +71,98 @@ jobs:
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO | tee build.log
           grep -q "BUILD SUCCEEDED" build.log
 
-      - name: Install app
+      - name: Install SwamiHost to sim
         id: app
         run: |
           APP=$(find build/Build/Products -name 'SwamiHost.app' -maxdepth 3 | head -1)
           xcrun simctl install "${{ steps.sim.outputs.udid }}" "$APP"
           echo "bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" >> "$GITHUB_OUTPUT"
 
-      - name: Screenshot every pattern (bulk)
+      - name: Render + compare per pattern
+        id: verify
         run: |
-          mkdir -p screenshots
+          mkdir -p out/origami out/swami out/diff
+          RESULTS=""
+          FAIL=0
+
           for pair in $PATTERNS; do
             slug="${pair%%:*}"
+            stem="${pair##*:}"
+            src_url="https://origami.design/public/origami_files/patterns/${stem}.origami"
+            echo "==> ${slug} (${stem})"
+
+            # 1. Fetch the .origami file from origami.design (public, no auth)
+            curl -sL -o "/tmp/${stem}.origami" "$src_url"
+            test -s "/tmp/${stem}.origami" || { echo "  fetch failed for $src_url"; FAIL=1; continue; }
+
+            # 2. Origami side: open, screenshot, close
+            marker=$(mktemp); touch "$marker"; sleep 0.5
+            open -a "/Applications/Origami Studio.app" "/tmp/${stem}.origami"
+            sleep 12
+            osascript >/dev/null 2>&1 <<APPLESCRIPT || echo "  osascript click failed"
+tell application "System Events" to tell process "Origami Studio"
+  set frontmost to true
+  delay 0.5
+  tell menu bar 1
+    tell menu "View"
+      click menu item "Take Screenshot"
+    end tell
+  end tell
+end tell
+APPLESCRIPT
+            sleep 3
+            shot=$(find ~/Desktop -maxdepth 1 -name "Origami-Studio Screenshot*.png" -newer "$marker" 2>/dev/null | head -1)
+            if [ -z "$shot" ]; then
+              echo "  MISS: no Origami screenshot for ${slug}"
+              RESULTS="${RESULTS}| ${slug} | ORIGAMI RENDER FAILED | — | ❌ |"$'\n'
+              FAIL=1
+              rm -f "$marker"; continue
+            fi
+            mv "$shot" "out/origami/${slug}.png"
+            rm -f "$marker"
+
+            # Close doc so next pattern gets a clean slate
+            osascript >/dev/null 2>&1 <<'APPLESCRIPT' || true
+tell application "System Events" to tell process "Origami Studio"
+  keystroke "w" using command down
+  delay 0.4
+  if exists sheet 1 of window 1 then
+    try
+      click button "Don't Save" of sheet 1 of window 1
+    end try
+  end if
+end tell
+APPLESCRIPT
+            sleep 0.5
+
+            # 3. SwamiHost side: launch with slug, screenshot
             xcrun simctl terminate "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.bid }}" 2>/dev/null || true
             SIMCTL_CHILD_SWAMI_PATTERN="$slug" xcrun simctl launch "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.bid }}"
             sleep 3
-            xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot "screenshots/${slug}.png"
-          done
+            xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot "out/swami/${slug}.png"
 
-      - name: Upload screenshots (always — downloadable fallback)
-        uses: actions/upload-artifact@v4
-        with: { name: pixel-gate-screenshots, path: screenshots/, if-no-files-found: error }
-
-      # ---- Auto-compare vs cached Origami references (ADR-0012) ----
-      - name: Fetch Origami references (swami-private)
-        id: refs
-        if: env.REFERENCES_TOKEN != ''
-        env: { REFERENCES_TOKEN: "${{ secrets.REFERENCES_TOKEN }}" }
-        uses: actions/checkout@v4
-        with:
-          repository: swamikit/swami-private
-          token: ${{ secrets.REFERENCES_TOKEN }}
-          path: swami-private
-          sparse-checkout: references
-
-      - name: Auto-compare (SSIM per pattern)
-        id: compare
-        if: steps.refs.outcome == 'success'
-        run: |
-          mkdir -p diffs
-          RESULTS=""
-          THRESHOLD="0.95"
-          FAIL=0
-          for pair in $PATTERNS; do
-            slug="${pair%%:*}"; ref_name="${pair##*:}"
-            ci="screenshots/${slug}.png"
-            ref="swami-private/references/${ORIGAMI_VERSION}/${ref_name}.png"
-            diff="diffs/${slug}.png"
-            if [ ! -f "$ref" ]; then
-              RESULTS="${RESULTS}| ${slug} | NO REFERENCE (${ref_name}.png) | — |"$'\n'
-              continue
-            fi
-            # SSIM to stderr; 1.0 = identical, closer-to-0 = worse.
-            score=$(compare -metric SSIM "$ci" "$ref" "$diff" 2>&1 || true)
-            verdict=$(awk -v s="$score" -v t="$THRESHOLD" 'BEGIN{ print (s+0>=t+0 ? "✅" : "❌") }')
+            # 4. Perceptual SSIM (1.0 identical, closer to 0 = worse)
+            score=$(compare -metric SSIM "out/swami/${slug}.png" "out/origami/${slug}.png" "out/diff/${slug}.png" 2>&1 || true)
+            verdict=$(awk -v s="$score" -v t="$SSIM_THRESHOLD" 'BEGIN{ print (s+0>=t+0 ? "✅" : "❌") }')
             [ "$verdict" = "❌" ] && FAIL=1
+            echo "  SSIM $score → $verdict"
             RESULTS="${RESULTS}| ${slug} | ${score} | ${verdict} |"$'\n'
           done
+
           {
             echo "results<<COMPARE_EOF"
             echo "$RESULTS"
             echo "COMPARE_EOF"
             echo "any_fail=${FAIL}"
+            echo "origami_version=${{ steps.origami.outputs.version }}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Upload diffs (per-pattern)
-        if: steps.compare.outcome == 'success'
+      - name: Upload artifacts (always)
+        if: always()
         uses: actions/upload-artifact@v4
-        with: { name: pixel-gate-diffs, path: diffs/, if-no-files-found: warn }
+        with: { name: pixel-gate, path: out/, if-no-files-found: warn }
 
-      # ---- Evidence onto the PR (public repo → raw URLs render inline) ----
-      - name: Post screenshots to the PR
+      - name: Post evidence onto the PR
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -133,28 +170,32 @@ jobs:
           REPO: ${{ github.repository }}
           SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # Push PNGs to an orphan-ish evidence branch so the PR diff stays clean.
           BR="ci-screenshots"
-          git config user.name "swami-ci"; git config user.email "ci@swami.local"
+          git config user.name "swami-ci"
+          git config user.email "ci@swami.local"
           git fetch origin "$BR" && git checkout "$BR" || git checkout --orphan "$BR"
           git rm -rf . >/dev/null 2>&1 || true
-          mkdir -p "pr-$PR"; cp screenshots/*.png "pr-$PR/"
-          git add "pr-$PR"; git commit -m "evidence: PR #$PR @ ${SHA:0:7}" || true
+          mkdir -p "pr-$PR"
+          cp -R out/* "pr-$PR/"
+          git add "pr-$PR"
+          git commit -m "evidence: PR #$PR @ ${SHA:0:7}" || true
           git push origin "$BR"
-          # Build a sticky comment embedding each shot via raw.githubusercontent (public repo).
+
+          RAW="https://raw.githubusercontent.com/${REPO}/${BR}/pr-${PR}"
           BODY="### 📸 Pixel gate — \`${SHA:0:7}\`"$'\n\n'
-          # Auto-compare scores table (if the compare step ran).
-          RESULTS_TABLE="${{ steps.compare.outputs.results }}"
-          if [ -n "$RESULTS_TABLE" ]; then
-            BODY+="**SSIM vs Origami reference** (≥0.95 = ✅)"$'\n\n'"| pattern | SSIM | verdict |"$'\n'"|---|---|---|"$'\n'"$RESULTS_TABLE"$'\n'
-          else
-            BODY+="_(auto-compare skipped — set REFERENCES_TOKEN secret to enable)_"$'\n\n'
-          fi
-          for f in screenshots/*.png; do n=$(basename "$f" .png)
-            BODY+="**$n**"$'\n'"![${n}](https://raw.githubusercontent.com/${REPO}/${BR}/pr-${PR}/${n}.png)"$'\n\n'; done
-          BODY+="_Static layout only — interaction (gesture) gate is separate. Human sign-off remains for anything the auto-compare flags._"
+          BODY+="**SSIM vs Origami ${{ steps.verify.outputs.origami_version }}** (≥${SSIM_THRESHOLD} = ✅)"$'\n\n'
+          BODY+="| pattern | SSIM | verdict |"$'\n'"|---|---|---|"$'\n'
+          BODY+="${{ steps.verify.outputs.results }}"$'\n\n'
+          for pair in $PATTERNS; do
+            slug="${pair%%:*}"
+            BODY+="**${slug}**"$'\n\n'
+            BODY+="| Swami | Origami | Diff |"$'\n'"|---|---|---|"$'\n'
+            BODY+="| ![swami](${RAW}/swami/${slug}.png) | ![origami](${RAW}/origami/${slug}.png) | ![diff](${RAW}/diff/${slug}.png) |"$'\n\n'
+          done
+          BODY+="_Static layout only. Interaction gate (drive gesture, compare response) is separate — ADR-0013 follow-up._"
           gh pr comment "$PR" --repo "$REPO" --edit-last --body "$BODY" 2>/dev/null \
             || gh pr comment "$PR" --repo "$REPO" --body "$BODY"
 
-# NEXT (interaction gate): an XCUITest target that taps each card and screenshots the result,
-# so the oval-from-touch behavior is verified headlessly in CI, then posted the same way.
+# NEXT (per ADR-0013): (a) parser-verification step that reads Origami's Inspector via AX
+# attributes and diffs against the parser's IR; (b) interaction gate — XCUITest-drives-both-sides
+# gesture verification, same evidence-on-PR flow.

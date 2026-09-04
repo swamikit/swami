@@ -25,26 +25,39 @@ agent — the cloud loop does not write there.
   embedded Drag component on this 534 KB file). Must: (a) generalize the parser to isolate the real
   placed graph, (b) re-generate from true values, (c) drive-verify.
 
-## Verify-gate bootstrap (ADR-0012 — auto-compare as V1)
-- **Origami version currency**: installed = **227.0** (build 1045240740, /Applications/Origami
-  Studio.app, modified 2026-09-02). ✅ user confirmed latest as of 2026-09-04. Re-check on
-  Origami upgrade; re-render references before running the compare, or the diff reads a
-  legit Origami-side change as a swami regression.
-- **Cached reference set** — ✅ **60/62 rendered** for Origami 227.0, committed to
-  `swamikit/swami-private:references/227.0/`. Renderer at `swami-private/scripts/render-references.sh`
-  drives Origami's View → Take Screenshot menu via osascript; one-shot per Origami version.
-  MISSING (System Events auth blip on the last two): **Utilities_Viewfinder**,
-  **Utilities_Visual_Blur**. Retry: reopen Terminal / grant automation permission, then
-  `./scripts/render-references.sh Viewfinder` and `... Visual_Blur`.
-- **`verify.yml` compare step** — ✅ **wired**. Uses ImageMagick SSIM, threshold 0.95,
-  scores post into the sticky PR comment as a table, diffs uploaded as artifact. Currently
-  SKIPPED at runtime because `REFERENCES_TOKEN` secret isn't set yet. **User action to
-  unblock**: create a fine-grained PAT with `contents:read` on `swamikit/swami-private`,
-  add as `REFERENCES_TOKEN` secret in `swamikit/swami` → Settings → Secrets and variables →
-  Actions. First run after that will auto-compare Interaction_Touch.
+## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
+- **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches
+  Origami's Sparkle appcast, installs the app, opens each pattern from origami.design's
+  public URL, drives `View → Take Screenshot`, then diffs against SwamiHost's sim render.
+  No cross-repo dep, no secrets.
 - **PATTERNS growth**: current single entry `touch:Interaction_Touch`. Add one line per
   translated pattern (`<slug>:<origami-filename-stem>`) as the corpus grows; the ContentView
   switch in `app/SwamiHost/ContentView.swift` gets a matching case.
+- **Parser generalization** — biggest live blocker. Currently only Touch-sized files parse
+  cleanly (placed-vs-library fixed tail offset). Interaction_Drag over-includes the embedded
+  Drag component. Until this generalizes, we can't feed the loop pattern N+1.
+
+## Follow-up ADRs on the same runner substrate (ADR-0013 enables)
+- **Parser verification via Origami Inspector** — osascript can read AX attributes of
+  Origami's Inspector panel (layer heights, corner radii, colors, positions) and diff
+  against the parser's IR. Gives the parser a live oracle without human eyes.
+- **Interaction gate** — same runner drives a gesture on both Origami's viewer and
+  SwamiHost's sim, screenshots the responses, diffs. Closes the ISAT loop
+  (Interaction → State → Animation → Transition).
+
+## Deferred — Tutorials (post-first-few-patterns)
+- **Translating visually** — pick one patch (say `builtin.layer.hover`), show Origami's
+  editor screenshot, walk through the SwiftUI equivalent with a live render at each step.
+- **Using the skill** — designer opens their own .origami in swami, gets SwiftUI back.
+  Only earns its slot once the skill/MCP actually exists.
+- **ISAT in declarative SwiftUI** — how *Interaction → State → Animation → Transition*
+  (Samuel's framing of Origami's dataflow) lands in SwiftUI's `gesture → @State →
+  withAnimation → interpolation` stack. Live example per stage.
+
+## Housekeeping
+- **swami-private/references/ deletion** — cache is now dead weight per ADR-0013. Delete
+  the directory in a follow-up swami-private commit; keep `scripts/render-references.sh`
+  (still useful for local troubleshooting).
 - **ADRs 0001–0003 accounting**: the ADR directory jumps from 0004 to 0011 with no 0001-0003.
   Either recover them from history or explicitly note they were archived — silent gaps read
   as "you forgot how to number files."
