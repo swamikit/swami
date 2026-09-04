@@ -117,8 +117,11 @@ docs/decisions/      ADRs — read these when in doubt about a design call
 skill/               verified-delivery notes + adopted skills (unslop, …)
 ```
 
-Meta assets (patterns/, catalog snapshots, .origami downloads) are `.gitignore`d
-and live in a separate private repo. Do not add any `.origami` file to this repo.
+Meta assets (patterns/, catalog snapshots, .origami downloads) are `.gitignore`d.
+This is a single-repo project: **swamikit/swami**. The old swami-private mirror
+is deprecated post-ADR-0013 — Path B fetches patterns from origami.design's
+public URLs on the macOS runner, so there's no cross-repo hop to make. Do not
+add any `.origami` file to this repo.
 
 ### What Codex (Linux) CAN do
 
@@ -202,10 +205,13 @@ before you push.
 
 ## Architecture — the agent factory
 
-Two orchestrators as peers (Human, Claude session) driving three workers
-(Builder GA, Verify GA, Review GA) around a shared substrate. Learning surfaces
-sit under the loop and each hold one kind of durable knowledge; work rolls
-through intent → build → verify+review (parallel) → merge → post-merge.
+Two orchestrators as peers (Human, Claude session) driving two workers
+(Builder GA, Review GA) around a shared substrate. Build and verify collapse
+into a single macOS runner — the Builder self-verifies before opening a PR — so
+Review reads posted evidence from a cheap ubuntu runner instead of re-rendering.
+Learning surfaces sit under the loop and each hold one kind of durable
+knowledge; work rolls through intent → build (with self-verify) → review →
+merge → post-merge.
 
 ```mermaid
 flowchart TB
@@ -217,16 +223,16 @@ flowchart TB
 
     subgraph Workers["Workers (GitHub Actions)"]
         direction LR
-        B["Builder GA<br/>(future)"]
-        V["Verify GA<br/>(existing — verify.yml)"]
-        R["Review GA<br/>(future)"]
+        B["Builder + Verify GA (macos-15)"]
+        R["Review GA (ubuntu)"]
     end
 
     subgraph Loop["The loop"]
         direction LR
-        I[Intent] --> BLD[Build]
-        BLD --> P{{Verify + Review in parallel}}
-        P --> M[Merge]
+        I[Intent] --> BLD[Build + self-verify]
+        BLD --> PR_[PR opened with evidence]
+        PR_ --> REV[Review reads evidence]
+        REV --> M[Merge on double-green]
         M --> PM[Post-merge]
     end
 
@@ -235,9 +241,9 @@ flowchart TB
         S["structural<br/>→ parser (tool/src/parser)"]
         F["functional<br/>→ helpers (Swami package)"]
         D["documentation<br/>→ DocC (Swami.docc)"]
-        PR["procedural<br/>→ skill: pattern-translation"]
+        PRC["procedural<br/>→ skill: pattern-translation"]
         PW["process<br/>→ skill: workflow"]
-        E["evaluative<br/>→ skill: visual-review"]
+        E["evaluative<br/>→ skill: review"]
         CX["contextual<br/>→ AGENTS.md"]
         FA["factual<br/>→ CLAUDE.md (pointer to AGENTS.md)"]
         RA["rationale<br/>→ ADRs (docs/decisions)"]
@@ -245,17 +251,29 @@ flowchart TB
 
     Orchestrators --> Loop
     Loop --> Workers
+    B -->|PR| R
+    R -.review comment.-> B
     Workers -.evidence.-> Loop
     Loop -.writes-back.-> Learning
     Learning -.loads on next turn.-> Orchestrators
 ```
 
+Build ↔ Review cycles on the same PR until Review approves; auto-merge on
+double-green; rebuttal via verified-delivery's evidence-required-claims
+principle (reviews are testable against HEAD, not authoritative pronouncements).
+
 - **Orchestrators (peers).** Human and Claude session both drive the loop; either
   can initiate intent, delegate, or take a spot-check pass. Neither owns the
   other.
-- **Workers.** Verify GA is live today (`.github/workflows/verify.yml` — Path B
-  per ADR-0013: runner installs Origami, live-renders both sides, SSIM-compares).
-  Builder GA and Review GA are planned lanes on the same substrate.
+- **Workers.** **Builder + Verify GA** is live today
+  (`.github/workflows/verify.yml` — Path B per ADR-0013). It runs on macos-15
+  and does everything in one job: installs Origami from the Sparkle appcast,
+  generates SwiftUI from the parser IR, builds SwamiHost, renders both sides,
+  SSIM-diffs, and self-verifies that the structural port matches. It won't open
+  a PR its own verify rejects — so Review isn't a redundant second render.
+  **Review GA** is a planned lane on cheap ubuntu-latest: it reads the evidence
+  Builder posted (screenshots, SSIM score, IR diff) and applies the review
+  skill; it does not re-render.
 - **Learning surfaces.** Each knowledge kind writes into exactly one place, so a
   new agent boots by reading the surface and the pointer is unambiguous:
   - **structural** — the parser's model of `.origami` (fields, tags, layouts).
@@ -263,13 +281,15 @@ flowchart TB
   - **documentation** — human-facing prose via DocC.
   - **procedural** — the "how to translate one pattern" skill.
   - **process** — the "how the loop moves" skill.
-  - **evaluative** — the "how to read a compare" skill.
+  - **evaluative** — the "how to review a PR against evidence" skill.
   - **contextual** — this file: what the project is, how to work here.
   - **factual** — the durable oracle values and format facts; the on-disk file
     (`CLAUDE.md`) is a pointer to AGENTS.md so agents that only read CLAUDE.md
     still land in the same place.
   - **rationale** — ADRs. Why a call was made, not what to do next.
-- **The loop.** Intent lands, Builder produces a change, Verify and Review run
-  in parallel on the PR (pixel gate + human-readable review), merge on both
-  green, post-merge writes back to the relevant learning surface so the next
-  turn starts smarter.
+- **The loop.** Intent lands. Builder produces a change and self-verifies on the
+  same macOS runner; only a passing build opens a PR, with evidence attached.
+  Review reads the evidence on ubuntu (no re-render), and either approves or
+  posts findings that must be testable against HEAD. Build ↔ Review cycles
+  until double-green; auto-merge then, post-merge writes back to the relevant
+  learning surface so the next turn starts smarter.

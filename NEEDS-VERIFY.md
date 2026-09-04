@@ -50,6 +50,20 @@ agent — the cloud loop does not write there.
   SwamiHost's sim, screenshots the responses, diffs. Closes the ISAT loop
   (Interaction → State → Animation → Transition).
 
+## Reviewer / agent-factory queue
+- **skill/review/** — the Reviewer GA's skill. Runs visual + structural +
+  methodology checks per PR type. Applies verified-delivery's
+  evidence-required-claims principle: findings must be testable against HEAD.
+  Reads AGENTS.md + ADRs + workflow skill before reviewing. Supersedes the
+  earlier "visual-review" and "adversarial-review" naming — one skill, one
+  entry point.
+- **Build Claude Review GA** — the reviewer worker itself. Runs on
+  **ubuntu-latest** (not macOS): reads the Builder GA's posted evidence
+  (screenshots, SSIM score, IR diff) and applies `skill/review/`. Does **not**
+  re-render — the Builder already self-verified on macos-15 before opening the
+  PR, so a second render would just burn minutes. Comments findings back on
+  the PR; Builder retriggers on the same branch. Auto-merge on double-green.
+
 ## Deferred — Tutorials (post-first-few-patterns)
 - **Translating visually** — pick one patch (say `builtin.layer.hover`), show Origami's
   editor screenshot, walk through the SwiftUI equivalent with a live render at each step.
