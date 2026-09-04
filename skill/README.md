@@ -27,6 +27,11 @@ hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
   a PR event or an `@claude review` comment. Renamed from `visual-review` because
   the Reviewer's job covers visual, structural, methodology, and evidence, not
   pixels alone.
+- **`troubleshooting/`.** Living runbook of known infra blockers (Origami install,
+  sim boot, missing tools, license expiration). Builder and Review pre-flight
+  checks read it before real work starts; any agent that ships a fix for a
+  runner-level failure appends an entry. Companion issue template lives at
+  `.github/ISSUE_TEMPLATE/infra-blocker.md`.
 
 ## Adopted skills
 
