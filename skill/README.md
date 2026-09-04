@@ -24,6 +24,18 @@ hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
   [michaelshimeles/skills](https://github.com/michaelshimeles/skills) (MIT, © Lauren Tan;
   see `unslop/LICENSE`). Run before every commit message, PR body, ADR, or NEEDS-VERIFY entry.
 
+## In-repo skills
+
+- **`workflow/`** — swami house rules: Beats, branch naming, PR templates,
+  review flow, evidence expectations. Load before opening any PR against
+  `swamikit/swami`.
+- **`pattern-translation/`** *(stub)* — mapping-table judgment for translating
+  one Origami pattern into idiomatic SwiftUI. Not written yet.
+- **`docc-authoring/`** *(stub)* — how a translated pattern gets documented in
+  DocC (article, tutorial, code listing, screenshot). Not written yet.
+- **`review/`** *(stub)* — how the Reviewer GA runs its checks (visual,
+  structural, methodology) — the Reviewer's skill. Not written yet.
+
 ## Prior art worth tracking
 
 - [michaelshimeles/skills](https://github.com/michaelshimeles/skills) — same
