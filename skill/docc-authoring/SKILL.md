@@ -106,8 +106,8 @@ SwiftUI equivalents. Not `@Links` — a real table. One row per patch.
 ```markdown
 | Origami patch                     | SwiftUI                              |
 |-----------------------------------|--------------------------------------|
-| `interaction.tap` — Tap           | ``onTap(_:)`` (native)               |
-| `interaction.drag` — Drag         | ``drag(position:enable:)`` (helper)  |
+| `interaction.tap` — Tap           | ``onTapGesture(_:)`` (native)        |
+| `interaction.drag` — Drag         | ``drag(enable:momentum:bounds:position:translation:velocity:reset:)`` (helper) |
 | `layer.oval` — Oval               | `Circle()` (native)                  |
 ```
 
@@ -128,8 +128,9 @@ Image + code + minimal context. That is the whole page.
     @CallToAction(url: "https://patterns.swami.dev/downloads/Interaction_Touch.zip", purpose: download, label: "Download")
 }
 
-Tap the card to grow the hidden oval inside it. Uses ``onTap(_:)`` with a
-`withAnimation(.easeInOut(duration: 0.5))` block to interpolate the scale.
+Tap the card to grow the hidden oval inside it. Uses ``interaction(onTap:)``
+with a `.animation(.easeInOut(duration: 0.5), value:)` modifier to interpolate
+the scale.
 
 ```swift
 struct InteractionTouch: View {
@@ -138,14 +139,14 @@ struct InteractionTouch: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color(hex: 0xDD70DF))
+                .fill(Color(red: 221/255, green: 112/255, blue: 223/255)) // Origami Purple #DD70DF
                 .frame(width: 100, height: 100)
                 .scaleEffect(pressed ? 5 : 0)
         }
         .frame(width: 300, height: 300)
         .background(.white)
         .cornerRadius(20)
-        .onTap { pressed.toggle() }
+        .interaction(onTap: { pressed.toggle() })
         .animation(.easeInOut(duration: 0.5), value: pressed)
     }
 }
