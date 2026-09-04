@@ -11,23 +11,7 @@ name: verify
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'skill/**'
-      - 'AGENTS.md'
-      - 'CLAUDE.md'
-      - 'NEEDS-VERIFY.md'
-      - '.github/PULL_REQUEST_TEMPLATE/**'
   pull_request:
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'skill/**'
-      - 'AGENTS.md'
-      - 'CLAUDE.md'
-      - 'NEEDS-VERIFY.md'
-      - '.github/PULL_REQUEST_TEMPLATE/**'
   workflow_dispatch:
 
 permissions:

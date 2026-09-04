@@ -36,6 +36,11 @@ agent — the cloud loop does not write there.
 - **Parser generalization** — biggest live blocker. Currently only Touch-sized files parse
   cleanly (placed-vs-library fixed tail offset). Interaction_Drag over-includes the embedded
   Drag component. Until this generalizes, we can't feed the loop pattern N+1.
+- **Conditional verify.yml for docs-only PRs** — verify.yml currently runs (and burns ~15min of
+  macOS runner) on docs-only PRs where nothing it checks has changed. paths-ignore is unsafe
+  (workflow-level skip breaks required checks). Right fix: dorny/paths-filter action at job level,
+  so verify.yml still starts but the expensive pixel-gate job skips cleanly. Deferred; low priority
+  since we're not paying for macOS minutes yet on this repo (public, GHA-hosted).
 
 ## Follow-up ADRs on the same runner substrate (ADR-0013 enables)
 - **Parser verification via Origami Inspector** — osascript can read AX attributes of
