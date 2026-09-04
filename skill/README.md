@@ -7,17 +7,19 @@ Three things live here:
 2. **First-party skills** written for this repo's Build↔Review loop.
 3. **Adopted skills** vendored from external repos when their shape fits our loop.
 
-## The swami skill (not built yet)
+## The swami translator skill
 
-A skill that reads the IR plus the Origami and SwiftUI docs and the mapping rules,
-and emits idiomatic SwiftUI for the user's selection. Codify the mapping table and
-hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
+The IR → SwiftUI translator lives at **`pattern-translation/`** (community-portable)
+plus **`docc-authoring/`** (Swami DocC house style). Together they cover the
+"judgment" half of the project: how one Origami pattern lands as one compilable
+Swift file with its DocC page. Principles the pair codifies:
 
 - Map to SwiftUI's **state graph**, not to free functions (the dataflow thesis).
-- Scope output to the selection; use the whole-file IR as context (ADR 0002).
-- **Flag, don't fake** the hard cases (continuous springs, custom JS patches, cyclic
-  dataflow, absolute layout).
-- Use `examples/` as worked-examples that steer translation.
+- Scope output to one pattern; use the whole-file IR as context (ADR 0002).
+- **Flag, don't fake** the hard cases (continuous springs, custom JS patches,
+  cyclic dataflow, absolute layout).
+- Native-first per ADR-0009; helpers only for recurring mismatches, one helper
+  per patch per ADR-0010.
 
 ## First-party skills
 
@@ -44,8 +46,11 @@ hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
 - **`workflow/`** — swami house rules: Beats, branch naming, PR templates,
   review flow, evidence expectations. Load before opening any PR against
   `swamikit/swami`.
-- **`pattern-translation/`** *(stub)* — mapping-table judgment for translating
-  one Origami pattern into idiomatic SwiftUI. Not written yet.
+- **`pattern-translation/`** — how to translate one Origami pattern into
+  idiomatic SwiftUI. Reads the IR, maps patches to SwiftUI (native-first per
+  ADR-0009), emits a compilable `.swift` file. Community-portable — no
+  swamikit/swami-specific PR flow; pair with `workflow/` when opening a PR
+  here.
 - **`docc-authoring/`** *(stub)* — how a translated pattern gets documented in
   DocC (article, tutorial, code listing, screenshot). Not written yet.
 - **`review/`** *(stub)* — how the Reviewer GA runs its checks (visual,
