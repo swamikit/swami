@@ -1,4 +1,4 @@
-# NEEDS-VERIFY — drive-gate backlog (verified-delivery)
+# BACKLOG — drive-gate backlog (verified-delivery)
 
 Nothing here is "done." Each item is DRAFT/UNVERIFIED until an agent drives the real running
 product (XcodeBuildMCP `build_run_sim` → `screenshot`, read against intent, compared to the
@@ -73,6 +73,9 @@ agent — the cloud loop does not write there.
   faithful momentum constants in drag().
 
 ## Infra self-healing loop (V4 prerequisites)
-- **`.github/ISSUE_TEMPLATE/infra-blocker.md`** — structured evidence template for when a Builder or Review GA hits a runner-level failure (Origami install broken, sim boot fails, ImageMagick not available, etc.). Fields: what step failed, full log excerpt, environment (macos-15 image, Xcode version, Origami version), what was tried, suspected cause. **Template auto-applies `label: infra-blocker`** (via `labels: [infra-blocker]` in the template frontmatter) so downstream queries are label-based, not type-based (`--type` was undecided in `gh` versions across the fleet; labels are portable). **Prerequisite**: create the `infra-blocker` label in the repo first via `gh label create infra-blocker --color BFD4F2 --description 'runner-level failure blocking Builder or Review GA'`, OR via a checked-in `.github/labels.yml` + labels sync action — template frontmatter can only apply labels that already exist. Its own tiny PR.
-- **`skill/troubleshooting/`** — living runbook of known infra issues and their fixes. Each entry: symptom, evidence signature, workaround, verification. Every fix PR appends here. Referenced by both Builder and Review skills — pre-flight check reads open issues carrying `label: infra-blocker`; if any match, apply the workaround referenced there or escalate. Own PR when V4 starts.
-- **Builder pre-flight step** (once above two land) — in Builder GA (Round 3) and in `skill/pattern-translation` / `skill/workflow`: before real work, `gh issue list --label infra-blocker --state open --limit 100` and check for matches against current environment (`gh` defaults to `--limit 30`, which could silently miss blockers on a busy repo; `--limit 100` is safe headroom, and if the open-blocker corpus ever exceeds that, paginate with `--json number,title` + successive queries). Codify the "apply workaround or escalate" decision.
+- **`.github/ISSUE_TEMPLATE/infra-blocker.md`** (landed in PR #24) — structured evidence template for when a Builder or Review GA hits a runner-level failure (Origami install broken, sim boot fails, ImageMagick not available, etc.). Template auto-applies `label: infra-blocker` so downstream queries are label-based.
+- **`skill/troubleshooting/`** (landed in PR #24) — living runbook of known infra issues and their fixes. Each entry: symptom, evidence signature, workaround, verification. Referenced by both Builder and Review skills as a pre-flight check.
+- **Builder pre-flight step** (blocked on Builder GA — PR #27) — before real work, `gh issue list --label infra-blocker --state open --limit 100` and check for matches against current environment. Apply workaround or escalate.
+- **Triage GA** (in-flight — PR #22) — fires on `on: issues: [opened, edited]`. Runs on ubuntu-latest (Claude API). Categorize, dedupe, route (label 'ready' / 'needs-info' / 'translate' / etc.). Closes the loop Codex findings → issues → routed to Builder or human.
+- **Triage on PRs** (not yet scheduled) — extend triage.yml to also fire on `pull_request: [opened, edited]` so it can proactively skim new PRs for cross-ADR contradictions and stale assumptions. Gap surfaced 2026-09-04.
+
