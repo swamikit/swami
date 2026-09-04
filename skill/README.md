@@ -27,6 +27,12 @@ hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
   a PR event or an `@claude review` comment. Renamed from `visual-review` because
   the Reviewer's job covers visual, structural, methodology, and evidence, not
   pixels alone.
+- **`triage/`.** The Triage GA's playbook (`triage/SKILL.md`). G-doc-style
+  issue lifecycle: read before writing, update before creating, consolidate the
+  overlap, split the pile-ups, close on evidence. Loaded by any GA whose trigger
+  is an `issues` event, and by any agent turning a feedback dump (chat log,
+  meeting notes, review batch) into tracked issues. Prevents the "AI floods the
+  tracker with duplicates" failure mode we hit before.
 
 ## Adopted skills
 
