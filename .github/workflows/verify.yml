@@ -27,7 +27,34 @@ env:
   SSIM_THRESHOLD: "0.95"
 
 jobs:
+  # Always runs. Cheap ubuntu check that classifies the PR's touched paths so we
+  # only pay for macos-15 minutes when the pixel gate can actually catch something.
+  # Also gives branch protection something to require on every PR without forcing
+  # the expensive job on docs-only changes.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'app/**'
+              - 'tool/src/**'
+              - 'tool/**/*.py'
+              - '.github/workflows/verify.yml'
+              - '**/*.origami'
+              - '**/*.origami-config'
+
   pixel-gate:
+    needs: changes
+    # Run the expensive gate on: (a) code changes detected by paths-filter, or (b) manual
+    # workflow_dispatch so someone can re-verify against a new Origami release without
+    # manufacturing a fake code change (Codex P2 catch).
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
