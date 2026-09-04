@@ -14,7 +14,9 @@ on:
   push:
     branches: [main]
     paths:
-      - 'app/Swami/Patterns/**'
+      # Pattern sources are flat *.swift files, one per pattern
+      # (e.g. app/Swami/Patterns/Touch.swift). Trigger on those only.
+      - 'app/Swami/Patterns/*.swift'
 
 permissions:
   contents: write  # commit back to main; create/update releases
@@ -42,10 +44,10 @@ jobs:
         id: patterns
         run: |
           set -euo pipefail
-          # Files under app/Swami/Patterns/ that changed in this push. Take the
-          # first path segment as the pattern name (e.g. Touch/…, LongPress/…).
+          # Flat pattern-source layout: app/Swami/Patterns/<Name>.swift.
+          # Extract <Name> as the pattern id — the basename minus the .swift suffix.
           changed=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" \
-                    -- 'app/Swami/Patterns/**' || true)
+                    -- 'app/Swami/Patterns/*.swift' || true)
           if [ -z "${changed}" ]; then
             echo "no pattern files changed"
             echo "names=" >> "$GITHUB_OUTPUT"
@@ -53,6 +55,7 @@ jobs:
           fi
           names=$(printf '%s\n' "${changed}" \
                     | awk -F/ '{print $4}' \
+                    | sed 's/\.swift$//' \
                     | sort -u \
                     | grep -v '^$' \
                     | paste -sd, -)
@@ -91,13 +94,15 @@ jobs:
           mkdir -p "${DOCC_RESOURCES}"
           IFS=',' read -ra names <<<"${{ steps.patterns.outputs.names }}"
           for name in "${names[@]}"; do
-            # Convention: ci-screenshots stores ours-<slug>.png (lowercased slug).
-            # Look under the PR dir first if present, else the branch root.
+            # verify.yml writes to out/{origami,swami,diff}/<slug>.png and pushes
+            # the tree under pr-<N>/ on the ci-screenshots branch. Ours = swami/.
+            # slug is the lowercased pattern name (matches verify.yml's PATTERNS
+            # env: "touch:Interaction_Touch" → slug "touch").
             slug=$(echo "$name" | tr '[:upper:]' '[:lower:]')
             src=""
             for candidate in \
-              ".evidence/pr-${{ steps.pr.outputs.pr }}/ours-${slug}.png" \
-              ".evidence/ours-${slug}.png"; do
+              ".evidence/pr-${{ steps.pr.outputs.pr }}/swami/${slug}.png" \
+              ".evidence/swami/${slug}.png"; do
               if [ -f "$candidate" ]; then src="$candidate"; break; fi
             done
             if [ -z "$src" ]; then
@@ -131,13 +136,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          # TODO: real mini-Xcode-project bundling. For now, tarball the pattern's
-          # source directory so the CTA link resolves to something, and land the
+          # TODO: real mini-Xcode-project bundling. For now, zip the pattern's
+          # source file so the CTA link resolves to something, and land the
           # real bundler in a follow-up PR (Option A).
           IFS=',' read -ra names <<<"${{ steps.patterns.outputs.names }}"
           for name in "${names[@]}"; do
-            src="app/Swami/Patterns/${name}"
-            if [ ! -d "$src" ]; then continue; fi
+            src="app/Swami/Patterns/${name}.swift"
+            if [ ! -f "$src" ]; then continue; fi
             out="dist/${name}.zip"
             (cd "$(dirname "$src")" && zip -qr "${GITHUB_WORKSPACE}/${out}" "$(basename "$src")")
             echo "built ${out}"
