@@ -14,10 +14,9 @@ Origami's patch graph is reactive dataflow, so is SwiftUI, keep them aligned.
 ## Layout
 
 ```
-tool/                Python parser + codegen + Swift harness package
+tool/                Python parser + codegen
 ├── src/parser/      the schema-less FlatBuffers walker (stdlib only)
 ├── src/codegen/     IR → SwiftUI writer (stdlib only)
-├── harness/         Swift Package (build target — Apple platforms only)
 └── examples/        working seed translations (Touch is the oracle)
 app/                 Swami.xcodeproj — framework + SwamiHost verify host
 docs/decisions/      ADRs — read these when in doubt about a design call
@@ -33,8 +32,8 @@ live in a separate private repo. Do not add any `.origami` file to this repo.
   no build step, run directly with `python3`.
 - Run the tree-sitter-swift syntax **pre-gate** on generated Swift (`scripts/codex-setup.sh`
   installs the grammar). This catches syntax errors — not type errors.
-- Read the harness Swift for reference (`tool/harness/Sources/`) but do NOT try to
-  build it here — most of it depends on SwiftUI, which is Apple-only.
+- Read the Swami framework sources (`app/Swami/`) for reference but do NOT try to
+  build the Xcode project here — Apple-only.
 - Draft ADRs, update `NEEDS-VERIFY.md`, refine the IR schema, propose codegen changes.
 - Open PRs; the Mac-side runner will do the pixel gate on merge candidates.
 

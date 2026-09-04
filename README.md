@@ -20,8 +20,11 @@ Translate [Origami Studio](https://origami.design) prototypes into idiomatic **S
 Fidelity is **visual** (ADR-0004): render the SwiftUI and diff it against the Origami
 render. The graph is the source of truth for values; reading them from Origami's Inspector
 is an *oracle*, not the method. The test corpus is Origami's built-in **Patterns gallery**
-(ADR-0005). `harness/` is a Swift Package holding each generated pattern with a `#Preview`
-so Xcode's canvas renders them for side-by-side diffing.
+(ADR-0005). The verify gate lives in `.github/workflows/verify.yml` + `app/SwamiHost`
+(ADR-0013 Path B): on a `macos-15` runner, install Origami from its Sparkle appcast, boot
+an iPhone 16 sim, build+install `SwamiHost`, then `xcrun simctl io … screenshot` the
+sim while an AppleScript-driven Origami window screenshots the artboard — same pattern
+on each side — and SSIM-diff the pair with ImageMagick's `compare`.
 
 ## Status
 
