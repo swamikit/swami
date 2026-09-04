@@ -148,21 +148,29 @@ jobs:
           dims_to_sim() {
             case "$1" in
               750x1334)   echo "iPhone SE (3rd generation)" ;;
-              1170x2532)  echo "iPhone 15" ;;
-              1179x2556)  echo "iPhone 16 Pro" ;;
+              1170x2532)  echo "iPhone 13" ;;
+              1179x2556)  echo "iPhone 15" ;;
+              1206x2622)  echo "iPhone 16 Pro" ;;      # Origami's current default artboard
               1290x2796)  echo "iPhone 16 Pro Max" ;;
               *)          echo "" ;;
             esac
           }
 
-          # Find an available sim by exact device name. Prints UDID or empty. Pure bash,
-          # no Python heredoc indentation traps. Use grep -F because device names contain
-          # regex metachars ("iPhone SE (3rd generation)") and leading indent varies by
-          # runtime section on this runner image.
+          # Runtime to require. SwamiHost's deployment target is iOS 26.2; must match.
+          REQUIRED_RUNTIME="iOS 26.2"
+
+          # Find a sim by name AND runtime. simctl list groups devices under "-- iOS X.Y --"
+          # headers; walk the section, match device name, extract UDID. Pure bash — no
+          # regex metachar traps, no Python heredoc indentation.
           find_sim_udid() {
+            local name="$1"
+            local runtime="${2:-$REQUIRED_RUNTIME}"
             xcrun simctl list devices available \
-              | grep -F -- "$1 (" \
-              | head -1 \
+              | awk -v rt="-- ${runtime} --" -v needle="${name} (" '
+                  $0 ~ rt        { in_rt=1; next }
+                  /^-- .* --$/   { in_rt=0 }
+                  in_rt && index($0, needle) { print; exit }
+                ' \
               | grep -oE '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' \
               | head -1
           }
@@ -224,8 +232,8 @@ jobs:
             if [ -z "$UDID" ]; then
               # Loud failure — don't produce partial evidence silently. Log what we DID see
               # so future-us can extend the dims_to_sim map or fix the runner image list.
-              echo "::error::No sim UDID for '${DEVICE_NAME}' at ${KEY}. Available iPhone sims:"
-              xcrun simctl list devices available | grep -E '^    iPhone' | sed 's/^/  /'
+              echo "::error::No '${DEVICE_NAME}' sim on ${REQUIRED_RUNTIME} at ${KEY}. Available iPhone sims by runtime:"
+              xcrun simctl list devices available | awk '/^-- iOS / { section=$0; next } / iPhone/ && section { print "  " section " → " $0 }'
               RESULTS="${RESULTS}| ${slug} | ${DEVICE_NAME} | SIM NOT AVAILABLE | ❌ |"$'\n'
               FAIL=1
               continue
