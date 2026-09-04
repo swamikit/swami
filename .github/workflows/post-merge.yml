@@ -78,12 +78,20 @@ jobs:
         if: steps.patterns.outputs.names != ''
         run: |
           set -euo pipefail
-          mkdir -p .evidence
+          # Materialize ci-screenshots in a sibling worktree so the main
+          # checkout's index and working tree stay untouched — the previous
+          # `git --work-tree=.evidence checkout ci-screenshots -- .` pattern
+          # would stage every file from ci-screenshots into the main index,
+          # which then had to be cleaned up before we could commit renders.
+          if [ -d .evidence ]; then
+            git worktree remove --force .evidence 2>/dev/null || rm -rf .evidence
+          fi
           if git ls-remote --exit-code --heads origin ci-screenshots >/dev/null; then
             git fetch origin ci-screenshots:ci-screenshots
-            git --work-tree=.evidence checkout ci-screenshots -- . 2>/dev/null || true
+            git worktree add --detach .evidence ci-screenshots
           else
             echo "ci-screenshots branch does not exist — nothing cached"
+            mkdir -p .evidence
           fi
           ls -la .evidence || true
 

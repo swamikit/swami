@@ -15,6 +15,14 @@ on:
     types: [opened, synchronize, ready_for_review]
   push:
     branches: [main]
+    # Merges that only touch pattern sources feed post-merge.yml, which
+    # renders fresh PNGs into DocC Resources and pushes them back to main.
+    # That follow-up commit (path: app/Swami/Swami.docc/Resources/**) is
+    # what should trigger publish-docs — publishing on the raw merge would
+    # ship stale renders. Ignoring the pattern-source path keeps this
+    # workflow off the merge push; the render commit still fires it.
+    paths-ignore:
+      - 'app/Swami/Patterns/*.swift'
   workflow_dispatch:
 
 permissions:
@@ -22,10 +30,12 @@ permissions:
   pull-requests: write   # sticky comment on the PR
 
 concurrency:
-  # One publish per PR (or per main push) at a time; cancel in-flight when a
-  # new commit lands on the same ref so we don't fight ourselves on gh-pages.
-  group: publish-docs-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Serialize every writer to gh-pages — PR previews, main publishes, and
+  # manual re-runs all mutate the same branch, so a per-ref group let two
+  # PRs race on gh-pages. One shared group + cancel-in-progress: false
+  # forces them into a queue and preserves each run's push.
+  group: gh-pages
+  cancel-in-progress: false
 
 env:
   APP_PROJECT: app/Swami.xcodeproj
