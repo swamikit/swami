@@ -27,6 +27,11 @@ hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
   a PR event or an `@claude review` comment. Renamed from `visual-review` because
   the Reviewer's job covers visual, structural, methodology, and evidence, not
   pixels alone.
+- **`observing/`.** The cross-PR pattern observer (`observing/SKILL.md`). How any
+  agent watches for recurring shapes across many PRs — repeated Codex findings,
+  missing helpers, verify-flake signatures, prose drift — and files a `type:meta`
+  issue with evidence proposing a system-level fix. N=3+ threshold, one meta-issue
+  per pass. This is how the self-improving loop generates its own tasks.
 
 ## Adopted skills
 
