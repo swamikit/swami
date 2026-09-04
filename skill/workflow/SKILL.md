@@ -24,10 +24,55 @@ Every pattern PR moves through four beats, in order:
    ADR-0014). The merge gate is Reviewer approval plus a human spot-check on
    flagged cases — interaction PRs and any comparison the Reviewer flags for
    human eyes.
-4. **Ship** — squash-merge with a PR body a human can read months later.
+4. **Ship** — squash-merge with a PR body a human can read months later. Once
+   Claude Review GA is live, the merge path is **auto-merge on double green**
+   (Codex + Claude Review both approving, no Reviewer human-eyes flag). Until
+   then, the interim is a Sam spot-check on every merge — no auto-merge, even
+   on a clean gate.
 
 The beat vocabulary comes from AGENTS.md's methodology section. If a PR skips a
 beat, say so and say why.
+
+## Evidence-gated pickup
+
+`ready` on an issue is a signal, not a start gun. Before an agent (Builder,
+Triage, meta-Builder) picks up an issue or a task from its queue, it judges
+whether the issue is *actually* ready to act on. Mechanical execution is how
+you burn hours on the wrong thing.
+
+Five checks, in order — the first that fails decides the outcome:
+
+1. **Evidence threshold** — does the issue have enough concrete evidence
+   (linked PRs, file:line refs, logs, screenshots) to act on? If not, comment
+   asking for what's missing and don't start work.
+2. **Recency** — was the evidence reproduced against current `HEAD` (per
+   verified-delivery's evidence-required-claims)? Stale evidence gets
+   re-verified against HEAD *before* acting; if it no longer reproduces, say so
+   and close or re-scope.
+3. **Priority alignment** — is this the highest-priority `ready` issue right
+   now? Don't pull a p3 while a p1 is sitting `ready`. Sort the queue before
+   you take from it.
+4. **Blockedness** — are there dependencies (linked issues, waiting-on-review
+   PRs on the same surface) that mean starting now creates a merge conflict or
+   a rebased-away branch? Wait if so, and say what you're waiting on.
+5. **Threshold for meta-issues** — `type:meta` issues (patterns, drift
+   reports, "we keep hitting X") need **N=3 or more** independent pieces of
+   evidence before Builder acts. One or two instances get a
+   *"will pick up when a third instance appears"* comment and stay in the
+   queue — meta-work on a sample of one is how the corpus gets bent to a coincidence.
+
+**Decision, out loud.** The agent posts one of:
+
+- **pick up** — start work; the checks passed. Note briefly why (which
+  evidence, current HEAD ref).
+- **defer** — comment on the issue with which check failed and what would
+  unblock it; leave `ready` on or take it off per the check (missing evidence
+  loses `ready`; blocked keeps it).
+- **escalate** — needs a human call (priority tie, scope ambiguity,
+  contradictory evidence). Comment, tag Sam, stop.
+
+This is the "prioritizing judge" step. It's what makes `ready` mean *ready*
+instead of *stale*.
 
 ## Branch naming
 
