@@ -90,39 +90,151 @@ jobs:
           sudo xattr -dr com.apple.quarantine "/Applications/Origami Studio.app" 2>&1 || true
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Render Origami references (drives sim dims)
+        id: origami-renders
+        run: |
+          # Render Origami's side of every pattern BEFORE picking the sim, so the sim
+          # picker can size the SwiftUI runner to the exact pixel dimensions Origami
+          # produces (Codex P1 follow-on to PR #16). This is the dims-first flip: the
+          # earlier ordering rendered Origami inside the compare loop, forcing the sim
+          # to be picked blind (tier heuristic). We now:
+          #
+          #   1. Fetch + render each Origami reference here.
+          #   2. `sips` the PRIMARY pattern's PNG → publish `target_width`/`target_height`.
+          #   3. Sim-picker step keys off those dims (exact equality); tier ranking is
+          #      the tiebreaker / fallback when the target is unknown or no sim matches.
+          #
+          # Primary = the first pattern in $PATTERNS. Origami's default artboard is
+          # Pro-Max-sized (1290×2796 on iPhone 14/15 Pro Max, 1290×2796 on 15/16 Plus);
+          # `Interaction_Touch` is a portrait full-artboard render at that size today.
+          # If the primary render misses, we degrade to any pattern that did render;
+          # if none rendered, we omit the target dims and the sim picker falls back to
+          # pure tier ranking.
+          mkdir -p out/origami
+
+          for pair in $PATTERNS; do
+            slug="${pair%%:*}"
+            stem="${pair##*:}"
+            src_url="https://origami.design/public/origami_files/patterns/${stem}.origami"
+            echo "==> Rendering ${slug} (${stem})"
+
+            curl -sL -o "/tmp/${stem}.origami" "$src_url"
+            if ! [ -s "/tmp/${stem}.origami" ]; then
+              echo "  fetch failed for $src_url"
+              continue
+            fi
+
+            marker=$(mktemp); touch "$marker"; sleep 0.5
+            open -a "/Applications/Origami Studio.app" "/tmp/${stem}.origami"
+            sleep 12
+            osascript >/dev/null 2>&1 \
+              -e 'tell application "System Events" to tell process "Origami Studio" to set frontmost to true' \
+              -e 'delay 0.5' \
+              -e 'tell application "System Events" to tell process "Origami Studio" to tell menu bar 1 to tell menu "View" to click menu item "Take Screenshot"' \
+              || echo "  osascript click failed"
+            sleep 3
+            shot=$(find ~/Desktop -maxdepth 1 -name "Origami-Studio Screenshot*.png" -newer "$marker" 2>/dev/null | head -1)
+            if [ -z "$shot" ]; then
+              echo "  MISS: no Origami screenshot for ${slug}"
+              rm -f "$marker"; continue
+            fi
+            mv "$shot" "out/origami/${slug}.png"
+            rm -f "$marker"
+
+            # Close doc so next pattern gets a clean slate
+            osascript >/dev/null 2>&1 \
+              -e 'tell application "System Events" to tell process "Origami Studio" to keystroke "w" using command down' \
+              -e 'delay 0.4' \
+              -e 'try' \
+              -e '  tell application "System Events" to tell process "Origami Studio" to click button "Don''t Save" of sheet 1 of window 1' \
+              -e 'end try' \
+              || true
+            sleep 0.5
+          done
+
+          # Publish the primary pattern's dims (fall back to any rendered pattern) so
+          # the sim picker can match them exactly. Primary = first entry in $PATTERNS
+          # ("touch" today). %%:* is greedy so it strips ":Interaction_Touch <rest>"
+          # even when more pairs are added later.
+          first_slug="${PATTERNS%%:*}"
+          target_png="out/origami/${first_slug}.png"
+          if [ ! -f "$target_png" ]; then
+            target_png=$(ls out/origami/*.png 2>/dev/null | head -1 || true)
+          fi
+          if [ -n "$target_png" ] && [ -f "$target_png" ]; then
+            W=$(sips -g pixelWidth  "$target_png" | awk '/pixelWidth:/  { print $2 }')
+            H=$(sips -g pixelHeight "$target_png" | awk '/pixelHeight:/ { print $2 }')
+            echo "  target dims: ${W}x${H}  (from $target_png)"
+            echo "target_width=$W"  >> "$GITHUB_OUTPUT"
+            echo "target_height=$H" >> "$GITHUB_OUTPUT"
+          else
+            echo "no Origami PNG rendered — sim picker will fall back to tier ranking"
+          fi
+
       - name: Pick + boot a simulator
         id: sim
+        env:
+          TARGET_W: ${{ steps.origami-renders.outputs.target_width }}
+          TARGET_H: ${{ steps.origami-renders.outputs.target_height }}
         run: |
-          # Rank the scheme's valid iOS-Simulator destinations by (tier, model#).
-          # Origami's default artboard is Pro-Max-sized (1290x2796); the earlier
-          # alphabetic pick (`sorted(...).last`) grabbed "iPhone SE" because "SE"
-          # sorts after "17" — wrong device for the pixel gate.
+          # Rank the scheme's valid iOS-Simulator destinations dims-first, tier-second
+          # (Codex P1). The primary sort key is exact equality with Origami's rendered
+          # PNG dimensions: a sim whose native pixel resolution matches wins, regardless
+          # of tier or model number. If the target dims are unknown (Origami didn't
+          # render) OR no sim matches, we fall back to PR #16's tier ranking:
           #
-          # Tier order (highest first): Pro Max = Plus > Pro > plain iPhone > Air > SE.
-          # Pro Max and Plus share the same native pixel width (1290 today, 1320 on
-          # iPhone 16+), which is what Origami's default artboard renders at — either
-          # is a correct pick, so they share a tier. Tiebreak: model number descending
-          # (iPhone 17 Pro Max beats iPhone 16 Pro Max). Model number is extracted
-          # from the token immediately after "iPhone " so names like
-          # "iPhone SE (3rd generation)" don't accidentally read as model 3.
+          #   Tier order (highest first): Pro Max = Plus > Pro > plain iPhone > Air > SE.
+          #   Tiebreak: model number descending (iPhone 17 Pro Max beats iPhone 16 Pro Max).
           #
-          # FOLLOW-UP (Codex P1, ADR-0013 dims-first): This ranker is a heuristic
-          # proxy for "the sim whose native resolution equals Origami's rendered
-          # artboard". The correct check is dimension equality — render Origami
-          # first, `sips -g pixelWidth -g pixelHeight` the PNG, then pick the sim
-          # device whose native resolution matches those exact dimensions. Doing
-          # that here requires hoisting the Origami render loop ABOVE the sim boot
-          # step (it currently runs after Build+Install) plus a device-model → native-
-          # resolution table, so it's tracked as the follow-on to this PR — PR #2
-          # already scopes the "dimension-to-device map" (see PR #16 description).
-          # Landing this coarse tier ranker now unblocks the pixel gate; PR #2
-          # replaces it with the exact-dims match.
+          # This retires the tier-only heuristic's known miss: on the current runner
+          # image `iPhone 17 Pro Max` (1320×2868) outranks `iPhone 15 Plus` (1290×2796)
+          # by tier + model, but Origami renders `Interaction_Touch` at 1290×2796, so
+          # the 15 Plus is the correct pick. Dims-first surfaces that.
           #
-          # Falls back to the old alphabetic pick if xcodebuild -showdestinations
-          # misbehaves on this runner image, so a picker failure never blocks the gate.
+          # The device→native-resolution table is embedded in awk. When Apple ships a
+          # new iPhone form factor, add a row; unmatched sims still rank correctly by
+          # tier (their dm lookup returns "" so match_score=0 and they fall through).
+          #
+          # `set +e ... set -e` around the command substitution (Codex P2): with the
+          # step's default `-eo pipefail`, a nonzero exit from `xcodebuild` or any
+          # stage of the pipeline would kill the step before the fallback runs.
+
+          set +e
           UDID=$(xcodebuild -showdestinations \
                    -project "$APP_PROJECT" -scheme "$SCHEME" 2>/dev/null \
-            | awk '
+            | awk -v target="${TARGET_W}x${TARGET_H}" '
+                BEGIN {
+                  # Portrait native pixel resolutions of currently-shipping iPhone sims
+                  # (iOS 26.2 lineup; longest-prefix match handles suffixes like
+                  # "(3rd generation)").
+                  dims["iPhone 17 Pro Max"]          = "1320x2868"
+                  dims["iPhone 17 Pro"]              = "1206x2622"
+                  dims["iPhone 17 Plus"]             = "1320x2868"
+                  dims["iPhone 17 Air"]              = "1260x2736"
+                  dims["iPhone 17"]                  = "1206x2622"
+                  dims["iPhone 16 Pro Max"]          = "1320x2868"
+                  dims["iPhone 16 Pro"]              = "1206x2622"
+                  dims["iPhone 16 Plus"]             = "1290x2796"
+                  dims["iPhone 16"]                  = "1179x2556"
+                  dims["iPhone 15 Pro Max"]          = "1290x2796"
+                  dims["iPhone 15 Pro"]              = "1179x2556"
+                  dims["iPhone 15 Plus"]             = "1290x2796"
+                  dims["iPhone 15"]                  = "1179x2556"
+                  dims["iPhone 14 Pro Max"]          = "1290x2796"
+                  dims["iPhone 14 Pro"]              = "1179x2556"
+                  dims["iPhone 14 Plus"]             = "1284x2778"
+                  dims["iPhone 14"]                  = "1170x2532"
+                  dims["iPhone SE (3rd generation)"] = "750x1334"
+                }
+                function lookupDims(n,    k, best, bestlen) {
+                  best = ""; bestlen = 0
+                  for (k in dims) {
+                    if (index(n, k) == 1 && length(k) > bestlen) {
+                      best = dims[k]; bestlen = length(k)
+                    }
+                  }
+                  return best
+                }
                 /platform:iOS Simulator/ {
                   id=""; name=""
                   if (match($0, /id:[^,]+/))   { id   = substr($0, RSTART+3, RLENGTH-3) }
@@ -131,8 +243,13 @@ jobs:
                   gsub(/^ +| +$/, "", name)
                   if (id == "" || name == "") next
 
-                  # Tier: Pro Max and Plus share tier 4 (same native pixel width).
-                  # Air deliberately sits below plain iPhone — narrower artboard.
+                  # Dims match against Origami PNG (primary key). "x" (both empty)
+                  # means we have no target — every sim scores 0 and tier decides.
+                  dm = lookupDims(name)
+                  match_score = (target != "x" && dm != "" && dm == target) ? 1 : 0
+
+                  # Tier fallback (as in PR #16). Pro Max and Plus share tier 4 —
+                  # same native pixel width. Air sits below plain iPhone (narrower).
                   tier = 2
                   if      (name ~ /Pro Max/) tier = 4
                   else if (name ~ /Plus/)    tier = 4
@@ -140,20 +257,21 @@ jobs:
                   else if (name ~ /Air/)     tier = 1
                   else if (name ~ /SE/)      tier = 0
 
-                  # Model number = the integer right after "iPhone ", not just the
-                  # first digits anywhere (avoids "SE (3rd generation)" → 3).
+                  # Model number = integer right after "iPhone " (not just first
+                  # digits anywhere; avoids "SE (3rd generation)" → 3).
                   model = 0
                   if (match(name, /iPhone[ ]+[0-9]+/)) {
                     tok = substr(name, RSTART, RLENGTH)
                     sub(/^iPhone[ ]+/, "", tok)
                     model = tok + 0
                   }
-                  printf "%d\t%d\t%s\t%s\n", tier, model, id, name
+                  printf "%d\t%d\t%d\t%s\t%s\n", match_score, tier, model, id, name
                 }
               ' \
-            | sort -k1,1nr -k2,2nr \
+            | sort -k1,1nr -k2,2nr -k3,3nr \
             | head -n1 \
-            | cut -f3)
+            | cut -f4)
+          set -e
 
           if [ -z "$UDID" ]; then
             echo "  showdestinations ranking produced nothing — falling back to alphabetic pick"
@@ -178,62 +296,35 @@ jobs:
           xcrun simctl install "${{ steps.sim.outputs.udid }}" "$APP"
           echo "bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" >> "$GITHUB_OUTPUT"
 
-      - name: Render + compare per pattern
+      - name: Render SwamiHost + compare per pattern
         id: verify
         run: |
-          mkdir -p out/origami out/swami out/diff
+          # Origami's side is already rendered by the earlier "Render Origami references"
+          # step (dims-first sim pick depends on it). This step handles the SwamiHost
+          # side and the per-pattern SSIM compare.
+          mkdir -p out/swami out/diff
           RESULTS=""
 
           for pair in $PATTERNS; do
             slug="${pair%%:*}"
             stem="${pair##*:}"
-            src_url="https://origami.design/public/origami_files/patterns/${stem}.origami"
             echo "==> ${slug} (${stem})"
 
-            # 1. Fetch the .origami file from origami.design (public, no auth)
-            curl -sL -o "/tmp/${stem}.origami" "$src_url"
-            if ! [ -s "/tmp/${stem}.origami" ]; then
-              echo "  fetch failed for $src_url"
-              RESULTS="${RESULTS}| ${slug} | FETCH FAILED |"$'\n'
+            # If Origami missed earlier (fetch or render failure), record and skip —
+            # nothing to compare against.
+            if [ ! -f "out/origami/${slug}.png" ]; then
+              echo "  Origami render missing for ${slug} — nothing to compare against"
+              RESULTS="${RESULTS}| ${slug} | ORIGAMI RENDER FAILED |"$'\n'
               continue
             fi
 
-            # 2. Origami side: open, screenshot, close
-            marker=$(mktemp); touch "$marker"; sleep 0.5
-            open -a "/Applications/Origami Studio.app" "/tmp/${stem}.origami"
-            sleep 12
-            osascript >/dev/null 2>&1 \
-              -e 'tell application "System Events" to tell process "Origami Studio" to set frontmost to true' \
-              -e 'delay 0.5' \
-              -e 'tell application "System Events" to tell process "Origami Studio" to tell menu bar 1 to tell menu "View" to click menu item "Take Screenshot"' \
-              || echo "  osascript click failed"
-            sleep 3
-            shot=$(find ~/Desktop -maxdepth 1 -name "Origami-Studio Screenshot*.png" -newer "$marker" 2>/dev/null | head -1)
-            if [ -z "$shot" ]; then
-              echo "  MISS: no Origami screenshot for ${slug}"
-              RESULTS="${RESULTS}| ${slug} | ORIGAMI RENDER FAILED |"$'\n'
-              rm -f "$marker"; continue
-            fi
-            mv "$shot" "out/origami/${slug}.png"
-            rm -f "$marker"
-
-            # Close doc so next pattern gets a clean slate
-            osascript >/dev/null 2>&1 \
-              -e 'tell application "System Events" to tell process "Origami Studio" to keystroke "w" using command down' \
-              -e 'delay 0.4' \
-              -e 'try' \
-              -e '  tell application "System Events" to tell process "Origami Studio" to click button "Don''t Save" of sheet 1 of window 1' \
-              -e 'end try' \
-              || true
-            sleep 0.5
-
-            # 3. SwamiHost side: launch with slug, screenshot
+            # SwamiHost side: launch with slug, screenshot
             xcrun simctl terminate "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.bid }}" 2>/dev/null || true
             SIMCTL_CHILD_SWAMI_PATTERN="$slug" xcrun simctl launch "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.bid }}"
             sleep 3
             xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot "out/swami/${slug}.png"
 
-            # 4. Perceptual SSIM (1.0 identical, closer to 0 = worse) — informational
+            # Perceptual SSIM (1.0 identical, closer to 0 = worse) — informational
             # only per ADR-0014. No threshold, no pass/fail; posted as a data point.
             score=$(compare -metric SSIM "out/swami/${slug}.png" "out/origami/${slug}.png" "out/diff/${slug}.png" 2>&1 || true)
             echo "  SSIM $score"
