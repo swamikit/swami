@@ -8,8 +8,9 @@ metadata:
 # Pattern translation — Origami .origami to SwiftUI
 
 Translate one Origami pattern into a compilable SwiftUI file. This skill is the
-**judgment half** of the translator: the parser produces facts (nodes, edges,
-ports, values); this skill decides how those facts land in SwiftUI.
+**judgment half** of the translator: the parser produces facts (placed nodes
+today; edges, ports, and port defaults as the parser lands them); this skill
+decides how those facts land in SwiftUI.
 
 Community-portable by design. It does not mention `swamikit/swami`'s branches,
 PR templates, or review flow. Those live in `skill/workflow/`. Load `workflow`
@@ -19,36 +20,66 @@ elsewhere.
 ## Inputs you must have on hand
 
 - **One `.origami` file** (the source pattern; bytes on disk).
-- **The parser** at `tool/src/parser/` (`origami_graph.py`), able to walk the
-  FlatBuffers graph and return the semantic IR (nodes, edges, patch types,
-  ports where decoded).
+- **The parser** at `tool/src/parser/` (`origami_graph.py`). Today it enumerates
+  placed nodes only — see *Current parser limits* below for exactly what fields
+  it produces. Treat anything else as not-yet-decoded.
 - **The Swami helper library** at `app/Swami/` — read the public surface of the
   `.swift` files before you emit anything that references a helper. Only what
   is public and shipping is fair game.
-- **The DocC mapping tables** at `app/Swami/Swami.docc/` — the per-category
-  collection pages (`Interaction.md`, `Layer.md`, …) carry the current patch →
-  SwiftUI decision for every patch known to the corpus. This is the authoritative
-  mapping reference; read it before deciding native vs helper.
+- **The mapping model table** — the `## The mapping model` section in
+  `AGENTS.md` / `CLAUDE.md` at the repo root. This is the current authoritative
+  patch-category → SwiftUI-construct reference. (The per-category DocC
+  collection pages under `app/Swami/Swami.docc/` are the eventual home for
+  per-patch decisions but do not exist yet; do not block on them.)
 - **The load-bearing ADRs**:
   - **ADR-0009** — native-first; helpers only for recurring mismatches;
     inline-preferred delivery.
   - **ADR-0010** — bare, patch-matched helper names; one helper = one patch;
     ports match exactly.
 
-Missing any of these is a stop condition. Say what's missing and don't guess.
+Missing the `.origami` file, the parser, `app/Swami/`, or the ADRs is a stop
+condition. Say what's missing and don't guess.
+
+### Current parser limits
+
+`origami_graph.parse(path)` today returns a document dict with `placed_nodes`,
+`placed_node_count`, and a `kinds` histogram. Each placed node has:
+
+- `table` — its FlatBuffers table offset (opaque; disambiguates duplicates).
+- `type` — the patch id string, e.g. `origami.Interaction`,
+  `origami.ClassicAnimation`, `layer.Oval`. This is what the mapping model
+  keys on.
+- `name` — the human name from the graph, when present. May be `None`.
+
+Not yet produced (tracked in the parser's `_todo` and in `NEEDS-VERIFY.md`):
+
+- **edges** — connections between output and input ports.
+- **ports** — the per-node input/output port list.
+- **port default values** — the constants that live on unconnected inputs
+  (colors, sizes, durations, curves).
+
+Work from what's there. Where a step below asks for edges, ports, or exact
+constants, cross-check by hand against the `.origami` in Origami Studio or the
+patch's composite `.diamond/graph` in `Origami Studio.app/Contents/Resources/Patches/`,
+and flag the missing-decoder gap so the follow-up can retire the workaround.
 
 ## Translation flow
 
 ### 1. Parse `.origami` to semantic IR
 
-Run the parser (`tool/src/parser/origami_graph.py`) on the file. What you need
-out of it, per node:
+Run the parser (`tool/src/parser/origami_graph.py`) on the file. What you get
+out of it, per placed node (see *Current parser limits* above):
 
-- `patch_id` (e.g. `origami.Interaction`, `origami.ClassicAnimation`, `layer.Oval`).
-- `name` (the human name, when present).
-- `ports` (inputs and outputs; values when the port-default decoder has landed —
-  see the parser TODOs before trusting constants).
-- `edges` (which output feeds which input).
+- `type` — the patch id (e.g. `origami.Interaction`, `origami.ClassicAnimation`,
+  `layer.Oval`). This is the key for the mapping model.
+- `name` — the human name, when present.
+- `table` — the FlatBuffers table offset (opaque; use only to distinguish
+  duplicate nodes of the same `type`).
+
+Ports, edges, and port default values are not yet decoded. Where later steps
+need them (e.g. wiring interactions to state, reading exact durations or
+colors), you'll either read them from the `.origami` in Origami Studio by hand
+or fall back to documented defaults with a comment — do not fabricate.
 
 The parser is deterministic; run it once, work from its output. Do not eyeball
 FlatBuffers.
@@ -57,18 +88,20 @@ FlatBuffers.
 
 For each patch node, decide in this order:
 
-1. **Check the DocC mapping table** (the collection page for the patch's
-   category). If a decision is already recorded, use it.
+1. **Check the mapping model table** in `AGENTS.md` / `CLAUDE.md` (`## The
+   mapping model`). If the node's category is covered there, use that as the
+   SwiftUI target.
 2. **Helper exists?** If `app/Swami/` ships a public helper with the same name
-   as the patch (`interaction(...)`, `drag(...)`, `sampleAndHold(...)`, …) and
-   its port list matches, use it.
+   as the patch (`interaction(...)`, `drag(...)`, `sampleAndHold(...)`, …), use
+   it. Port-list matching is a per-helper check when the parser starts decoding
+   ports; until then, follow the helper's documented signature.
 3. **Native SwiftUI covers it?** Per ADR-0009, map to the most idiomatic native
    construct. Math to operators, logic to `&&`/`||`, tap-with-position to
    `SpatialTapGesture`, scroll to `ScrollView`, loops to `ForEach`, most `Layer.*`
    to `Shape`/`View` primitives. **Do not wrap an API that already fits.** Reach
    for `SpatialTapGesture` directly rather than a `spatialTap()` helper.
 4. **Neither native nor helper covers it?** Flag it. Emit a `// unsupported:
-   <patch_id> — <reason>` comment at the call site; do not fabricate an API.
+   <type> — <reason>` comment at the call site; do not fabricate an API.
    Record the miss so a follow-up can decide whether a helper is warranted (per
    ADR-0009 point 3 — a helper earns its place when a patch recurs without a
    faithful native equivalent).
@@ -150,23 +183,21 @@ mapping-table convention.
 Compile-gate is table stakes and lives elsewhere (the harness). This skill
 covers the *structural* checks you can run on the emitted file itself.
 
-For each helper the file calls:
-
-- **Port list matches** the Origami patch's ports, one-to-one, per ADR-0010.
-  Inputs become helper parameters; outputs become bindings or callbacks. No
-  helper call may pass a port that isn't on the patch, or drop a port that is.
-- **Values are sensible.** Constants read from the IR match the Origami
-  Inspector's values for that node (colors, sizes, durations, curves). If the
-  parser hasn't decoded a value yet (see `NEEDS-VERIFY.md` and the parser
-  TODOs), use the documented default and add a `// TODO: parser-decoded
-  default when available` comment — do not guess.
-- **All patch nodes accounted for.** Every node in the IR appears in the
-  emitted file — as a helper call, a native construct, or an `// unsupported`
-  comment. Silent drops mask parser gaps.
-
-Port-list checking becomes automatable when the parser's port-extraction pass
-lands (see `NEEDS-VERIFY.md`). Until then, cross-check by hand against the
-patch's public port list in the DocC mapping table.
+- **All placed nodes accounted for.** Every node in `placed_nodes` appears in
+  the emitted file — as a helper call, a native construct, or an
+  `// unsupported: <type>` comment. Silent drops mask parser gaps.
+- **Values are sensible.** Constants used in the emitted code match the
+  Origami Inspector's values for that node (colors, sizes, durations, curves)
+  when you can cross-check them. Because the parser has not yet decoded port
+  defaults (see *Current parser limits*), read the values from Origami Studio
+  by hand or use the patch's documented default, and add a `// TODO:
+  parser-decoded default when available` comment — do not guess.
+- **Helper calls match documented signatures.** Every helper you invoke exists
+  in `app/Swami/` HEAD and is called with its documented parameters (ADR-0010:
+  one helper = one patch; ports match exactly). Full port-list-vs-patch
+  checking becomes automatable when the parser's port-extraction pass lands;
+  until then, this is a manual cross-check against the helper's Swift
+  signature.
 
 ## Output shape
 
@@ -199,13 +230,14 @@ patch's public port list in the DocC mapping table.
 
 ## Where to read next
 
+- **`AGENTS.md` / `CLAUDE.md`, `## The mapping model`** — the current
+  patch-category → SwiftUI-construct table. Source of truth for step 2 until
+  the per-category DocC collection pages land.
 - **`skill/docc-authoring/SKILL.md`** — the DocC page shape the emitted file's
   header must match, and the collection-page mapping-table conventions.
 - **`docs/decisions/0009-native-first-helpers-for-recurring-mismatches.md`** —
   the native-first rule that drives step 2.
 - **`docs/decisions/0010-helper-naming-and-faithful-patch-mapping.md`** —
   helper naming and the one-patch-one-helper rule.
-- **`app/Swami/Swami.docc/`** — the mapping tables that are the source of
-  truth for "native or helper?" per patch.
 - **`NEEDS-VERIFY.md`** — the parser gaps that constrain what "faithful"
   currently means (placed-vs-library isolation, port-default decoding).
