@@ -43,8 +43,9 @@ determinism; docs PRs need cross-references that actually resolve.
   not enough (see below).
 - **Structural.** The placed graph's ports match the helper's ports; the helper
   used matches the Origami patch it claims to map (ADR-0010).
-- **Methodology.** Native-first path justified per ADR-0009; PR template used;
-  evidence complete (states, timings, hit areas, not just one hero shot).
+- **Methodology.** Native-first path justified per ADR-0009; pattern PR
+  template used (`.github/PULL_REQUEST_TEMPLATE/pattern.md`); evidence complete
+  (states, timings, hit areas, not just one hero shot).
 
 ### Helper PR
 - Code quality and idiom.
@@ -57,7 +58,8 @@ determinism; docs PRs need cross-references that actually resolve.
 
 ### Parser PR
 - Deterministic behavior. Same input, byte-identical output.
-- No runtime deps beyond stdlib (ADR-0004).
+- No runtime deps beyond stdlib (CLAUDE.md convention: "parser deterministic
+  and dependency-light").
 - Tests over the corpus, not just hand-crafted fixtures.
 - Boundary handling: root field 14 is library, tail region is placed graph. A
   parser change had better not confuse them again.
@@ -129,3 +131,5 @@ buckets. Say which is which.
   sticky comment, review threads, commit SHAs. Every run reloads from there.
 - The cycle is Build, Review, Build, Review, not Review-approves-once. A
   Reviewer who approves on first pass without evidence is skipping the loop.
+- Full Build/Review message-exchange model TBD in ADR-0015 (follow-up); the
+  above is the working contract until then.
