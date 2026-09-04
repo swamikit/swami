@@ -25,11 +25,11 @@ agent — the cloud loop does not write there.
   embedded Drag component on this 534 KB file). Must: (a) generalize the parser to isolate the real
   placed graph, (b) re-generate from true values, (c) drive-verify.
 
-## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
-- **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches
-  Origami's Sparkle appcast, installs the app, opens each pattern from origami.design's
-  public URL, drives `View → Take Screenshot`, then diffs against SwamiHost's sim render.
-  No cross-repo dep, no secrets.
+## Verify-gate — ADR-0013 (runner installs Origami, live render)
+- **Path B** is the shipped approach. Runner fetches Origami's Sparkle appcast,
+  installs the app, opens each pattern from origami.design's public URL, drives
+  `View → Take Screenshot`, then diffs against SwamiHost's sim render. Single
+  repo, no secrets.
 - **PATTERNS growth**: current single entry `touch:Interaction_Touch`. Add one line per
   translated pattern (`<slug>:<origami-filename-stem>`) as the corpus grows; the ContentView
   switch in `app/SwamiHost/ContentView.swift` gets a matching case.
@@ -55,9 +55,6 @@ agent — the cloud loop does not write there.
   withAnimation → interpolation` stack. Live example per stage.
 
 ## Housekeeping
-- **swami-private/references/ deletion** — cache is now dead weight per ADR-0013. Delete
-  the directory in a follow-up swami-private commit; keep `scripts/render-references.sh`
-  (still useful for local troubleshooting).
 - **ADRs 0001–0003 accounting**: the ADR directory jumps from 0004 to 0011 with no 0001-0003.
   Either recover them from history or explicitly note they were archived — silent gaps read
   as "you forgot how to number files."
