@@ -11,5 +11,5 @@ Methodology PR — no code change required. Runs `unslop` before push (AGENTS.md
 
 ## Next steps
 - [ ] Follow-up PRs opened / linked:
-- [ ] `NEEDS-VERIFY.md` updated if the change moves the bar
+- [ ] `BACKLOG.md` updated if the change moves the bar
 - [ ] Superseded ADRs marked (if any):

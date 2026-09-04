@@ -32,7 +32,7 @@ hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
 
 - **`unslop/`** — cuts AI tells from anything a human will read. Vendored from
   [michaelshimeles/skills](https://github.com/michaelshimeles/skills) (MIT, © Lauren Tan;
-  see `unslop/LICENSE`). Run before every commit message, PR body, ADR, or NEEDS-VERIFY entry.
+  see `unslop/LICENSE`). Run before every commit message, PR body, ADR, or BACKLOG entry.
 
 ## In-repo skills
 

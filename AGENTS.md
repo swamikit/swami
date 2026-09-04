@@ -34,7 +34,7 @@ live in a separate private repo. Do not add any `.origami` file to this repo.
   installs the grammar). This catches syntax errors — not type errors.
 - Read the Swami framework sources (`app/Swami/`) for reference but do NOT try to
   build the Xcode project here — Apple-only.
-- Draft ADRs, update `NEEDS-VERIFY.md`, refine the IR schema, propose codegen changes.
+- Draft ADRs, update `BACKLOG.md`, refine the IR schema, propose codegen changes.
 - Open PRs; the Mac-side runner will do the pixel gate on merge candidates.
 
 ## What you CAN'T do here
@@ -51,7 +51,7 @@ A compile is necessary, never sufficient. A patch translation is only *done* whe
 Reviewer has read the swami / origami / diff triplet from the runner and Samuel
 has spot-checked flagged cases. SSIM is evidence in that read, not the verdict
 (ADR-0014). Your job here is to make the code correct enough to reach that gate;
-the gate itself is Mac-side. See `NEEDS-VERIFY.md` for what's queued and what's earned.
+the gate itself is Mac-side. See `BACKLOG.md` for what's queued and what's earned.
 
 **Interim (until Reviewer GA ships):** the Reviewer skill (skill/review) is in flight
 on PR #11 and hasn't landed yet, so *today's* visual gate is Sam reading the same
@@ -107,12 +107,12 @@ Names borrowed from `michaelshimeles/skills`; content is swami-specific.
    (ADR-0014). The Reviewer skill (skill/review) reads the swami / origami / diff
    triplet and calls state match, alignment, chrome, semantic correctness — that's
    the visual gate. Human sign-off remains for interactions (gesture-driven
-   behavior). Resolve the matching `NEEDS-VERIFY.md` item on merge. *Until Reviewer
+   behavior). Resolve the matching `BACKLOG.md` item on merge. *Until Reviewer
    GA lands (PR #11), that read is Sam's by hand on the same posted evidence — same
    surface, same criteria, just not yet automated.*
 
 Cross-cutting: **`unslop`** (`skill/unslop/`) is a pass on anything a human will
-read — commit messages, PR titles/bodies, ADRs, `NEEDS-VERIFY.md` entries. Run it
+read — commit messages, PR titles/bodies, ADRs, `BACKLOG.md` entries. Run it
 before you push.
 
 ## Conventions
