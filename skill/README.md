@@ -33,8 +33,8 @@ hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
   one Origami pattern into idiomatic SwiftUI. Not written yet.
 - **`docc-authoring/`** *(stub)* — how a translated pattern gets documented in
   DocC (article, tutorial, code listing, screenshot). Not written yet.
-- **`visual-review/`** *(stub)* — how to eyeball a sticky-comment side-by-side
-  against Origami's render and call the gate. Not written yet.
+- **`review/`** *(stub)* — how the Reviewer GA runs its checks (visual,
+  structural, methodology) — the Reviewer's skill. Not written yet.
 
 ## Prior art worth tracking
 
