@@ -27,7 +27,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           PR_NUM=${{ github.event.pull_request.number || github.event.issue.number }}
-          gh pr view $PR_NUM --json diffUrl,body,commits,files --jq . > /tmp/pr.json
+          gh pr view $PR_NUM --json number,title,body,url,headRefName,baseRefName,commits,files --jq . > /tmp/pr.json
           gh pr diff $PR_NUM > /tmp/pr.diff
           # Fetch sticky evidence comment if any
           gh api repos/${{ github.repository }}/issues/$PR_NUM/comments \
@@ -38,8 +38,13 @@ jobs:
         run: |
           cat AGENTS.md > /tmp/context.md
           echo '---' >> /tmp/context.md
-          cat skill/review/SKILL.md >> /tmp/context.md
-          echo '---' >> /tmp/context.md
+          # skill/review/SKILL.md lands in a follow-up PR (skill/review-add); gate on presence
+          if [ -f skill/review/SKILL.md ]; then
+            cat skill/review/SKILL.md >> /tmp/context.md
+            echo '---' >> /tmp/context.md
+          else
+            echo "warning: skill/review/SKILL.md not present on this branch — skipping skill context load" >&2
+          fi
           for adr in docs/decisions/*.md; do cat "$adr" >> /tmp/context.md; echo '---' >> /tmp/context.md; done
 
       # NOTE: This step is a placeholder for the Claude API call.
