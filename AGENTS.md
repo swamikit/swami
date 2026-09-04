@@ -67,12 +67,12 @@ Names borrowed from `michaelshimeles/skills`; content is swami-specific.
 2. **Build** — parser and/or codegen edits in `tool/`. Run the tree-sitter-swift
    pre-gate on the generated `.swift` before opening a PR. Compile-clean is the
    ticket to enter the queue, not proof of correctness.
-3. **Prove** — the GHA macOS runner `build_run_sim`s SwamiHost with
-   `SWAMI_PATTERN=<slug>` and screenshots the view. V1 (per ADR-0012) is
-   auto-compare against a cached Origami reference in `swami-private/references/`
-   using a perceptual metric — the score is what merges or flags, not a human's
-   eyes. A sticky PR comment embeds the render + diff so a reviewer can spot-check
-   when the compare flags.
+3. **Prove** — the GHA macos-15 runner installs Origami itself (from its Sparkle
+   appcast) and runs both sides in the same job: opens each pattern's `.origami`
+   in Origami and screenshots via `View → Take Screenshot`; boots SwamiHost with
+   `SWAMI_PATTERN=<slug>` and screenshots the sim; SSIM-compares (threshold 0.95).
+   Score gates the merge (ADR-0013 — supersedes ADR-0012's cache approach). Sticky
+   PR comment posts swami / origami / diff side by side for spot-checks.
 4. **Ship** — merge on green auto-compare. Human sign-off remains for interactions
    (gesture-driven behavior) and for anything the compare flags; that's a
    shrinking surface, not the default path. Resolve the matching `NEEDS-VERIFY.md`
