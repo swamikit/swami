@@ -1,7 +1,103 @@
-# PLACEHOLDER — the real workflow is being handed over by the Cowork session.
-# When landed, this file drives: build_run_sim SwamiHost per pattern (via SWAMI_PATTERN env),
-# screenshot, push shots to a `ci-screenshots` branch, and post a sticky PR comment embedding
-# them so a reviewer sees the render next to the diff.
 name: verify
+
+# swami pixel gate on a GitHub-hosted macOS runner (free on public repos).
+# Bulk by design: set up + build ONCE per run, then screenshot every pattern in a loop,
+# so runner setup cost is amortized across the whole corpus, not paid per pattern.
+# Evidence-first: screenshots are posted INTO the PR so a human can see the render without
+# downloading anything — this is verified-delivery's "evidence or it didn't happen" as CI.
+#
+# Assumes: Xcode project at app/Swami.xcodeproj, shared `SwamiHost` scheme, and SwamiHost's
+# ContentView switching on the `SWAMI_PATTERN` env var. Grow PATTERNS as the corpus grows.
+
 on:
+  push:
+    branches: [ main ]
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write        # push screenshots to the evidence branch
+  pull-requests: write   # comment the screenshots onto the PR
+
+env:
+  APP_PROJECT: app/Swami.xcodeproj
+  SCHEME: SwamiHost
+  PATTERNS: "touch"
+
+jobs:
+  pixel-gate:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Environment
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      - name: Pick + boot a simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import sys,json;d=json.load(sys.stdin)['devices'];\
+r=sorted([k for k in d if 'iOS' in k]);devs=[x for k in r for x in d[k] if x.get('isAvailable') and 'iPhone' in x['name']];\
+print(devs[-1]['udid'] if devs else '')")
+          test -n "$UDID" || { echo 'No iOS simulator on this runner image'; exit 1; }
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true
+
+      - name: Build SwamiHost (once)
+        run: |
+          set -o pipefail
+          xcodebuild build -project "$APP_PROJECT" -scheme "$SCHEME" \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO | tee build.log
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Install app
+        id: app
+        run: |
+          APP=$(find build/Build/Products -name 'SwamiHost.app' -maxdepth 3 | head -1)
+          xcrun simctl install "${{ steps.sim.outputs.udid }}" "$APP"
+          echo "bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" >> "$GITHUB_OUTPUT"
+
+      - name: Screenshot every pattern (bulk)
+        run: |
+          mkdir -p screenshots
+          for P in $PATTERNS; do
+            xcrun simctl terminate "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.bid }}" 2>/dev/null || true
+            SIMCTL_CHILD_SWAMI_PATTERN="$P" xcrun simctl launch "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.bid }}"
+            sleep 3
+            xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot "screenshots/$P.png"
+          done
+
+      - name: Upload screenshots (always — downloadable fallback)
+        uses: actions/upload-artifact@v4
+        with: { name: pixel-gate-screenshots, path: screenshots/, if-no-files-found: error }
+
+      # ---- Evidence onto the PR (public repo → raw URLs render inline) ----
+      - name: Post screenshots to the PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.number }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Push PNGs to an orphan-ish evidence branch so the PR diff stays clean.
+          BR="ci-screenshots"
+          git config user.name "swami-ci"; git config user.email "ci@swami.local"
+          git fetch origin "$BR" && git checkout "$BR" || git checkout --orphan "$BR"
+          git rm -rf . >/dev/null 2>&1 || true
+          mkdir -p "pr-$PR"; cp screenshots/*.png "pr-$PR/"
+          git add "pr-$PR"; git commit -m "evidence: PR #$PR @ ${SHA:0:7}" || true
+          git push origin "$BR"
+          # Build a sticky comment embedding each shot via raw.githubusercontent (public repo).
+          BODY="### 📸 Pixel gate — \`${SHA:0:7}\`"$'\n\n'
+          for f in screenshots/*.png; do n=$(basename "$f" .png)
+            BODY+="**$n**"$'\n'"![${n}](https://raw.githubusercontent.com/${REPO}/${BR}/pr-${PR}/${n}.png)"$'\n\n'; done
+          BODY+="_Static layout only — interaction (gesture) gate is separate. Compare against the Origami artboard before approving._"
+          gh pr comment "$PR" --repo "$REPO" --edit-last --body "$BODY" 2>/dev/null \
+            || gh pr comment "$PR" --repo "$REPO" --body "$BODY"
+
+# NEXT (interaction gate): an XCUITest target that taps each card and screenshots the result,
+# so the oval-from-touch behavior is verified headlessly in CI, then posted the same way.
