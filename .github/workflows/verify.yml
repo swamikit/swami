@@ -244,7 +244,17 @@ jobs:
       - name: Upload artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
-        with: { name: pixel-gate, path: out/, if-no-files-found: warn }
+        with:
+          name: pixel-gate
+          # Exclude DocC's static-site tree: DocC names JSON files after Swift signatures
+          # like `animation(_:).json`, and upload-artifact rejects colons (Windows FS).
+          # We only need the rendered PNGs to survive as artifacts.
+          path: |
+            out/origami/
+            out/swami/
+            out/diff/
+            out/docc-shots/
+          if-no-files-found: warn
 
       - name: Post evidence onto the PR
         if: github.event_name == 'pull_request'
