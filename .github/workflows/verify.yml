@@ -1,12 +1,11 @@
 name: verify
 
-# swami pixel gate — Path B (ADR-0013).
-# One runner does both sides: installs Origami from its Sparkle appcast, opens
-# each pattern to render Origami's reference, then boots SwamiHost's sim to render
-# ours, then SSIM-compares. No cross-repo dep, no cached references.
-#
-# Assumes: Xcode project at app/Swami.xcodeproj, shared `SwamiHost` scheme,
-# SwamiHost's ContentView switching on the `SWAMI_PATTERN` env var.
+# swami pixel gate + DocC screenshot — Path B (ADR-0013).
+# One macos-15 runner does everything: installs Origami from its Sparkle appcast,
+# builds SwamiHost once (generic sim), then per pattern renders Origami's own artboard
+# → matches a sim to Origami's device (dimension-driven) → screenshots SwamiHost →
+# SSIM diffs. DocC is built + screenshotted headlessly via Playwright + posted in
+# the same sticky comment.
 
 on:
   push:
@@ -15,14 +14,15 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write        # push renders to the evidence branch
-  pull-requests: write   # comment onto the PR
+  contents: write        # push evidence to ci-screenshots branch
+  pull-requests: write   # sticky comment onto the PR
 
 env:
   APP_PROJECT: app/Swami.xcodeproj
-  SCHEME: SwamiHost
-  # Each entry: <slug>:<origami-file-stem>. slug drives SWAMI_PATTERN + our screenshot
-  # naming; stem resolves to https://origami.design/public/origami_files/patterns/<stem>.origami.
+  APP_SCHEME: SwamiHost
+  DOC_SCHEME: Swami
+  # <slug>:<origami-file-stem>. slug drives SWAMI_PATTERN + our screenshot naming;
+  # stem resolves to https://origami.design/public/origami_files/patterns/<stem>.origami.
   PATTERNS: "touch:Interaction_Touch"
   SSIM_THRESHOLD: "0.95"
 
@@ -37,11 +37,13 @@ jobs:
           xcodebuild -version
           xcrun simctl list runtimes | grep "iOS "
 
-      - name: Install ImageMagick (for SSIM compare)
+      - name: Install ImageMagick + Playwright deps
         run: |
-          # macos-15 runners don't ship with ImageMagick's `compare`; install it.
           brew install imagemagick --quiet
           compare -version | head -1
+          # Playwright for headless DocC screenshots
+          npm install --silent --prefix /tmp/pw playwright
+          /tmp/pw/node_modules/.bin/playwright install chromium --with-deps 2>&1 | tail -3
 
       - name: Install Origami Studio (Sparkle appcast)
         id: origami
@@ -60,35 +62,91 @@ jobs:
           sudo xattr -dr com.apple.quarantine "/Applications/Origami Studio.app" 2>&1 || true
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Pick + boot a simulator
-        id: sim
-        run: |
-          UDID=$(xcrun simctl list devices available -j | python3 -c "import sys,json;d=json.load(sys.stdin)['devices'];ios=sorted(k for k in d if 'iOS' in k);devs=[x for k in ios for x in d[k] if x.get('isAvailable') and 'iPhone' in x['name']];print(devs[-1]['udid'] if devs else '')")
-          test -n "$UDID" || { echo 'No iOS simulator on this runner image'; exit 1; }
-          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
-          xcrun simctl boot "$UDID" || true
-
-      - name: Build SwamiHost (once)
+      - name: Build SwamiHost (generic sim; installs to per-pattern sims later)
         run: |
           set -o pipefail
-          xcodebuild build -project "$APP_PROJECT" -scheme "$SCHEME" \
-            -destination "id=${{ steps.sim.outputs.udid }}" \
+          xcodebuild build -project "$APP_PROJECT" -scheme "$APP_SCHEME" \
+            -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO | tee build.log
           grep -q "BUILD SUCCEEDED" build.log
-
-      - name: Install SwamiHost to sim
-        id: app
-        run: |
           APP=$(find build/Build/Products -name 'SwamiHost.app' -maxdepth 3 | head -1)
-          xcrun simctl install "${{ steps.sim.outputs.udid }}" "$APP"
-          echo "bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" >> "$GITHUB_OUTPUT"
+          BID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          echo "BID=$BID" >> "$GITHUB_ENV"
 
-      - name: Render + compare per pattern
+      - name: Build DocC + headless screenshot
+        run: |
+          set -o pipefail
+          echo "==> docbuild"
+          xcodebuild docbuild -project "$APP_PROJECT" -scheme "$DOC_SCHEME" \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath docc-build CODE_SIGNING_ALLOWED=NO 2>&1 | tail -8
+          ARCHIVE=$(find docc-build -name "*.doccarchive" | head -1)
+          if [ -z "$ARCHIVE" ]; then
+            echo "  no doccarchive produced — DocC screenshot skipped"
+            exit 0
+          fi
+          echo "==> archive: $ARCHIVE"
+
+          mkdir -p out/docc-site out/docc-shots
+          xcrun docc process-archive transform-for-static-hosting "$ARCHIVE" \
+            --output-path out/docc-site --hosting-base-path swami 2>&1 | tail -3
+
+          # Tiny Node script: local static server + Playwright screenshot
+          cat > /tmp/shoot-docc.js <<'JS'
+          const { chromium } = require('playwright');
+          const http = require('http'), path = require('path'), fs = require('fs'), url = require('url');
+          const ROOT = 'out/docc-site';
+          const PORT = 8765;
+          const PAGES = [{ name: 'landing', path: '/documentation/swami/' }];
+          const types = {'.html':'text/html','.js':'application/javascript','.css':'text/css','.json':'application/json','.svg':'image/svg+xml','.png':'image/png','.woff':'font/woff','.woff2':'font/woff2'};
+          const server = http.createServer((req, res) => {
+            let p = url.parse(req.url).pathname;
+            if (p.endsWith('/')) p += 'index.html';
+            const file = path.join(ROOT, p);
+            fs.readFile(file, (err, data) => {
+              if (err) { res.writeHead(404); res.end(); return; }
+              res.writeHead(200, {'Content-Type': types[path.extname(file)] || 'application/octet-stream'});
+              res.end(data);
+            });
+          });
+          server.listen(PORT);
+          (async () => {
+            const browser = await chromium.launch();
+            try {
+              const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+              for (const p of PAGES) {
+                const target = `http://localhost:${PORT}${p.path}`;
+                console.log('  visiting ' + target);
+                try {
+                  await page.goto(target, { waitUntil: 'networkidle', timeout: 15000 });
+                  await page.screenshot({ path: `out/docc-shots/${p.name}.png`, fullPage: true });
+                  console.log('  captured ' + p.name);
+                } catch (e) { console.log('  ' + p.name + ' failed: ' + e.message); }
+              }
+            } finally {
+              await browser.close();
+              server.close();
+            }
+          })();
+          JS
+          NODE_PATH=/tmp/pw/node_modules node /tmp/shoot-docc.js || echo "  DocC screenshot failed (non-fatal)"
+          ls -la out/docc-shots/ 2>/dev/null || true
+
+      - name: Render + compare per pattern (sim matched to Origami device)
         id: verify
         run: |
           mkdir -p out/origami out/swami out/diff
           RESULTS=""
           FAIL=0
+
+          # Origami-dimension → sim device name. Extend as new artboard sizes surface.
+          declare -A SIM_BY_DIMS=(
+            ["750x1334"]="iPhone SE (3rd generation)"
+            ["1170x2532"]="iPhone 15"
+            ["1179x2556"]="iPhone 16 Pro"
+            ["1290x2796"]="iPhone 16 Pro Max"
+          )
 
           for pair in $PATTERNS; do
             slug="${pair%%:*}"
@@ -96,17 +154,20 @@ jobs:
             src_url="https://origami.design/public/origami_files/patterns/${stem}.origami"
             echo "==> ${slug} (${stem})"
 
-            # 1. Fetch the .origami file from origami.design (public, no auth)
             curl -sL -o "/tmp/${stem}.origami" "$src_url"
             test -s "/tmp/${stem}.origami" || { echo "  fetch failed for $src_url"; FAIL=1; continue; }
 
-            # 2. Origami side: open, screenshot, close
+            # Origami: open, hide editor chrome, screenshot, close
             marker=$(mktemp); touch "$marker"; sleep 0.5
             open -a "/Applications/Origami Studio.app" "/tmp/${stem}.origami"
             sleep 12
             osascript >/dev/null 2>&1 \
               -e 'tell application "System Events" to tell process "Origami Studio" to set frontmost to true' \
               -e 'delay 0.5' \
+              -e 'try' \
+              -e '  tell application "System Events" to tell process "Origami Studio" to tell menu bar 1 to tell menu "View" to click menu item "Hide Interface"' \
+              -e 'end try' \
+              -e 'delay 0.4' \
               -e 'tell application "System Events" to tell process "Origami Studio" to tell menu bar 1 to tell menu "View" to click menu item "Take Screenshot"' \
               || echo "  osascript click failed"
             sleep 3
@@ -114,13 +175,12 @@ jobs:
             if [ -z "$shot" ]; then
               echo "  MISS: no Origami screenshot for ${slug}"
               RESULTS="${RESULTS}| ${slug} | ORIGAMI RENDER FAILED | — | ❌ |"$'\n'
-              FAIL=1
-              rm -f "$marker"; continue
+              FAIL=1; rm -f "$marker"; continue
             fi
             mv "$shot" "out/origami/${slug}.png"
             rm -f "$marker"
 
-            # Close doc so next pattern gets a clean slate
+            # Close doc in Origami
             osascript >/dev/null 2>&1 \
               -e 'tell application "System Events" to tell process "Origami Studio" to keystroke "w" using command down' \
               -e 'delay 0.4' \
@@ -130,18 +190,47 @@ jobs:
               || true
             sleep 0.5
 
-            # 3. SwamiHost side: launch with slug, screenshot
-            xcrun simctl terminate "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.bid }}" 2>/dev/null || true
-            SIMCTL_CHILD_SWAMI_PATTERN="$slug" xcrun simctl launch "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.bid }}"
-            sleep 3
-            xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot "out/swami/${slug}.png"
+            # Read Origami's output dimensions → pick matching sim
+            W=$(sips -g pixelWidth "out/origami/${slug}.png" | awk '/pixelWidth/ {print $2}')
+            H=$(sips -g pixelHeight "out/origami/${slug}.png" | awk '/pixelHeight/ {print $2}')
+            KEY="${W}x${H}"
+            DEVICE_NAME="${SIM_BY_DIMS[$KEY]:-}"
+            if [ -z "$DEVICE_NAME" ]; then
+              echo "  WARN: no sim mapped for ${KEY} — defaulting to iPhone SE (3rd generation)"
+              DEVICE_NAME="iPhone SE (3rd generation)"
+            fi
+            echo "  Origami rendered at ${KEY} → sim: ${DEVICE_NAME}"
 
-            # 4. Perceptual SSIM (1.0 identical, closer to 0 = worse)
-            score=$(compare -metric SSIM "out/swami/${slug}.png" "out/origami/${slug}.png" "out/diff/${slug}.png" 2>&1 || true)
-            verdict=$(awk -v s="$score" -v t="$SSIM_THRESHOLD" 'BEGIN{ print (s+0>=t+0 ? "✅" : "❌") }')
+            # Find & boot the matching sim
+            UDID=$(xcrun simctl list devices available -j | python3 -c "
+            import sys, json
+            d = json.load(sys.stdin)['devices']
+            for k in sorted((k for k in d if 'iOS' in k), reverse=True):
+                for dev in d[k]:
+                    if dev.get('isAvailable') and dev['name'] == '${DEVICE_NAME}':
+                        print(dev['udid']); sys.exit(0)
+            ")
+            if [ -z "$UDID" ]; then
+              echo "  no sim UDID for ${DEVICE_NAME}"; FAIL=1; continue
+            fi
+            xcrun simctl boot "$UDID" 2>/dev/null || true
+
+            # Install app to this sim, launch with slug, screenshot
+            xcrun simctl install "$UDID" "$APP"
+            xcrun simctl terminate "$UDID" "$BID" 2>/dev/null || true
+            SIMCTL_CHILD_SWAMI_PATTERN="$slug" xcrun simctl launch "$UDID" "$BID"
+            sleep 3
+            xcrun simctl io "$UDID" screenshot "out/swami/${slug}.png"
+
+            # Compare — read the parenthesized DSSIM value (0 identical, 1 totally different),
+            # convert to SSIM (= 1 - DSSIM) so the threshold reads naturally.
+            raw=$(compare -metric SSIM "out/swami/${slug}.png" "out/origami/${slug}.png" "out/diff/${slug}.png" 2>&1 || true)
+            dssim=$(echo "$raw" | grep -oE '\([0-9.eE+-]+\)' | head -1 | tr -d '()')
+            ssim=$(awk -v d="$dssim" 'BEGIN { printf "%.4f", 1 - d }')
+            verdict=$(awk -v s="$ssim" -v t="$SSIM_THRESHOLD" 'BEGIN{ print (s+0>=t+0 ? "✅" : "❌") }')
             [ "$verdict" = "❌" ] && FAIL=1
-            echo "  SSIM $score → $verdict"
-            RESULTS="${RESULTS}| ${slug} | ${score} | ${verdict} |"$'\n'
+            echo "  SSIM ${ssim} → ${verdict}"
+            RESULTS="${RESULTS}| ${slug} | ${DEVICE_NAME} | ${ssim} | ${verdict} |"$'\n'
           done
 
           {
@@ -171,7 +260,7 @@ jobs:
           git fetch origin "$BR" && git checkout "$BR" || git checkout --orphan "$BR"
           git rm -rf . >/dev/null 2>&1 || true
           mkdir -p "pr-$PR"
-          cp -R out/* "pr-$PR/"
+          cp -R out/* "pr-$PR/" 2>/dev/null || true
           git add "pr-$PR"
           git commit -m "evidence: PR #$PR @ ${SHA:0:7}" || true
           git push origin "$BR"
@@ -179,7 +268,7 @@ jobs:
           RAW="https://raw.githubusercontent.com/${REPO}/${BR}/pr-${PR}"
           BODY="### 📸 Pixel gate — \`${SHA:0:7}\`"$'\n\n'
           BODY+="**SSIM vs Origami ${{ steps.verify.outputs.origami_version }}** (≥${SSIM_THRESHOLD} = ✅)"$'\n\n'
-          BODY+="| pattern | SSIM | verdict |"$'\n'"|---|---|---|"$'\n'
+          BODY+="| pattern | sim | SSIM | verdict |"$'\n'"|---|---|---|---|"$'\n'
           BODY+="${{ steps.verify.outputs.results }}"$'\n\n'
           for pair in $PATTERNS; do
             slug="${pair%%:*}"
@@ -187,10 +276,13 @@ jobs:
             BODY+="| Swami | Origami | Diff |"$'\n'"|---|---|---|"$'\n'
             BODY+="| ![swami](${RAW}/swami/${slug}.png) | ![origami](${RAW}/origami/${slug}.png) | ![diff](${RAW}/diff/${slug}.png) |"$'\n\n'
           done
-          BODY+="_Static layout only. Interaction gate (drive gesture, compare response) is separate — ADR-0013 follow-up._"
+          if [ -f "pr-$PR/docc-shots/landing.png" ]; then
+            BODY+="---"$'\n\n'"### 📚 DocC landing"$'\n\n'"![docc-landing](${RAW}/docc-shots/landing.png)"$'\n\n'
+          fi
+          BODY+="_Static layout only. Interaction gate (drive gesture, compare response) + video side-by-side are separate follow-ups._"
           gh pr comment "$PR" --repo "$REPO" --edit-last --body "$BODY" 2>/dev/null \
             || gh pr comment "$PR" --repo "$REPO" --body "$BODY"
 
-# NEXT (per ADR-0013): (a) parser-verification step that reads Origami's Inspector via AX
-# attributes and diffs against the parser's IR; (b) interaction gate — XCUITest-drives-both-sides
-# gesture verification, same evidence-on-PR flow.
+# NEXT (per ADR-0013 + NEEDS-VERIFY): (a) parser IR verification via Origami's Inspector
+# AX attributes, (b) interaction gate — XCUITest-drives-both-sides + video side-by-side,
+# (c) adversarial-review skill + Review beat.

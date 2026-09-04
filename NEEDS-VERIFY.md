@@ -45,6 +45,21 @@ agent — the cloud loop does not write there.
   SwamiHost's sim, screenshots the responses, diffs. Closes the ISAT loop
   (Interaction → State → Animation → Transition).
 
+## Deferred verify-gate items (PR #1 shipped; these are the queue)
+- **Video side-by-side** — sim `xcrun simctl io … recordVideo` on one side + Origami's
+  `View → Record…` on the other, both driven by a synthesized touch sequence. Blocked
+  on the interaction gate landing; for static renders, video is overkill. Post as MP4
+  in the sticky comment (GitHub embeds .mp4 inline in PR comments).
+- **Adversarial review skill + Review beat** — cross-cutting practice, not another tool.
+  Shape: `skill/adversarial-review/SKILL.md` house prompt ("generate the strongest case
+  for why this diff is wrong before approving; only merge when you can't defend the
+  attack"), invoked by a fresh reviewer agent with no memory of the author's arguments.
+  Add a **Review** beat between Prove and Ship in AGENTS.md's Beats. Sam wants to
+  revisit soon — not deferred indefinitely.
+- **Match sim to Origami's device — real path** — PR #2 uses a dimensions→device map
+  (Origami's PNG size → sim name). The real fix is parsing Origami's `deviceType` field
+  from the .origami graph doc so we know before rendering. Parser addition, small.
+
 ## Deferred — Tutorials (post-first-few-patterns)
 - **Translating visually** — pick one patch (say `builtin.layer.hover`), show Origami's
   editor screenshot, walk through the SwiftUI equivalent with a live render at each step.
