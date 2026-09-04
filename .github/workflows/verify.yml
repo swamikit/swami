@@ -63,7 +63,45 @@ jobs:
       - name: Pick + boot a simulator
         id: sim
         run: |
-          UDID=$(xcrun simctl list devices available -j | python3 -c "import sys,json;d=json.load(sys.stdin)['devices'];ios=sorted(k for k in d if 'iOS' in k);devs=[x for k in ios for x in d[k] if x.get('isAvailable') and 'iPhone' in x['name']];print(devs[-1]['udid'] if devs else '')")
+          # Rank the scheme's valid iOS-Simulator destinations by (tier, model#).
+          # Origami's default artboard is Pro-Max-sized (1290x2796); the earlier
+          # alphabetic pick (`sorted(...).last`) grabbed "iPhone SE" because "SE"
+          # sorts after "17" — wrong device for the pixel gate. Tier order:
+          # Pro Max > Pro > plain iPhone > SE; tiebreak on the model number
+          # descending (iPhone 17 Pro Max beats iPhone 16 Pro Max). Falls back to
+          # the old alphabetic pick if xcodebuild -showdestinations misbehaves on
+          # this runner image, so a picker failure never blocks the gate.
+          UDID=$(xcodebuild -showdestinations \
+                   -project "$APP_PROJECT" -scheme "$SCHEME" 2>/dev/null \
+            | awk '
+                /platform:iOS Simulator/ {
+                  id=""; name=""
+                  if (match($0, /id:[^,]+/))   { id   = substr($0, RSTART+3, RLENGTH-3) }
+                  if (match($0, /name:[^}]+/)) { name = substr($0, RSTART+5, RLENGTH-5) }
+                  gsub(/^ +| +$/, "", id)
+                  gsub(/^ +| +$/, "", name)
+                  if (id == "" || name == "") next
+
+                  tier = 2
+                  if      (name ~ /Pro Max/) tier = 4
+                  else if (name ~ /Pro/)     tier = 3
+                  else if (name ~ /SE/)      tier = 1
+
+                  model = 0
+                  if (match(name, /[0-9]+/)) {
+                    model = substr(name, RSTART, RLENGTH) + 0
+                  }
+                  printf "%d\t%d\t%s\t%s\n", tier, model, id, name
+                }
+              ' \
+            | sort -k1,1nr -k2,2nr \
+            | head -n1 \
+            | cut -f3)
+
+          if [ -z "$UDID" ]; then
+            echo "  showdestinations ranking produced nothing — falling back to alphabetic pick"
+            UDID=$(xcrun simctl list devices available -j | python3 -c "import sys,json;d=json.load(sys.stdin)['devices'];ios=sorted(k for k in d if 'iOS' in k);devs=[x for k in ios for x in d[k] if x.get('isAvailable') and 'iPhone' in x['name']];print(devs[-1]['udid'] if devs else '')")
+          fi
           test -n "$UDID" || { echo 'No iOS simulator on this runner image'; exit 1; }
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
           xcrun simctl boot "$UDID" || true
