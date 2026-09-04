@@ -20,7 +20,9 @@ Every pattern PR moves through four beats, in order:
 2. **Build** — parser change, codegen change, or helper. Small, deterministic, ADR
    if it's a load-bearing choice.
 3. **Prove** — visual evidence against Origami's render. Compile gate is table
-   stakes; the pixel gate is the real one.
+   stakes; the SSIM score is posted as evidence, not a merge gate (per
+   ADR-0014, in progress — SSIM alone doesn't gate merges). The real gate is
+   human/Reviewer visual review plus structural checks.
 4. **Ship** — squash-merge with a PR body a human can read months later.
 
 The beat vocabulary comes from AGENTS.md's methodology section. If a PR skips a
@@ -85,16 +87,17 @@ A green Codex or a green Claude Review is not merge authority. A green human is.
 ## Evidence expectations
 
 Static PRs — the ones where the pattern is a still frame at rest — get the
-sticky-comment side-by-side (swami / Origami / diff). Nothing merges on a green
-pixel gate alone; a human looks at the images.
+sticky-comment side-by-side (swami / Origami / diff). On a clean auto-compare
+plus a Reviewer approve, auto-merge is the path — no separate human eyeball
+required. Mandatory human review is limited to (a) interaction PRs (video
+gate, below) and (b) PRs where the Reviewer explicitly flags for human eyes
+(e.g. suspects the gate is green on the wrong pattern).
 
 Interaction-gated PRs — Touch, Drag, Scroll, anything the user drives — will also
 get an MP4 side-by-side once the interaction gate lands. Until then, an
 interaction PR calls out that its evidence is deferred and points at the
-harness/interaction-gate tracking issue.
-
-Never accept a green gate without eyeballing the frames. A green gate that shows
-the wrong pattern is worse than a red one.
+harness/interaction-gate tracking issue. Interaction PRs always require a
+human eyeball on the frames — auto-merge is off until the video gate ships.
 
 ## Video expectations
 
