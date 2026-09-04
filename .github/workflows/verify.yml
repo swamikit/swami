@@ -50,7 +50,10 @@ jobs:
 
   pixel-gate:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Run the expensive gate on: (a) code changes detected by paths-filter, or (b) manual
+    # workflow_dispatch so someone can re-verify against a new Origami release without
+    # manufacturing a fake code change (Codex P2 catch).
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
