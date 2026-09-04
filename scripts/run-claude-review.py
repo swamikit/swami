@@ -13,6 +13,10 @@ import anthropic
 MARKER = "<!-- claude-review -->"
 MODEL = "claude-opus-5"
 MAX_TOKENS = 16000
+# Cap the diff we send to Claude. Origami-Patterns-scale PRs comfortably fit;
+# a runaway diff (generated files, vendored trees) would otherwise blow past
+# the model context and either fail the call or waste budget on noise.
+MAX_DIFF_BYTES = 200_000
 
 CONTEXT_PATHS = (
     "AGENTS.md",
@@ -107,7 +111,13 @@ def format_comment(review: dict, head_sha: str) -> str:
     else:
         buckets: dict[str, list[dict]] = {"blocking": [], "nit": [], "nice-to-have": []}
         for f in findings:
-            buckets.setdefault(f.get("severity") or "nice-to-have", []).append(f)
+            # Normalize severity — unknown / null / oddly-cased values fold into
+            # "nice-to-have" so the render loop (which iterates the three known
+            # buckets) never silently drops a finding.
+            sev = str(f.get("severity") or "").strip().lower()
+            if sev not in buckets:
+                sev = "nice-to-have"
+            buckets[sev].append(f)
         for sev in ("blocking", "nit", "nice-to-have"):
             items = buckets.get(sev) or []
             if not items:
@@ -129,22 +139,20 @@ def format_comment(review: dict, head_sha: str) -> str:
 
 
 def find_existing_comment(repo: str, pr: str) -> str | None:
-    out = sh(["gh", "api", "--paginate", f"repos/{repo}/issues/{pr}/comments"])
-    # --paginate concatenates JSON arrays; parse permissively.
-    try:
-        data = json.loads(out)
-    except json.JSONDecodeError:
-        data = []
-        for line in out.splitlines():
-            line = line.strip()
-            if line.startswith("["):
-                try:
-                    data.extend(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-    for c in data:
-        if MARKER in (c.get("body") or ""):
-            return str(c["id"])
+    # Let gh do the filtering: `--paginate` walks every page and `--jq` runs on
+    # each page's array, so we get back a plain newline-separated list of ids
+    # (one per matching comment) instead of the concatenated-JSON-arrays blob
+    # that `json.loads` chokes on once the PR has more than one page of
+    # comments.
+    out = sh([
+        "gh", "api", "--paginate",
+        f"repos/{repo}/issues/{pr}/comments",
+        "--jq", f'.[] | select(.body | contains("{MARKER}")) | .id',
+    ])
+    for line in out.splitlines():
+        line = line.strip()
+        if line:
+            return line
     return None
 
 
@@ -162,6 +170,39 @@ def post_or_update(repo: str, pr: str, body_path: Path) -> None:
         print("created new comment")
 
 
+def _cap_diff(diff: str, limit: int = MAX_DIFF_BYTES) -> str:
+    raw = diff.encode("utf-8", errors="replace")
+    if len(raw) <= limit:
+        return diff
+    kept = raw[:limit].decode("utf-8", errors="replace")
+    omitted = len(raw) - limit
+    return kept + f"\n\n[diff truncated — {omitted} bytes omitted]\n"
+
+
+def _post_failure_comment(repo: str, pr: str, head_sha: str, exc: BaseException) -> None:
+    """Best-effort: post a small marker-tagged comment so the PR sees the failure
+    instead of a silent workflow-status miss. Never raises — a broken poster
+    should not compound the original error."""
+    lines = [MARKER, "", "## Claude review"]
+    if head_sha:
+        lines += ["", f"HEAD: `{head_sha}`"]
+    lines += [
+        "",
+        "_reviewer failed — no findings this run._",
+        "",
+        f"`{type(exc).__name__}: {exc}`",
+        "",
+        "See the workflow logs for the full trace. This comment updates in place on retry.",
+    ]
+    body = "\n".join(lines)
+    try:
+        out_path = Path("/tmp/claude-review-body.md")
+        out_path.write_text(body)
+        post_or_update(repo, pr, out_path)
+    except Exception as post_exc:  # noqa: BLE001
+        print(f"could not post failure comment: {post_exc}", file=sys.stderr)
+
+
 def main() -> int:
     repo = os.environ["GITHUB_REPOSITORY"]
     pr = os.environ["PR_NUMBER"]
@@ -170,6 +211,7 @@ def main() -> int:
 
     diff_path = Path(os.environ.get("PR_DIFF_FILE", "/tmp/pr.diff"))
     diff = diff_path.read_text() if diff_path.exists() else sh(["gh", "pr", "diff", pr])
+    diff = _cap_diff(diff)
 
     sticky_path = Path(os.environ.get("STICKY_FILE", "/tmp/sticky.md"))
     sticky = sticky_path.read_text() if sticky_path.exists() else ""
@@ -179,6 +221,7 @@ def main() -> int:
         review = call_claude(system, diff, sticky)
     except Exception as exc:  # noqa: BLE001
         print(f"claude review failed: {exc}", file=sys.stderr)
+        _post_failure_comment(repo, pr, head_sha, exc)
         return 1
 
     body = format_comment(review, head_sha)

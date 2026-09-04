@@ -81,7 +81,11 @@ jobs:
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python3 -m pip install --quiet anthropic
+        # Pin the SDK: an unpinned `pip install anthropic` silently follows any
+        # future major bump and can move the surface out from under the
+        # streaming/thinking call in run-claude-review.py. Bump this pin
+        # deliberately when we've verified the new major behaves.
+        run: python3 -m pip install --quiet 'anthropic==1.4.0'
 
       - name: Run Claude review
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
