@@ -99,17 +99,11 @@ jobs:
             marker=$(mktemp); touch "$marker"; sleep 0.5
             open -a "/Applications/Origami Studio.app" "/tmp/${stem}.origami"
             sleep 12
-            osascript >/dev/null 2>&1 <<APPLESCRIPT || echo "  osascript click failed"
-tell application "System Events" to tell process "Origami Studio"
-  set frontmost to true
-  delay 0.5
-  tell menu bar 1
-    tell menu "View"
-      click menu item "Take Screenshot"
-    end tell
-  end tell
-end tell
-APPLESCRIPT
+            osascript >/dev/null 2>&1 \
+              -e 'tell application "System Events" to tell process "Origami Studio" to set frontmost to true' \
+              -e 'delay 0.5' \
+              -e 'tell application "System Events" to tell process "Origami Studio" to tell menu bar 1 to tell menu "View" to click menu item "Take Screenshot"' \
+              || echo "  osascript click failed"
             sleep 3
             shot=$(find ~/Desktop -maxdepth 1 -name "Origami-Studio Screenshot*.png" -newer "$marker" 2>/dev/null | head -1)
             if [ -z "$shot" ]; then
@@ -122,17 +116,13 @@ APPLESCRIPT
             rm -f "$marker"
 
             # Close doc so next pattern gets a clean slate
-            osascript >/dev/null 2>&1 <<'APPLESCRIPT' || true
-tell application "System Events" to tell process "Origami Studio"
-  keystroke "w" using command down
-  delay 0.4
-  if exists sheet 1 of window 1 then
-    try
-      click button "Don't Save" of sheet 1 of window 1
-    end try
-  end if
-end tell
-APPLESCRIPT
+            osascript >/dev/null 2>&1 \
+              -e 'tell application "System Events" to tell process "Origami Studio" to keystroke "w" using command down' \
+              -e 'delay 0.4' \
+              -e 'try' \
+              -e '  tell application "System Events" to tell process "Origami Studio" to click button "Don''t Save" of sheet 1 of window 1' \
+              -e 'end try' \
+              || true
             sleep 0.5
 
             # 3. SwamiHost side: launch with slug, screenshot
