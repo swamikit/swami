@@ -253,17 +253,14 @@ jobs:
             # as SSIM directly — simpler and version-tolerant. Log the raw for debugging.
             raw=$(compare -metric SSIM "out/swami/${slug}.png" "out/origami/${slug}.png" "out/diff/${slug}.png" 2>&1 || true)
             echo "  raw compare output: ${raw}"
-            # Some IM builds report the leading value as SSIM * quantum (e.g. 1546.1 for
-            # a 0.976 SSIM at 16-bit quantum 1585). Normalize: if leading > 1, divide by
-            # 65535 (16-bit) or 255 (8-bit) to bring back into 0..1. If still > 1, fall
-            # back to the parenthesized value (which is 0..1 either way).
-            ssim=$(echo "$raw" | awk '{
-              s=$1+0;
-              if (s>1) s=s/65535;
-              if (s>1) s=s*65535/255;
-              if (s>1) { match($0, /\(([0-9.eE+-]+)\)/, m); if (m[1]!="") s=m[1]+0 }
-              printf "%.4f", s
-            }')
+            # Empirical: IM's `-metric SSIM` writes "<raw_dssim_scaled> (<normalized_dssim_0_1>)"
+            # where both represent the same value at different scales (raw = normalized × 65535
+            # for 16-bit quantum). Normalized-in-parens is DSSIM = 1 - SSIM (traditional IM
+            # definition; the (1-SSIM)/2 form Codex cited applies to some ports but not this
+            # build — parens=0.0314 with two similar renders → SSIM=0.9686, not 0.9372). Use
+            # the parens value and compute SSIM = 1 - DSSIM. Pure shell + system awk.
+            dssim=$(echo "$raw" | grep -oE '\([0-9.eE+-]+\)' | head -1 | tr -d '()')
+            ssim=$(awk -v d="${dssim:-1}" 'BEGIN{ printf "%.4f", 1 - d }')
             verdict=$(awk -v s="$ssim" -v t="$SSIM_THRESHOLD" 'BEGIN{ print (s+0>=t+0 ? "✅" : "❌") }')
             [ "$verdict" = "❌" ] && FAIL=1
             echo "  SSIM ${ssim} → ${verdict}"
