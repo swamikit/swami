@@ -36,6 +36,7 @@ jobs:
         run: |
           xcodebuild -version
           xcrun simctl list runtimes | grep "iOS "
+          bash --version | head -1
 
       - name: Install ImageMagick + Playwright deps
         run: |
@@ -89,8 +90,10 @@ jobs:
           echo "==> archive: $ARCHIVE"
 
           mkdir -p out/docc-site out/docc-shots
+          # No --hosting-base-path: served at root locally so /js/*, /css/*
+          # resolve. Add the flag back only if publishing under a subpath (gh-pages).
           xcrun docc process-archive transform-for-static-hosting "$ARCHIVE" \
-            --output-path out/docc-site --hosting-base-path swami 2>&1 | tail -3
+            --output-path out/docc-site 2>&1 | tail -3
 
           # Tiny Node script: local static server + Playwright screenshot
           cat > /tmp/shoot-docc.js <<'JS'
@@ -140,13 +143,27 @@ jobs:
           RESULTS=""
           FAIL=0
 
-          # Origami-dimension → sim device name. Extend as new artboard sizes surface.
-          declare -A SIM_BY_DIMS=(
-            ["750x1334"]="iPhone SE (3rd generation)"
-            ["1170x2532"]="iPhone 15"
-            ["1179x2556"]="iPhone 16 Pro"
-            ["1290x2796"]="iPhone 16 Pro Max"
-          )
+          # Origami dimension → sim device name. Bash-3 compatible (macOS system bash
+          # is 3.2 and doesn't support `declare -A`). Extend as new artboard sizes surface.
+          dims_to_sim() {
+            case "$1" in
+              750x1334)   echo "iPhone SE (3rd generation)" ;;
+              1170x2532)  echo "iPhone 15" ;;
+              1179x2556)  echo "iPhone 16 Pro" ;;
+              1290x2796)  echo "iPhone 16 Pro Max" ;;
+              *)          echo "" ;;
+            esac
+          }
+
+          # Find an available sim by exact device name. Prints UDID or empty. Pure bash,
+          # no Python heredoc indentation traps.
+          find_sim_udid() {
+            xcrun simctl list devices available \
+              | grep -E "^    $1 \(" \
+              | head -1 \
+              | grep -oE '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' \
+              | head -1
+          }
 
           for pair in $PATTERNS; do
             slug="${pair%%:*}"
@@ -155,7 +172,7 @@ jobs:
             echo "==> ${slug} (${stem})"
 
             curl -sL -o "/tmp/${stem}.origami" "$src_url"
-            test -s "/tmp/${stem}.origami" || { echo "  fetch failed for $src_url"; FAIL=1; continue; }
+            test -s "/tmp/${stem}.origami" || { echo "  fetch failed for $src_url"; RESULTS="${RESULTS}| ${slug} | — | FETCH FAILED | ❌ |"$'\n'; FAIL=1; continue; }
 
             # Origami: open, hide editor chrome, screenshot, close
             marker=$(mktemp); touch "$marker"; sleep 0.5
@@ -174,7 +191,7 @@ jobs:
             shot=$(find ~/Desktop -maxdepth 1 -name "Origami-Studio Screenshot*.png" -newer "$marker" 2>/dev/null | head -1)
             if [ -z "$shot" ]; then
               echo "  MISS: no Origami screenshot for ${slug}"
-              RESULTS="${RESULTS}| ${slug} | ORIGAMI RENDER FAILED | — | ❌ |"$'\n'
+              RESULTS="${RESULTS}| ${slug} | — | ORIGAMI RENDER FAILED | ❌ |"$'\n'
               FAIL=1; rm -f "$marker"; continue
             fi
             mv "$shot" "out/origami/${slug}.png"
@@ -194,24 +211,22 @@ jobs:
             W=$(sips -g pixelWidth "out/origami/${slug}.png" | awk '/pixelWidth/ {print $2}')
             H=$(sips -g pixelHeight "out/origami/${slug}.png" | awk '/pixelHeight/ {print $2}')
             KEY="${W}x${H}"
-            DEVICE_NAME="${SIM_BY_DIMS[$KEY]:-}"
+            DEVICE_NAME=$(dims_to_sim "$KEY")
             if [ -z "$DEVICE_NAME" ]; then
-              echo "  WARN: no sim mapped for ${KEY} — defaulting to iPhone SE (3rd generation)"
+              echo "  WARN: no sim mapped for ${KEY} — falling back to iPhone SE (3rd generation)"
               DEVICE_NAME="iPhone SE (3rd generation)"
             fi
             echo "  Origami rendered at ${KEY} → sim: ${DEVICE_NAME}"
 
-            # Find & boot the matching sim
-            UDID=$(xcrun simctl list devices available -j | python3 -c "
-            import sys, json
-            d = json.load(sys.stdin)['devices']
-            for k in sorted((k for k in d if 'iOS' in k), reverse=True):
-                for dev in d[k]:
-                    if dev.get('isAvailable') and dev['name'] == '${DEVICE_NAME}':
-                        print(dev['udid']); sys.exit(0)
-            ")
+            UDID=$(find_sim_udid "$DEVICE_NAME")
             if [ -z "$UDID" ]; then
-              echo "  no sim UDID for ${DEVICE_NAME}"; FAIL=1; continue
+              # Loud failure — don't produce partial evidence silently. Log what we DID see
+              # so future-us can extend the dims_to_sim map or fix the runner image list.
+              echo "::error::No sim UDID for '${DEVICE_NAME}' at ${KEY}. Available iPhone sims:"
+              xcrun simctl list devices available | grep -E '^    iPhone' | sed 's/^/  /'
+              RESULTS="${RESULTS}| ${slug} | ${DEVICE_NAME} | SIM NOT AVAILABLE | ❌ |"$'\n'
+              FAIL=1
+              continue
             fi
             xcrun simctl boot "$UDID" 2>/dev/null || true
 
@@ -222,11 +237,13 @@ jobs:
             sleep 3
             xcrun simctl io "$UDID" screenshot "out/swami/${slug}.png"
 
-            # Compare — read the parenthesized DSSIM value (0 identical, 1 totally different),
-            # convert to SSIM (= 1 - DSSIM) so the threshold reads naturally.
+            # Perceptual compare. ImageMagick's `compare -metric SSIM` writes to stderr
+            # in the form: "<SSIM> (<DSSIM>)" where DSSIM = (1 - SSIM) / 2 per Codex
+            # research (Kornel/pixelmatch definition IM adopted). Read the leading value
+            # as SSIM directly — simpler and version-tolerant. Log the raw for debugging.
             raw=$(compare -metric SSIM "out/swami/${slug}.png" "out/origami/${slug}.png" "out/diff/${slug}.png" 2>&1 || true)
-            dssim=$(echo "$raw" | grep -oE '\([0-9.eE+-]+\)' | head -1 | tr -d '()')
-            ssim=$(awk -v d="$dssim" 'BEGIN { printf "%.4f", 1 - d }')
+            echo "  raw compare output: ${raw}"
+            ssim=$(echo "$raw" | awk '{print $1+0}')
             verdict=$(awk -v s="$ssim" -v t="$SSIM_THRESHOLD" 'BEGIN{ print (s+0>=t+0 ? "✅" : "❌") }')
             [ "$verdict" = "❌" ] && FAIL=1
             echo "  SSIM ${ssim} → ${verdict}"
@@ -257,7 +274,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Post evidence onto the PR
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.number }}
@@ -268,7 +285,9 @@ jobs:
           git config user.name "swami-ci"
           git config user.email "ci@swami.local"
           git fetch origin "$BR" && git checkout "$BR" || git checkout --orphan "$BR"
-          git rm -rf . >/dev/null 2>&1 || true
+          # Do NOT wipe the branch — preserve prior PRs' evidence. Only overwrite this
+          # PR's own pr-N/ dir.
+          rm -rf "pr-$PR"
           mkdir -p "pr-$PR"
           cp -R out/* "pr-$PR/" 2>/dev/null || true
           git add "pr-$PR"
@@ -292,6 +311,14 @@ jobs:
           BODY+="_Static layout only. Interaction gate (drive gesture, compare response) + video side-by-side are separate follow-ups._"
           gh pr comment "$PR" --repo "$REPO" --edit-last --body "$BODY" 2>/dev/null \
             || gh pr comment "$PR" --repo "$REPO" --body "$BODY"
+
+      - name: Final gate
+        if: always()
+        run: |
+          if [ "${{ steps.verify.outputs.any_fail }}" = "1" ]; then
+            echo "::error::One or more patterns failed the pixel gate — see sticky comment for details"
+            exit 1
+          fi
 
 # NEXT (per ADR-0013 + NEEDS-VERIFY): (a) parser IR verification via Origami's Inspector
 # AX attributes, (b) interaction gate — XCUITest-drives-both-sides + video side-by-side,
