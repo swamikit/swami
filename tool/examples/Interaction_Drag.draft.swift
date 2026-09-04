@@ -3,7 +3,7 @@
 // STATUS: structural draft only. NOT derived from the document's exact placed graph and NOT
 // drive-verified. The parser's tail heuristic over-includes origami.Drag's embedded component
 // internals on this 534 KB file (157 "placed" nodes incl. AddMomentum/ClipY/Velocity/…), so exact
-// geometry, colors, bounds, and layer count were NOT read from the graph. See NEEDS-VERIFY.md.
+// geometry, colors, bounds, and layer count were NOT read from the graph. See BACKLOG.md.
 //
 // What this demonstrates: the drag() helper (origami.Drag) — a draggable card with momentum and
 // rubber-band bounds — wired the way the codegen will wire it once the parser isolates the real
@@ -17,7 +17,7 @@ struct InteractionDragDraftView: View {
     @State private var translation: CGSize = .zero
     @State private var velocity: CGSize = .zero
 
-    // PLACEHOLDER geometry — must be replaced with graph-read values (NEEDS-VERIFY).
+    // PLACEHOLDER geometry — must be replaced with graph-read values (see BACKLOG.md).
     private let card = CGSize(width: 220, height: 140)
 
     var body: some View {
