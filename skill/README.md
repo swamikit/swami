@@ -29,12 +29,17 @@ Swift file with its DocC page. Principles the pair codifies:
   a PR event or an `@claude review` comment. Renamed from `visual-review` because
   the Reviewer's job covers visual, structural, methodology, and evidence, not
   pixels alone.
+- **`troubleshooting/`.** Living runbook of known infra blockers (Origami install,
+  sim boot, missing tools, license expiration). Builder and Review pre-flight
+  checks read it before real work starts; any agent that ships a fix for a
+  runner-level failure appends an entry. Companion issue template lives at
+  `.github/ISSUE_TEMPLATE/infra-blocker.md`.
 
 ## Adopted skills
 
 - **`unslop/`** — cuts AI tells from anything a human will read. Vendored from
   [michaelshimeles/skills](https://github.com/michaelshimeles/skills) (MIT, © Lauren Tan;
-  see `unslop/LICENSE`). Run before every commit message, PR body, ADR, or NEEDS-VERIFY entry.
+  see `unslop/LICENSE`). Run before every commit message, PR body, ADR, or BACKLOG entry.
 
 ## In-repo skills
 

@@ -47,7 +47,7 @@ That collapses three things:
 
 ## Consequences
 
-- ADR-0012 is superseded. Its NEEDS-VERIFY bootstrap items move to done (renderer
+- ADR-0012 is superseded. Its BACKLOG bootstrap items move to done (renderer
   script + first 60 references were valuable proof; the artifact itself is gone).
 - `REFERENCES_TOKEN` secret is not needed. Do not create it.
 - CI run time grows by ~12s (install Origami) + ~15–20s per pattern (Origami
