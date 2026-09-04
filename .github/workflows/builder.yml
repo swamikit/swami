@@ -1,0 +1,340 @@
+name: builder
+
+# Builder GA — issue-triggered pattern translation.
+#
+# A tracking issue labeled `translate` (body: "translate <PatternStem>", e.g.
+# "translate Interaction_Drag") fires this workflow. Builder pulls the .origami,
+# runs parser → codegen → writes app/Swami/Patterns/<Stem>.swift, wires the new
+# case into SwamiHost's ContentView switch, appends the pattern to verify.yml's
+# PATTERNS env, and opens a PR against main using the pattern.md template so
+# verify.yml's pixel gate self-verifies the translation (Beat 3).
+#
+# V1: parser + codegen are placeholders — they may not yet handle a given pattern.
+# Ship the skeleton so it's wired end-to-end; upgrade the translate step (Claude
+# API call, richer codegen) once the parser generalizes past Touch.
+#
+# Guardrails:
+#  - Forks never get to run (no secret access, no push rights).
+#  - Missing ANTHROPIC_API_KEY skips the API-driven translate step (parser+codegen
+#    still run; the PR still opens, marked as skeleton).
+#  - macos-15 chosen to match verify.yml's runner so a follow-on interactive
+#    verify (Origami-installed) can reuse the same environment; codegen itself
+#    doesn't need macOS, so a later cost-cut may split parser+codegen back to
+#    ubuntu with verify staying on macos-15.
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pattern:
+        description: 'Origami pattern stem (e.g. Interaction_Drag). Resolves to https://origami.design/public/origami_files/patterns/<stem>.origami.'
+        required: true
+        type: string
+
+permissions:
+  contents: write        # push translate/<pattern> branch
+  pull-requests: write   # open the PR
+  issues: write          # comment back onto the tracking issue
+
+jobs:
+  translate:
+    # issues.labeled fires for every label; gate to the `translate` label only.
+    # workflow_dispatch is always allowed. Fork PRs can't reach this workflow
+    # (issues events run in the base repo), but the api-key gate below still
+    # protects the Claude call from a missing-secret environment.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'translate')
+    runs-on: macos-15
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve pattern name
+        id: pattern
+        env:
+          DISPATCH_INPUT: ${{ inputs.pattern }}
+          ISSUE_TITLE:    ${{ github.event.issue.title }}
+          ISSUE_BODY:     ${{ github.event.issue.body }}
+        run: |
+          # workflow_dispatch: pattern comes from the input.
+          # issues.labeled:    body/title carries "translate <Stem>" — pull the token
+          #                    after "translate" (case-insensitive, stops at whitespace).
+          set -eu
+          if [ -n "${DISPATCH_INPUT:-}" ]; then
+            STEM="$DISPATCH_INPUT"
+          else
+            # Prefer body; fall back to title. Match "translate <token>" where <token>
+            # is [A-Za-z0-9_]+ so "translate Interaction_Drag" → "Interaction_Drag".
+            STEM=$(printf '%s\n%s\n' "$ISSUE_BODY" "$ISSUE_TITLE" \
+              | grep -iEo 'translate[[:space:]]+[A-Za-z0-9_]+' \
+              | head -1 \
+              | awk '{print $2}')
+          fi
+          if [ -z "${STEM:-}" ]; then
+            echo "::error::could not resolve pattern stem from event"
+            exit 1
+          fi
+          # Slug: lowercased stem with the "Interaction_" prefix stripped so
+          # touch:Interaction_Touch, drag:Interaction_Drag, etc. Matches the
+          # convention already in verify.yml's PATTERNS.
+          SLUG=$(echo "$STEM" | sed -E 's/^Interaction_//' | tr '[:upper:]' '[:lower:]')
+          echo "stem=$STEM"   >> "$GITHUB_OUTPUT"
+          echo "slug=$SLUG"   >> "$GITHUB_OUTPUT"
+          echo "branch=translate/$STEM" >> "$GITHUB_OUTPUT"
+          echo "==> stem=$STEM  slug=$SLUG"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch .origami source
+        id: fetch
+        env:
+          STEM: ${{ steps.pattern.outputs.stem }}
+        run: |
+          set -eu
+          mkdir -p out
+          SRC_URL="https://origami.design/public/origami_files/patterns/${STEM}.origami"
+          echo "src_url=$SRC_URL" >> "$GITHUB_OUTPUT"
+          curl -sL -o "out/${STEM}.origami" "$SRC_URL"
+          if ! [ -s "out/${STEM}.origami" ]; then
+            echo "::error::fetch failed for $SRC_URL"
+            exit 1
+          fi
+
+      - name: Guard — ANTHROPIC_API_KEY presence
+        id: guard
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Placeholder for the Claude-driven translate pass. V1 doesn't call the
+          # API yet — the parser+codegen skeleton runs regardless. When the API
+          # call lands, downstream steps read has_key to decide whether to enrich
+          # the IR / codegen or ship the deterministic skeleton alone.
+          if [ -n "${KEY:-}" ]; then
+            echo "has_key=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ANTHROPIC_API_KEY not present — Claude-assisted translate step will be skipped (deterministic skeleton only)."
+          fi
+
+      - name: Parse (.origami → IR)
+        id: parse
+        env:
+          STEM: ${{ steps.pattern.outputs.stem }}
+        # continue-on-error: parser is still Touch-shaped (CLAUDE.md TODO: generalize
+        # port-default decoding). Failing here shouldn't abort the PR — we still want
+        # the branch + PR opened so the tracker sees the attempt and a human can pick
+        # it up. Later, once the parser handles arbitrary graphs, flip this to hard-fail.
+        continue-on-error: true
+        run: |
+          set -eu
+          python3 tool/src/parser/origami_graph.py "out/${STEM}.origami" \
+            > "out/${STEM}.ir.json"
+          echo "ir=out/${STEM}.ir.json" >> "$GITHUB_OUTPUT"
+          echo "==> IR bytes: $(wc -c <"out/${STEM}.ir.json")"
+
+      - name: Codegen (IR → SwiftUI)
+        id: codegen
+        env:
+          STEM: ${{ steps.pattern.outputs.stem }}
+        continue-on-error: true
+        run: |
+          set -eu
+          mkdir -p app/Swami/Patterns
+          if [ -s "out/${STEM}.ir.json" ]; then
+            python3 tool/src/codegen/swiftgen.py "out/${STEM}.ir.json" \
+              > "app/Swami/Patterns/${STEM}.swift"
+          else
+            # Parser produced nothing usable — write a stub so the PR still lands
+            # something reviewable. Marked TODO so it can't be mistaken for real.
+            cat > "app/Swami/Patterns/${STEM}.swift" <<SWIFT
+          // TODO(builder): parser+codegen did not yet handle ${STEM}.
+          // Skeleton PR only — regenerate once the parser generalizes past Touch.
+          import SwiftUI
+          import Swami
+
+          struct ${STEM}View: View {
+              var body: some View { Text("${STEM} — not yet translated") }
+          }
+          SWIFT
+          fi
+
+      - name: Wire ContentView switch
+        env:
+          STEM: ${{ steps.pattern.outputs.stem }}
+          SLUG: ${{ steps.pattern.outputs.slug }}
+        run: |
+          # Idempotent: if a `case "<slug>":` already exists, leave the file alone
+          # (a rerun of a labeled issue shouldn't duplicate the case). Otherwise
+          # insert `case "<slug>": <Stem>View()` immediately before the `default:`
+          # line inside the switch, matching the existing style.
+          set -eu
+          FILE="app/SwamiHost/ContentView.swift"
+          if grep -q "case \"$SLUG\"" "$FILE"; then
+            echo "==> case \"$SLUG\" already wired — leaving ContentView untouched."
+            exit 0
+          fi
+          python3 - "$FILE" "$SLUG" "$STEM" <<'PY'
+          import sys, pathlib
+          path, slug, stem = sys.argv[1], sys.argv[2], sys.argv[3]
+          p = pathlib.Path(path)
+          src = p.read_text()
+          needle = "        default:"
+          if needle not in src:
+              raise SystemExit(f"could not find switch default in {path}")
+          insert = f'        case "{slug}": {stem}View()\n'
+          out = src.replace(needle, insert + needle, 1)
+          p.write_text(out)
+          print(f"==> inserted case \"{slug}\": {stem}View() before default")
+          PY
+
+      - name: Wire verify.yml PATTERNS env
+        env:
+          STEM: ${{ steps.pattern.outputs.stem }}
+          SLUG: ${{ steps.pattern.outputs.slug }}
+        run: |
+          # Append " <slug>:<stem>" to the PATTERNS line in verify.yml if not
+          # already present. verify.yml's compare loop splits on whitespace, so
+          # space-separation is the shape it expects (see verify.yml line 30).
+          set -eu
+          FILE=".github/workflows/verify.yml"
+          if grep -qE "^[[:space:]]+PATTERNS:.*${SLUG}:${STEM}" "$FILE"; then
+            echo "==> ${SLUG}:${STEM} already in PATTERNS — leaving verify.yml untouched."
+            exit 0
+          fi
+          python3 - "$FILE" "$SLUG" "$STEM" <<'PY'
+          import sys, re, pathlib
+          path, slug, stem = sys.argv[1], sys.argv[2], sys.argv[3]
+          p = pathlib.Path(path)
+          src = p.read_text()
+          pat = re.compile(r'^(?P<indent>[ \t]+)PATTERNS:[ \t]*"(?P<val>[^"\n]*)"', re.M)
+          m = pat.search(src)
+          if not m:
+              raise SystemExit("PATTERNS line not found in verify.yml")
+          entry = f"{slug}:{stem}"
+          val = m.group("val").strip()
+          new_val = f'{val} {entry}' if val else entry
+          out = src[:m.start()] + f'{m.group("indent")}PATTERNS: "{new_val}"' + src[m.end():]
+          p.write_text(out)
+          print(f"==> PATTERNS now: {new_val}")
+          PY
+
+      - name: Commit + push translate branch
+        id: push
+        env:
+          STEM:   ${{ steps.pattern.outputs.stem }}
+          SLUG:   ${{ steps.pattern.outputs.slug }}
+          BRANCH: ${{ steps.pattern.outputs.branch }}
+        run: |
+          set -eu
+          git config user.name  "swami-builder"
+          git config user.email "builder@swami.local"
+          git checkout -b "$BRANCH"
+
+          # Stage only what Builder is meant to touch — never `git add -A`. Keep
+          # out/ (the fetched .origami + IR) out of the branch; those are runtime
+          # artifacts, not source (upload them separately if debugging is needed).
+          git add "app/Swami/Patterns/${STEM}.swift"
+          git add "app/SwamiHost/ContentView.swift"
+          git add ".github/workflows/verify.yml"
+
+          if git diff --cached --quiet; then
+            echo "::warning::no changes staged — nothing to commit for ${STEM}."
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m "translate: ${STEM} (builder skeleton)"
+          git push --set-upstream origin "$BRANCH"
+          echo "committed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR
+        if: steps.push.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}
+          STEM:     ${{ steps.pattern.outputs.stem }}
+          SLUG:     ${{ steps.pattern.outputs.slug }}
+          BRANCH:   ${{ steps.pattern.outputs.branch }}
+          SRC_URL:  ${{ steps.fetch.outputs.src_url }}
+          ISSUE:    ${{ github.event.issue.number }}
+          HAS_KEY:  ${{ steps.guard.outputs.has_key }}
+        run: |
+          set -eu
+          TEMPLATE=".github/PULL_REQUEST_TEMPLATE/pattern.md"
+          BODY=$(mktemp)
+
+          # Pre-fill the pattern.md template. Verify evidence link is a
+          # placeholder — verify.yml's sticky comment will replace it once
+          # pixel-gate runs on this PR.
+          {
+            echo "# New pattern"
+            echo
+            echo "One \`.origami\` → one generated view → one PR (AGENTS.md Beat 1: Isolate)."
+            echo
+            echo "## Pattern"
+            echo "- **Name:** ${STEM}"
+            echo "- **\`.origami\` source URL:** ${SRC_URL}"
+            echo "- **Primary Origami patch(es):** _TBD — Builder skeleton; fill in after codegen upgrades._"
+            echo "- **Helpers touched (new / existing):** \`app/Swami/Patterns/${STEM}.swift\` (new), \`app/SwamiHost/ContentView.swift\`, \`.github/workflows/verify.yml\`"
+            echo
+            echo "## Structural check"
+            echo "- [ ] Ports match the mirrored patch (names + directions)"
+            echo "- [ ] Native SwiftUI used where it covers the patch; helper justified where it doesn't"
+            echo "- [ ] Generated Swift passes the tree-sitter pre-gate (Beat 2)"
+            echo "- [ ] IR preserves semantic names (colors, type styles, patch labels) per ADR-0007"
+            echo
+            echo "## Verify evidence"
+            echo "- [ ] Sticky comment link (swami / origami / diff side-by-side, Beat 3): _populated by \`verify.yml\` once pixel-gate runs on this PR_"
+            echo "- [ ] \`NEEDS-VERIFY.md\` entry resolved on merge (Beat 4)"
+            echo
+            echo "---"
+            echo
+            echo "### Builder metadata"
+            if [ -n "${ISSUE:-}" ]; then
+              echo "- Tracking issue: #${ISSUE}"
+            fi
+            echo "- Slug: \`${SLUG}\`"
+            echo "- Runner: \`macos-15\`"
+            echo "- Claude-assisted translate: \`${HAS_KEY}\` (V1 placeholder — parser+codegen only)"
+          } > "$BODY"
+
+          # Suppress the pattern.md template auto-inject so our filled body isn't
+          # duplicated. gh reads templates from --template only, and body from
+          # --body-file, so this is already the case; keeping the note explicit.
+          gh pr create \
+            --repo "$REPO" \
+            --base main \
+            --head "$BRANCH" \
+            --title "translate: ${STEM}" \
+            --body-file "$BODY"
+
+      - name: Comment back onto tracking issue
+        if: >-
+          github.event_name == 'issues'
+          && steps.push.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:  ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          STEM:  ${{ steps.pattern.outputs.stem }}
+          BRANCH: ${{ steps.pattern.outputs.branch }}
+        run: |
+          set -eu
+          gh issue comment "$ISSUE" --repo "$REPO" \
+            --body "Builder opened a translate PR for \`${STEM}\` from branch \`${BRANCH}\`. Pixel gate runs next — check verify.yml's sticky comment on the PR for evidence."
+
+      - name: Upload builder artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: builder-${{ steps.pattern.outputs.stem }}
+          path: out/
+          if-no-files-found: warn
