@@ -134,11 +134,20 @@ jobs:
         # it up. Later, once the parser handles arbitrary graphs, flip this to hard-fail.
         continue-on-error: true
         run: |
+          # origami_graph.py takes <input.origami> <dest.json> and writes JSON to the
+          # dest path (not stdout — CLI contract, see tool/src/parser/origami_graph.py).
+          # Pass the dest explicitly; stdout redirection would leave an empty file
+          # (Codex P1 L139).
           set -eu
-          python3 tool/src/parser/origami_graph.py "out/${STEM}.origami" \
-            > "out/${STEM}.ir.json"
+          python3 tool/src/parser/origami_graph.py \
+            "out/${STEM}.origami" \
+            "out/${STEM}.ir.json"
           echo "ir=out/${STEM}.ir.json" >> "$GITHUB_OUTPUT"
-          echo "==> IR bytes: $(wc -c <"out/${STEM}.ir.json")"
+          if [ -s "out/${STEM}.ir.json" ]; then
+            echo "==> IR bytes: $(wc -c <"out/${STEM}.ir.json")"
+          else
+            echo "==> IR empty or missing (parser failed for ${STEM})"
+          fi
 
       - name: Codegen (IR → SwiftUI)
         id: codegen
@@ -146,25 +155,73 @@ jobs:
           STEM: ${{ steps.pattern.outputs.stem }}
         continue-on-error: true
         run: |
+          # swiftgen.py takes <ir.json> <dest.swift> and writes to the dest path
+          # (Codex P1 L139 — same contract as the parser).
+          #
+          # When parser produced no usable IR, emit a public fallback view so it's
+          # visible from SwamiHost (ContentView.swift lives in the SwamiHost target;
+          # generated files live in the Swami framework target — internal symbols
+          # aren't reachable across modules). `public struct` + `public init` +
+          # `public var body` is what makes `${STEM}View()` compile from the host
+          # (Codex P1 L164).
           set -eu
           mkdir -p app/Swami/Patterns
           if [ -s "out/${STEM}.ir.json" ]; then
-            python3 tool/src/codegen/swiftgen.py "out/${STEM}.ir.json" \
-              > "app/Swami/Patterns/${STEM}.swift"
+            python3 tool/src/codegen/swiftgen.py \
+              "out/${STEM}.ir.json" \
+              "app/Swami/Patterns/${STEM}.swift"
           else
-            # Parser produced nothing usable — write a stub so the PR still lands
-            # something reviewable. Marked TODO so it can't be mistaken for real.
             cat > "app/Swami/Patterns/${STEM}.swift" <<SWIFT
           // TODO(builder): parser+codegen did not yet handle ${STEM}.
           // Skeleton PR only — regenerate once the parser generalizes past Touch.
           import SwiftUI
           import Swami
 
-          struct ${STEM}View: View {
-              var body: some View { Text("${STEM} — not yet translated") }
+          public struct ${STEM}View: View {
+              public init() {}
+              public var body: some View { Text("${STEM} — not yet translated") }
           }
           SWIFT
           fi
+
+      - name: Pre-gate — tree-sitter Swift syntax
+        # Hard-fail if the generated (or fallback) Swift has ERROR / MISSING nodes.
+        # `continue-on-error` on parse+codegen keeps a bad-parse run alive so the
+        # PR still opens with a skeleton — but a *syntactically invalid* Swift file
+        # must never be pushed. That's the whole point of the pre-gate (Codex P1
+        # L153; CLAUDE.md: cloud-side syntax pre-gate). No `continue-on-error`
+        # here on purpose.
+        env:
+          STEM: ${{ steps.pattern.outputs.stem }}
+        run: |
+          set -eu
+          python3 -m pip install --quiet tree_sitter tree_sitter_swift
+          python3 - "app/Swami/Patterns/${STEM}.swift" <<'PY'
+          import sys, pathlib
+          import tree_sitter
+          import tree_sitter_swift as ts_swift
+
+          path = pathlib.Path(sys.argv[1])
+          src = path.read_bytes()
+          lang = tree_sitter.Language(ts_swift.language())
+          parser = tree_sitter.Parser(lang)
+          tree = parser.parse(src)
+
+          errors = []
+          def walk(n):
+              if n.type == "ERROR" or n.is_missing:
+                  errors.append((n.start_point, n.type, n.is_missing))
+              for c in n.children:
+                  walk(c)
+          walk(tree.root_node)
+
+          if errors:
+              for (row, col), t, missing in errors[:20]:
+                  kind = "MISSING " if missing else ""
+                  print(f"::error file={path},line={row+1},col={col+1}::pre-gate: {kind}{t}")
+              raise SystemExit(f"tree-sitter pre-gate failed: {len(errors)} error(s) in {path}")
+          print(f"==> tree-sitter pre-gate passed for {path}")
+          PY
 
       - name: Wire ContentView switch
         env:
@@ -315,6 +372,34 @@ jobs:
             --head "$BRANCH" \
             --title "translate: ${STEM}" \
             --body-file "$BODY"
+
+      - name: Trigger verify.yml on the translate branch
+        # GITHUB_TOKEN-authored pushes and PR creations DO NOT fire downstream
+        # `push` / `pull_request` workflow events (GitHub's recursion guard on
+        # the automatic token). Without this step verify.yml's pixel gate never
+        # runs on Builder-opened PRs, and the sticky evidence link in the PR
+        # body is a permanent placeholder.
+        #
+        # `workflow_dispatch` is the documented exception — dispatch events *do*
+        # fire even when triggered via GITHUB_TOKEN — so we explicitly dispatch
+        # verify.yml against the translate branch. Once repo owners add a PAT/
+        # GitHub-App token as `secrets.BUILDER_TRIGGER_PAT`, `gh pr create` can
+        # switch to that token and this manual dispatch becomes redundant; until
+        # then the dispatch is the guaranteed path (Codex P1 L261).
+        if: steps.push.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:    ${{ github.repository }}
+          BRANCH:  ${{ steps.pattern.outputs.branch }}
+        run: |
+          set -eu
+          # --ref points the dispatch at the translate branch so verify.yml runs
+          # against the newly-pushed Swift, not main.
+          if ! gh workflow run verify.yml --repo "$REPO" --ref "$BRANCH"; then
+            echo "::warning::gh workflow run verify.yml --ref $BRANCH failed — pixel gate must be triggered manually."
+          else
+            echo "==> dispatched verify.yml against $BRANCH"
+          fi
 
       - name: Comment back onto tracking issue
         if: >-
