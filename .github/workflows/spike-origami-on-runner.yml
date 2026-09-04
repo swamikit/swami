@@ -39,6 +39,12 @@ jobs:
           hdiutil detach "$MOUNT" -quiet
           installed_version=$(defaults read "/Applications/Origami Studio.app/Contents/Info.plist" CFBundleShortVersionString)
           echo "installed Origami $installed_version"
+          # Force Launch Services to register the freshly-copied app — otherwise
+          # `open -a "Origami Studio"` returns "Unable to find application".
+          /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+            -f -R -domain local -domain system "/Applications/Origami Studio.app" 2>&1 | tail -3 || true
+          # Remove quarantine attributes (fresh downloads on macOS have com.apple.quarantine)
+          sudo xattr -dr com.apple.quarantine "/Applications/Origami Studio.app" 2>&1 || true
 
       - name: Fetch a public test pattern from origami.design
         run: |
@@ -47,10 +53,13 @@ jobs:
           ls -la work/
 
       - name: Launch Origami with the pattern
+        continue-on-error: true
         run: |
-          open -a "Origami Studio" "$PWD/work/Layers_Flip.origami"
-          sleep 12
-          # Report what windows exist (via System Events — may already fail here on permissions)
+          # Use full path — dodges the LS-indexing race even after lsregister.
+          open -a "/Applications/Origami Studio.app" "$PWD/work/Layers_Flip.origami"
+          sleep 15
+          # Is the process actually up?
+          pgrep -x "Origami Studio" > /dev/null && echo "process running" || echo "process NOT running"
           osascript -e 'tell application "System Events" to tell process "Origami Studio" to return name of windows' 2>&1 || echo "(System Events failed — expected without TCC grant)"
 
       - name: Attempt Take Screenshot via osascript (probably fails on fresh TCC)
