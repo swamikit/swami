@@ -21,8 +21,9 @@ Every pattern PR moves through four beats, in order:
    if it's a load-bearing choice.
 3. **Prove** — visual evidence against Origami's render. Compile gate is table
    stakes; the SSIM score is posted as evidence, not a merge gate (per
-   ADR-0014, in progress — SSIM alone doesn't gate merges). The real gate is
-   human/Reviewer visual review plus structural checks.
+   ADR-0014). The merge gate is Reviewer approval plus a human spot-check on
+   flagged cases — interaction PRs and any comparison the Reviewer flags for
+   human eyes.
 4. **Ship** — squash-merge with a PR body a human can read months later.
 
 The beat vocabulary comes from AGENTS.md's methodology section. If a PR skips a
@@ -45,19 +46,18 @@ Slugs are kebab-case and describe the thing, not the verb. `translate/touch`, no
 ## PR templates
 
 Before `gh pr create`, check `.github/PULL_REQUEST_TEMPLATE/` for a matching
-template and pass it with `--template=<name>`:
+template and pass it with `--template=<name>`. The full set lives there today:
 
 - `pattern.md` — a pattern translation PR (Origami example → SwiftUI).
 - `helper.md` — a reusable Swift helper (`drag()`, `sample()`, etc.).
 - `parser.md` — parser or IR change.
 - `harness.md` — verify.yml, runner, evidence tooling.
 - `docs.md` — ADRs, README, methodology docs.
-- `fix.md` — bug fix or regression.
+- `fix.md` — bug fix or regression, and the freeform fallback for one-off shapes.
 
 If none fits and this PR shape has appeared before, **propose a new template** in
 a doc/methodology follow-up — don't quietly force it into the closest one. If it
-is truly one-off, use `fix.md` and describe freely; the freeform template exists
-for exactly that.
+is truly one-off, use `fix.md` and describe freely.
 
 ## PR description shape
 
