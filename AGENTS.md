@@ -48,9 +48,16 @@ live in a separate private repo. Do not add any `.origami` file to this repo.
 ## What "done" means
 
 A compile is necessary, never sufficient. A patch translation is only *done* when the
-running host app in the simulator matches the Origami artboard visually AND Samuel has
-spot-checked. Your job here is to make the code correct enough to reach that gate; the
-gate itself is Mac-side. See `NEEDS-VERIFY.md` for what's queued and what's earned.
+Reviewer has read the swami / origami / diff triplet from the runner and Samuel
+has spot-checked flagged cases. SSIM is evidence in that read, not the verdict
+(ADR-0014). Your job here is to make the code correct enough to reach that gate;
+the gate itself is Mac-side. See `NEEDS-VERIFY.md` for what's queued and what's earned.
+
+**Interim (until Reviewer GA ships):** the Reviewer skill (skill/review) is in flight
+on PR #11 and hasn't landed yet, so *today's* visual gate is Sam reading the same
+evidence triplet by hand. The workflow shape is the same either way — the sticky
+PR comment is the Reviewer's input surface — so the flip is a one-line target change,
+not a re-plumb.
 
 ## Learned rules — Origami rendering
 
@@ -90,13 +97,19 @@ Names borrowed from `michaelshimeles/skills`; content is swami-specific.
 3. **Prove** — the GHA macos-15 runner installs Origami itself (from its Sparkle
    appcast) and runs both sides in the same job: opens each pattern's `.origami`
    in Origami and screenshots via `View → Take Screenshot`; boots SwamiHost with
-   `SWAMI_PATTERN=<slug>` and screenshots the sim; SSIM-compares (threshold 0.95).
-   Score gates the merge (ADR-0013 — supersedes ADR-0012's cache approach). Sticky
-   PR comment posts swami / origami / diff side by side for spot-checks.
-4. **Ship** — merge on green auto-compare. Human sign-off remains for interactions
-   (gesture-driven behavior) and for anything the compare flags; that's a
-   shrinking surface, not the default path. Resolve the matching `NEEDS-VERIFY.md`
-   item on merge.
+   `SWAMI_PATTERN=<slug>` and screenshots the sim; SSIM-compares and posts the
+   score as evidence. Runner mechanics per ADR-0013. **SSIM is a data point, not
+   a verdict** — the metric over-rewards palette match on our flat-color subject
+   matter and has repeatedly greenlit obvious mismatches (ADR-0014, supersedes
+   ADR-0013's implicit SSIM-as-gate). Sticky PR comment posts swami / origami /
+   diff side by side so the visual gate can read them.
+4. **Ship** — merge on Reviewer approval + Sam's spot-check on flagged cases
+   (ADR-0014). The Reviewer skill (skill/review) reads the swami / origami / diff
+   triplet and calls state match, alignment, chrome, semantic correctness — that's
+   the visual gate. Human sign-off remains for interactions (gesture-driven
+   behavior). Resolve the matching `NEEDS-VERIFY.md` item on merge. *Until Reviewer
+   GA lands (PR #11), that read is Sam's by hand on the same posted evidence — same
+   surface, same criteria, just not yet automated.*
 
 Cross-cutting: **`unslop`** (`skill/unslop/`) is a pass on anything a human will
 read — commit messages, PR titles/bodies, ADRs, `NEEDS-VERIFY.md` entries. Run it

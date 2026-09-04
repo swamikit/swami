@@ -5,6 +5,10 @@ name: verify
 # each pattern to render Origami's reference, then boots SwamiHost's sim to render
 # ours, then SSIM-compares. No cross-repo dep, no cached references.
 #
+# SSIM is posted as evidence, not a verdict (ADR-0014 supersedes ADR-0013's
+# implicit gate). The visual gate is Reviewer + Sam's spot-check reading the
+# swami / origami / diff triplet.
+#
 # Assumes: Xcode project at app/Swami.xcodeproj, shared `SwamiHost` scheme,
 # SwamiHost's ContentView switching on the `SWAMI_PATTERN` env var.
 
@@ -24,7 +28,6 @@ env:
   # Each entry: <slug>:<origami-file-stem>. slug drives SWAMI_PATTERN + our screenshot
   # naming; stem resolves to https://origami.design/public/origami_files/patterns/<stem>.origami.
   PATTERNS: "touch:Interaction_Touch"
-  SSIM_THRESHOLD: "0.95"
 
 jobs:
   # Always runs. Cheap ubuntu check that classifies the PR's touched paths so we
@@ -115,7 +118,6 @@ jobs:
         run: |
           mkdir -p out/origami out/swami out/diff
           RESULTS=""
-          FAIL=0
 
           for pair in $PATTERNS; do
             slug="${pair%%:*}"
@@ -125,7 +127,11 @@ jobs:
 
             # 1. Fetch the .origami file from origami.design (public, no auth)
             curl -sL -o "/tmp/${stem}.origami" "$src_url"
-            test -s "/tmp/${stem}.origami" || { echo "  fetch failed for $src_url"; FAIL=1; continue; }
+            if ! [ -s "/tmp/${stem}.origami" ]; then
+              echo "  fetch failed for $src_url"
+              RESULTS="${RESULTS}| ${slug} | FETCH FAILED |"$'\n'
+              continue
+            fi
 
             # 2. Origami side: open, screenshot, close
             marker=$(mktemp); touch "$marker"; sleep 0.5
@@ -140,8 +146,7 @@ jobs:
             shot=$(find ~/Desktop -maxdepth 1 -name "Origami-Studio Screenshot*.png" -newer "$marker" 2>/dev/null | head -1)
             if [ -z "$shot" ]; then
               echo "  MISS: no Origami screenshot for ${slug}"
-              RESULTS="${RESULTS}| ${slug} | ORIGAMI RENDER FAILED | — | ❌ |"$'\n'
-              FAIL=1
+              RESULTS="${RESULTS}| ${slug} | ORIGAMI RENDER FAILED |"$'\n'
               rm -f "$marker"; continue
             fi
             mv "$shot" "out/origami/${slug}.png"
@@ -163,19 +168,17 @@ jobs:
             sleep 3
             xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot "out/swami/${slug}.png"
 
-            # 4. Perceptual SSIM (1.0 identical, closer to 0 = worse)
+            # 4. Perceptual SSIM (1.0 identical, closer to 0 = worse) — informational
+            # only per ADR-0014. No threshold, no pass/fail; posted as a data point.
             score=$(compare -metric SSIM "out/swami/${slug}.png" "out/origami/${slug}.png" "out/diff/${slug}.png" 2>&1 || true)
-            verdict=$(awk -v s="$score" -v t="$SSIM_THRESHOLD" 'BEGIN{ print (s+0>=t+0 ? "✅" : "❌") }')
-            [ "$verdict" = "❌" ] && FAIL=1
-            echo "  SSIM $score → $verdict"
-            RESULTS="${RESULTS}| ${slug} | ${score} | ${verdict} |"$'\n'
+            echo "  SSIM $score"
+            RESULTS="${RESULTS}| ${slug} | ${score} |"$'\n'
           done
 
           {
             echo "results<<COMPARE_EOF"
             echo "$RESULTS"
             echo "COMPARE_EOF"
-            echo "any_fail=${FAIL}"
             echo "origami_version=${{ steps.origami.outputs.version }}"
           } >> "$GITHUB_OUTPUT"
 
@@ -217,9 +220,9 @@ jobs:
           git push origin "$BR"
 
           RAW="https://raw.githubusercontent.com/${REPO}/${BR}/pr-${PR}"
-          BODY="### 📸 Pixel gate — \`${SHA:0:7}\`"$'\n\n'
-          BODY+="**SSIM vs Origami ${{ steps.verify.outputs.origami_version }}** (≥${SSIM_THRESHOLD} = ✅)"$'\n\n'
-          BODY+="| pattern | SSIM | verdict |"$'\n'"|---|---|---|"$'\n'
+          BODY="### 📸 Pixel evidence — \`${SHA:0:7}\`"$'\n\n'
+          BODY+="**Origami ${{ steps.verify.outputs.origami_version }}** — SSIM is informational (ADR-0014); the visual gate is Reviewer + spot-check reading the triplet below."$'\n\n'
+          BODY+="| pattern | SSIM |"$'\n'"|---|---|"$'\n'
           BODY+="${{ steps.verify.outputs.results }}"$'\n\n'
           for pair in $PATTERNS; do
             slug="${pair%%:*}"

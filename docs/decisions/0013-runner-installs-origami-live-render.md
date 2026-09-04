@@ -1,6 +1,6 @@
 # ADR-0013: Runner installs Origami per run and renders live — supersedes ADR-0012
 
-- Status: Accepted
+- Status: Accepted (SSIM-as-gate interpretation superseded by ADR-0014)
 - Date: 2026-09-04
 - Supersedes: ADR-0012
 
