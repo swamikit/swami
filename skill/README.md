@@ -35,6 +35,18 @@ Swift file with its DocC page. Principles the pair codifies:
   runner-level failure appends an entry. Companion issue template lives at
   `.github/ISSUE_TEMPLATE/infra-blocker.md`.
 
+- **`observing/`.** The cross-PR pattern observer (`observing/SKILL.md`). How any
+  agent watches for recurring shapes across many PRs (repeated Codex findings,
+  missing helpers, verify-flake signatures, prose drift) and files a `type:meta`
+  issue with evidence proposing a system-level fix. N=3+ threshold, one meta-issue
+  per pass. This is how the system files its own tasks.
+- **`triage/`.** The Triage GA's playbook (`triage/SKILL.md`). G-doc-style
+  issue lifecycle: read before writing, update before creating, consolidate the
+  overlap, split the pile-ups, close on evidence. Loaded by any GA whose trigger
+  is an `issues` event, and by any agent turning a feedback dump (chat log,
+  meeting notes, review batch) into tracked issues. Prevents the "AI floods the
+  tracker with duplicates" failure mode we hit before.
+
 ## Adopted skills
 
 - **`unslop/`** — cuts AI tells from anything a human will read. Vendored from
