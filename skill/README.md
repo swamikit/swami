@@ -1,4 +1,4 @@
-# skill — verified-delivery notes, first-party skills, adopted skills
+# skill: verified-delivery notes, first-party skills, adopted skills
 
 Three things live here:
 
@@ -21,11 +21,11 @@ hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
 
 ## First-party skills
 
-- **`review/`** — the Reviewer GA's playbook (`review/SKILL.md`). Codifies context
+- **`review/`.** The Reviewer GA's playbook (`review/SKILL.md`). Codifies context
   reads, PR-type-specific checks, evidence-required findings, rebuttal handling,
-  and the Build↔Review message-exchange model. Load into any GA whose trigger is
+  and the Build/Review message-exchange model. Load into any GA whose trigger is
   a PR event or an `@claude review` comment. Renamed from `visual-review` because
-  the Reviewer's job covers visual + structural + methodology + evidence, not
+  the Reviewer's job covers visual, structural, methodology, and evidence, not
   pixels alone.
 
 ## Adopted skills
