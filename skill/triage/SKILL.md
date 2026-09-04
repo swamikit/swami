@@ -1,6 +1,6 @@
 ---
 name: triage
-description: How to take feedback/observations and produce/update issues without spam. G-doc-style lifecycle — read before writing, update-first heuristic, consolidate related, split accumulated, close on evidence. Loaded by the Triage GA (on `issues` events) but any agent processing feedback can invoke it directly. Load whenever a chat log, meeting notes, review batch, or raw user complaint has to become issues that a human wants to be able to track a week later without a duplicate-hunting cleanup pass.
+description: How to take feedback/observations and produce/update issues without spam. G-doc-style lifecycle. Read before writing, update-first heuristic, consolidate related, split accumulated, close on evidence. Loaded by the Triage GA (on `issues` events) but any agent processing feedback can invoke it directly. Load whenever a chat log, meeting notes, review batch, or raw user complaint has to become issues that a human wants to be able to track a week later without a duplicate-hunting cleanup pass.
 metadata:
   type: procedural
 ---
@@ -34,10 +34,10 @@ then decide on each new item.
 
 ## Update-first heuristic
 
-If new feedback matches an open issue, **append it** — a comment with the new
-observation, or an edit to the body that folds it in. Only create a new issue
-when the feedback is genuinely orthogonal (a different failure mode, a different
-surface, a different subsystem).
+If new feedback matches an open issue, **append it**. Add a comment with the new
+observation, or edit the body to fold it in. Only create a new issue when the
+feedback is genuinely orthogonal (a different failure mode, a different surface,
+a different subsystem).
 
 The default is "add to what exists". The exception is orthogonality, and
 orthogonality needs a one-line justification in the new issue's body ("split
@@ -45,9 +45,9 @@ from #N because …").
 
 ## Consolidate related
 
-If two or more open issues describe the same thing — same symptom, same
-subsystem, same fix would close both — propose merging. Leave the newer one
-open (usually has fresher context), close the older with:
+If two or more open issues describe the same thing, propose merging. Same
+symptom, same subsystem, same fix would close both. Leave the newer one open
+(usually has fresher context), close the older with:
 
 > Closing as duplicate of #M. Same failure mode, consolidating discussion there.
 
@@ -58,7 +58,7 @@ so history follows the reader.
 ## Split accumulated
 
 If an open issue's comment thread has accumulated three or more orthogonal
-concerns — different bugs, different features, different asks — split them.
+concerns, split them. Different bugs, different features, different asks.
 Original issue stays open for its original subject; the drift gets extracted
 into new issues, each linking back with "split from #N (comment <permalink>)".
 
@@ -67,8 +67,8 @@ thread on one bug is fine; three separate bugs sharing a thread is not.
 
 ## Batch mode
 
-For a feedback dump — chat log, meeting notes, Codex-finding batch, review
-comment sweep — do not create issues one by one as you read. Three passes:
+For a feedback dump like a chat log, meeting notes, a Codex-finding batch, or a
+review comment sweep, do not create issues one by one as you read. Three passes:
 
 1. **Extract.** Read the whole dump. Produce a working list of N candidate
    items with a one-line summary each. No writes yet.
@@ -76,7 +76,7 @@ comment sweep — do not create issues one by one as you read. Three passes:
    writing*). Mark each candidate as `update:#N`, `duplicate:#M`, or `new`.
 3. **Write.** Do the updates first (cheapest, lowest chance of accidental
    duplication), then the new-issue creates. Every new issue gets labels, a
-   type, and a priority in the same call — no bare titles.
+   type, and a priority in the same call. No bare titles.
 
 The three-pass shape is the whole point. One-pass triage is how the tracker
 gets flooded.
@@ -85,7 +85,7 @@ gets flooded.
 
 - **Open on creation.** Every issue starts open, labeled, and typed.
 - **Close on evidence.** Close when a linked PR merges and its verify job is
-  green — not when the PR merges alone. Include the PR number and the verify
+  green, not when the PR merges alone. Include the PR number and the verify
   run link in the closing comment.
 - **Reopen on regression.** New failure with the same signature (same repro,
   same surface) reopens the original issue rather than creating a new one.
@@ -98,36 +98,36 @@ gets flooded.
 (From verified-delivery plus swami-specific additions. Every issue gets exactly
 one type.)
 
-- `type:bug` — reproducible defect with evidence (steps, expected, actual).
-- `type:feature` — new capability request.
-- `type:meta` — observations about the system: cross-PR patterns, process
+- `type:bug`. Reproducible defect with evidence (steps, expected, actual).
+- `type:feature`. New capability request.
+- `type:meta`. Observations about the system: cross-PR patterns, process
   gaps, methodology drift. Not a code change on its own.
-- `type:infra-blocker` — runner-level failures: Origami install, sim boot,
+- `type:infra-blocker`. Runner-level failures: Origami install, sim boot,
   network, cache. Blocks work but isn't a product defect.
-- `type:feedback` — raw user input still to be triaged into one of the above.
+- `type:feedback`. Raw user input still to be triaged into one of the above.
   Temporary; a `type:feedback` issue that stays feedback for more than a
   triage cycle is a smell.
-- `type:duplicate` — closed as duplicate of another. Applied at close, not open.
-- `type:no-longer-reproducible` — version-specific bug that later versions
+- `type:duplicate`. Closed as duplicate of another. Applied at close, not open.
+- `type:no-longer-reproducible`. Version-specific bug that later versions
   don't hit. Close, note the version window, keep the label for future
   regression matching.
 
 ## Priority triage
 
-- **p1** — blocks something real: a merge, a demo, a customer. If nothing is
+- **p1.** Blocks something real: a merge, a demo, a customer. If nothing is
   blocked, it isn't p1.
-- **p2** — worth doing next; not blocking. Default for actionable work.
-- **p3** — nice-to-have; may sit forever. Honest signalling, not a graveyard.
+- **p2.** Worth doing next; not blocking. Default for actionable work.
+- **p3.** Nice-to-have; may sit forever. Honest signalling, not a graveyard.
 
-Priority is renegotiable — if a p3 starts blocking something, bump it. Note the
+Priority is renegotiable. If a p3 starts blocking something, bump it. Note the
 bump in a comment.
 
 ## What NOT to do
 
 - Do not create an issue without checking for duplicates.
-- Do not leave an issue without labels — at minimum a type and a priority.
+- Do not leave an issue without labels, at minimum a type and a priority.
 - Do not close an issue without linking why: a PR number, a duplicate target,
   or an explanation.
-- Do not spam-create issues from a single feedback dump — three-pass batch, or
+- Do not spam-create issues from a single feedback dump. Three-pass batch, or
   don't touch the tracker.
 - Do not treat `type:feedback` as a permanent state. Triage it or close it.
