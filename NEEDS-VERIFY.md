@@ -25,6 +25,22 @@ agent — the cloud loop does not write there.
   embedded Drag component on this 534 KB file). Must: (a) generalize the parser to isolate the real
   placed graph, (b) re-generate from true values, (c) drive-verify.
 
+## Verify-gate bootstrap (ADR-0012 — auto-compare as V1)
+- **Origami version currency**: installed = **227.0** (build 1045240740, /Applications/Origami
+  Studio.app, modified 2026-09-02). Check on a schedule; when it changes, any references
+  rendered against an older version are stale — re-render before running the compare, or
+  the diff reads a legit Origami-side change as a swami regression.
+- **Cached reference set (bootstrap task)**: for each pattern in `swami-private/patterns/`
+  (currently 64), drive Origami headlessly to export a PNG of its artboard, commit to
+  `swami-private/references/<origami-version>/<pattern>.png`. First step is figuring out
+  Origami's scriptable export — AppleScript / UI-scripting is the assumed fallback.
+- **`verify.yml` compare step**: fetch references from `swami-private` (needs a deploy key
+  or fine-grained PAT in swamikit/swami Actions secrets — first real secret the repo needs),
+  add SSIM/perceptual diff, gate merge on score.
+- **ADRs 0001–0003 accounting**: the ADR directory jumps from 0004 to 0011 with no 0001-0003.
+  Either recover them from history or explicitly note they were archived — silent gaps read
+  as "you forgot how to number files."
+
 ## Parser TODOs blocking faithful output
 - **Placed-vs-library generalization** (core challenge): fixed tail offset (360000) is tuned to the
   Touch example; on Interaction_Drag (534 KB) it captures Drag's component internals as false

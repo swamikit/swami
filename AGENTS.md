@@ -55,20 +55,28 @@ gate itself is Mac-side. See `NEEDS-VERIFY.md` for what's queued and what's earn
 
 ## Beats
 
-Every pattern-level change moves through four beats. Names borrowed from
-`michaelshimeles/skills`; content is swami-specific.
+Reframe first: **each pattern that lands is a deliverable, not a test.** The corpus
+is a public gallery for the Origami community *and* the training set that teaches
+swami the general rules. Every PR = one more entry in the gallery + one more mapping
+rule earned. That's the shape of the loop.
 
-1. **Isolate** — one pattern per branch (per worktree when the Mac agent is running
+Names borrowed from `michaelshimeles/skills`; content is swami-specific.
+
+1. **Isolate** — one pattern per branch (per worktree when a Mac agent is running
    alongside). The unit of change is *one .origami → one generated view → one PR*.
 2. **Build** — parser and/or codegen edits in `tool/`. Run the tree-sitter-swift
    pre-gate on the generated `.swift` before opening a PR. Compile-clean is the
    ticket to enter the queue, not proof of correctness.
-3. **Prove** — the Mac runner (or Cowork locally) `build_run_sim`s SwamiHost with
-   `SWAMI_PATTERN=<slug>`, screenshots the view, and pushes the shot to a
-   `ci-screenshots` branch. A sticky PR comment embeds the shot inline so the
-   reviewer sees the render next to the diff.
-4. **Ship** — Samuel spot-checks the shot against the Origami artboard, resolves the
-   matching `NEEDS-VERIFY.md` item, and merges. Only *then* is the item earned.
+3. **Prove** — the GHA macOS runner `build_run_sim`s SwamiHost with
+   `SWAMI_PATTERN=<slug>` and screenshots the view. V1 (per ADR-0012) is
+   auto-compare against a cached Origami reference in `swami-private/references/`
+   using a perceptual metric — the score is what merges or flags, not a human's
+   eyes. A sticky PR comment embeds the render + diff so a reviewer can spot-check
+   when the compare flags.
+4. **Ship** — merge on green auto-compare. Human sign-off remains for interactions
+   (gesture-driven behavior) and for anything the compare flags; that's a
+   shrinking surface, not the default path. Resolve the matching `NEEDS-VERIFY.md`
+   item on merge.
 
 Cross-cutting: **`unslop`** (`skill/unslop/`) is a pass on anything a human will
 read — commit messages, PR titles/bodies, ADRs, `NEEDS-VERIFY.md` entries. Run it

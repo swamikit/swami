@@ -17,10 +17,14 @@ in our own, and (b) building a helper for every patch (over-engineering).
    ~55 patch types need **no helper**.
 2. **Never wrap an API that already fits.** If SwiftUI has it (e.g. `SpatialTapGesture`), use
    it directly; the win is *knowing* to reach for it (record it in the mapping reference).
-3. **Build a helper only when both:** (a) no single native API expresses the semantics, and
-   (b) the idiom recurs. Expected set is small (~5–8): `Interaction`, `Drag` (momentum),
-   `SampleAndHold`, maybe `Switch`. Validated in practice: `.interaction()` renders correctly
-   in Xcode canvas (Touch example, 2026-09-03).
+3. **Build a helper when no single native API faithfully expresses the semantics.** One
+   helper per patch, matching that patch's ports (see ADR-0010 for naming and shape).
+   The library is **patch-matched and as-needed** — its size is set by Origami's patch
+   surface, not by a target count. That surface is large, and the library should mirror
+   it faithfully; the "small" instinct earlier drafts carried belongs to point 2, not
+   here. What keeps the library from being *artificially* large is native-first
+   (points 1–2), not a cap on helper count. Validated in practice: `.interaction()`
+   renders correctly in Xcode canvas (Touch example, 2026-09-03).
 4. **Delivery — inline preferred.** Prefer emitting a helper *inline* into the generated file
    (self-contained, drop-in, zero dependency — serves ADR-0007's project-aware goal) over a
    shipped runtime library. Keep the shared `OrigamiPatterns` module for the corpus/harness;

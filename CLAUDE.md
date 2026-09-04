@@ -7,6 +7,25 @@ Load before working here. Durable project context, not a task list.
 An Origami→SwiftUI translator: a deterministic **parser** (`.origami` → semantic IR) plus
 a **codegen** (IR → SwiftUI). Parser for facts, codegen for the mapping. Read `docs/decisions/`.
 
+## Deliverables (what's shipped at the end)
+
+Earlier drafts listed seven; there are really four. Overlap collapsed for real:
+
+1. **The Swift package (`Swami`)** — the patch-matched helper library (native-first,
+   sized by Origami's patch surface per ADR-0009), the DocC in `Swami.docc/` (which is
+   how the mapping reference reaches a human reader — there is no separate mapping
+   doc), and a gallery/showcase surface for the translated corpus.
+2. **The tool (`tool/`)** — parser + codegen. The "skill / MCP" packaging is the same
+   code with an agent-facing entry point, not a separate artifact.
+3. **The verified corpus** — every Origami Pattern translated + auto-compare-verified,
+   living as DocC-embedded examples inside the Swift package (start there — keeps
+   docs and examples in sync; split to a sibling repo only if it grows heavy).
+4. **The methodology** — ADRs, verified-delivery, the beats. Not a shipped artifact;
+   it's how 1–3 stay honest.
+
+The harness (macOS-runner verify gate) sits under all four as the fidelity oracle —
+means, not a deliverable.
+
 ## Format facts (`.origami`)
 
 - `.origami` is a **zip**; the graph doc is `<name>.diamond/graph`, **FlatBuffers**, file_identifier **`ORGM`**, root table at offset 0x30. No `.fbs` schema ships (it's compiled in) → schema-less walk.
