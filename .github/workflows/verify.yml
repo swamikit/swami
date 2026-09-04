@@ -172,7 +172,12 @@ jobs:
           # rerun doesn't reuse stale PNGs (Codex P1). (b) branch doesn't exist → checkout --orphan
           # which retains the current PR checkout's index; must `git rm -rf .` to start empty
           # (Codex P2). Never wipe the whole ci-screenshots tree when the branch already exists.
-          if git fetch origin "$BR" && git checkout "$BR"; then
+          # `git fetch origin "$BR"` alone writes only FETCH_HEAD — no local ref for
+          # `git checkout "$BR"` to find, so it always fell through to --orphan and the
+          # push became non-fast-forward. Fetch into refs/remotes/origin/$BR explicitly,
+          # then create/reset a local branch tracking it.
+          if git fetch origin "$BR:refs/remotes/origin/$BR" 2>/dev/null; then
+            git checkout -B "$BR" "origin/$BR"
             rm -rf "pr-$PR"
           else
             git checkout --orphan "$BR"
