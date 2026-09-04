@@ -53,6 +53,27 @@ running host app in the simulator matches the Origami artboard visually AND Samu
 spot-checked. Your job here is to make the code correct enough to reach that gate; the
 gate itself is Mac-side. See `NEEDS-VERIFY.md` for what's queued and what's earned.
 
+## Learned rules — Origami rendering
+
+**Safe-area behavior**: Origami's artboard rendering may ignore safe insets (top
+device area / Dynamic Island region missing in the exported PNG). When comparing
+Swami's sim screenshot to Origami's "Take Screenshot" output:
+
+- Origami: often no top-safe-area strip
+- Swami sim: renders full screen including status bar / Dynamic Island
+
+Symptoms: vertical offset in overlays; SSIM penalizes but real content matches.
+
+Mitigations (pick per pattern):
+
+- Use `.ignoresSafeArea(.all)` on Swami's top-level view (matches Origami's rendering)
+- Composite a phone-frame SVG around both renders at CI time (normalizes both to the same frame)
+- Crop Swami's screenshot to remove the top ~100px before compare (least ideal; loses visual context)
+
+Note: this rule is an example of what the V4 self-improving loop would surface
+automatically — agents observing recurring offset across 3+ PRs would propose the
+rule and land it here.
+
 ## Beats
 
 Reframe first: **each pattern that lands is a deliverable, not a test.** The corpus
