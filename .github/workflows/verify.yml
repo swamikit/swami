@@ -63,30 +63,37 @@ jobs:
       - name: Pick + boot a simulator
         id: sim
         run: |
-          # Match Origami's default artboard (Pro Max-shaped, per CLAUDE.md's Trove ProMax
-          # convention). Pick the highest-model Pro Max on the newest iOS runtime available.
-          UDID=$(xcrun simctl list devices available -j | python3 -c "
-          import sys, json, re
-          d = json.load(sys.stdin)['devices']
-          ios = sorted((k for k in d if 'iOS' in k), key=lambda k: [int(n) for n in re.findall(r'\d+', k)])
-          candidates = []
-          for k in ios:
-              for dev in d[k]:
-                  if dev.get('isAvailable') and 'iPhone' in dev['name']:
-                      # Rank: Pro Max > Pro > plain iPhone; higher model number wins within tier
-                      name = dev['name']
-                      tier = 3 if 'Pro Max' in name else (2 if 'Pro' in name else (1 if 'iPhone SE' not in name else 0))
-                      model_nums = re.findall(r'\d+', name)
-                      model = int(model_nums[0]) if model_nums else 0
-                      candidates.append((tier, model, dev))
-          candidates.sort(key=lambda t: (t[0], t[1]), reverse=True)
-          if candidates:
-              chosen = candidates[0][2]
-              print(f\"{chosen['udid']}|{chosen['name']}\", file=sys.stderr)
-              print(chosen['udid'])
-          " 2> /tmp/sim-name.log)
-          test -n "$UDID" || { echo 'No iOS simulator on this runner image'; exit 1; }
-          echo "==> chose: $(cat /tmp/sim-name.log)"
+          # Pull the destination list from xcodebuild itself — simctl lists devices its runtime
+          # supports, but xcodebuild only accepts ones its SDK knows about (Xcode 16.4 tops out
+          # at iPhone 16, even if simctl lists a 17). Match CLAUDE.md's Trove ProMax convention.
+          xcodebuild -showdestinations -project "$APP_PROJECT" -scheme "$SCHEME" 2>/dev/null \
+            | grep -E 'platform:iOS Simulator.*iPhone' > /tmp/destinations.txt
+          UDID_AND_NAME=$(python3 -c "
+          import re, sys
+          rows = open('/tmp/destinations.txt').read()
+          # each row: { platform:iOS Simulator, arch:arm64, id:UUID, OS:X.Y, name:iPhone N Pro Max }
+          out = []
+          for m in re.finditer(r'id:([0-9A-Fa-f-]+).*?name:([^}]+)}', rows):
+              udid, name = m.group(1), m.group(2).strip()
+              if 'arch:arm64' not in rows.split(m.group(0))[0].splitlines()[-1]:
+                  # keep only arm64 rows to avoid duplicates
+                  pass
+              tier = 3 if 'Pro Max' in name else (2 if 'Pro' in name else (1 if 'SE' not in name else 0))
+              model = int(re.search(r'\d+', name).group()) if re.search(r'\d+', name) else 0
+              out.append((tier, model, udid, name))
+          # keep unique udids only
+          seen = set(); dedup = []
+          for row in sorted(out, key=lambda r: (r[0], r[1]), reverse=True):
+              if row[2] not in seen:
+                  seen.add(row[2]); dedup.append(row)
+          if dedup:
+              _, _, udid, name = dedup[0]
+              print(f'{udid}|{name}')
+          ")
+          UDID="${UDID_AND_NAME%%|*}"
+          NAME="${UDID_AND_NAME##*|}"
+          test -n "$UDID" || { echo 'No iPhone destination found for scheme'; head /tmp/destinations.txt; exit 1; }
+          echo "==> chose: $NAME ($UDID)"
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
           xcrun simctl boot "$UDID" || true
 
