@@ -1,10 +1,11 @@
-# skill — verified-delivery notes + adopted skills
+# skill: verified-delivery notes, first-party skills, adopted skills
 
-Two things live here:
+Three things live here:
 
 1. **Notes on the swami-specific skill** we're building (the IR → SwiftUI translator
    half — the "judgment" side of the project).
-2. **Adopted skills** vendored from external repos when their shape fits our loop.
+2. **First-party skills** written for this repo's Build↔Review loop.
+3. **Adopted skills** vendored from external repos when their shape fits our loop.
 
 ## The swami skill (not built yet)
 
@@ -17,6 +18,15 @@ hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
 - **Flag, don't fake** the hard cases (continuous springs, custom JS patches, cyclic
   dataflow, absolute layout).
 - Use `examples/` as worked-examples that steer translation.
+
+## First-party skills
+
+- **`review/`.** The Reviewer GA's playbook (`review/SKILL.md`). Codifies context
+  reads, PR-type-specific checks, evidence-required findings, rebuttal handling,
+  and the Build/Review message-exchange model. Load into any GA whose trigger is
+  a PR event or an `@claude review` comment. Renamed from `visual-review` because
+  the Reviewer's job covers visual, structural, methodology, and evidence, not
+  pixels alone.
 
 ## Adopted skills
 
