@@ -168,7 +168,16 @@ jobs:
           BR="ci-screenshots"
           git config user.name "swami-ci"
           git config user.email "ci@swami.local"
-          git fetch origin "$BR" && git checkout "$BR" || git checkout --orphan "$BR"
+          # Two paths: (a) branch exists → checkout normally, wipe ONLY this PR's dir so a partial
+          # rerun doesn't reuse stale PNGs (Codex P1). (b) branch doesn't exist → checkout --orphan
+          # which retains the current PR checkout's index; must `git rm -rf .` to start empty
+          # (Codex P2). Never wipe the whole ci-screenshots tree when the branch already exists.
+          if git fetch origin "$BR" && git checkout "$BR"; then
+            rm -rf "pr-$PR"
+          else
+            git checkout --orphan "$BR"
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
           mkdir -p "pr-$PR"
           cp -R out/* "pr-$PR/"
           git add "pr-$PR"
