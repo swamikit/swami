@@ -71,3 +71,8 @@ agent — the cloud loop does not write there.
   Clip) are NOT reachable by naive vtable field-offset walking (returns zeros / canvas coords).
   Values are a typed value-union stored indirectly — needs real union tag→payload decoding. Blocks
   faithful momentum constants in drag().
+
+## Infra self-healing loop (V4 prerequisites)
+- **`.github/ISSUE_TEMPLATE/infra-blocker.md`** — structured evidence template for when a Builder or Review GA hits a runner-level failure (Origami install broken, sim boot fails, ImageMagick not available, etc.). Fields: what step failed, full log excerpt, environment (macos-15 image, Xcode version, Origami version), what was tried, suspected cause. Its own tiny PR.
+- **`skill/troubleshooting/`** — living runbook of known infra issues and their fixes. Each entry: symptom, evidence signature, workaround, verification. Every fix PR appends here. Referenced by both Builder and Review skills — pre-flight check reads open `type: infra-blocker` issues; if any match, apply the workaround referenced there or escalate. Own PR when V4 starts.
+- **Builder pre-flight step** (once above two land) — in Builder GA (Round 3) and in `skill/pattern-translation` / `skill/workflow`: before real work, `gh issue list --label infra-blocker --state open` and check for matches against current environment. Codify the "apply workaround or escalate" decision.
