@@ -6,46 +6,72 @@ which worked only for the ~465 KB Touch document. On any larger `.origami` file 
 tail cut falls INSIDE an embedded component definition and reports that component's
 internals as "placed" nodes. This test checks the structural replacement:
 
-  1. Interaction_Touch.origami still parses to a placed graph dominated by
+  1. Interaction_Touch.origami parses to a placed graph dominated by
      `builtin.layer.*` / `origami.LongPress` / `origami.DoubleTap` — the Touch demo.
-  2. Interaction_Drag.origami now parses to its own placed graph (dominated by
+  2. Interaction_Drag.origami parses to its own placed graph (dominated by
      `origami.Drag` / `origami.DragSettings` / layers), NOT the embedded library.
 
-Test files are not checked into the public repo — they live in swami-private
-(`/Volumes/SatechiSSD/Developer/swami-private/patterns/Interaction/`). The test skips
-gracefully when it can't find them so CI still runs.
+Test corpus is fetched at test time from origami.design (ADR-0013 Path B):
+
+    https://origami.design/public/origami_files/patterns/<Name>.origami
+
+Files are cached under `tool/src/parser/.cache/` (gitignored). If the download
+fails (offline dev / CI without network), the corpus tests skip gracefully so
+the whole suite still runs.
 
 Run:
     python3 -m tool.src.parser.test_generalize        # from repo root
     python3 tool/src/parser/test_generalize.py
 """
-import os, pathlib, sys, unittest
+import pathlib, sys, unittest, urllib.request, urllib.error
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tool" / "src"))
 from parser.origami_graph import parse, Graph, read_graph_bytes  # noqa: E402
 
-# Search paths for the private test corpus. First hit wins.
-PRIVATE_CORPUS_CANDIDATES = [
-    pathlib.Path(os.environ.get("SWAMI_PRIVATE_PATTERNS", "")),
-    pathlib.Path("/Volumes/SatechiSSD/Developer/swami-private/patterns/Interaction"),
-    REPO_ROOT.parent / "swami-private" / "patterns" / "Interaction",
-    # Also allow dropping files next to this test for CI convenience.
-    HERE / "fixtures",
-]
+# Where fetched corpus files live locally (gitignored).
+CACHE_DIR = HERE / ".cache"
+
+# ADR-0013 Path B: public patterns are served from origami.design.
+CORPUS_URL_BASE = "https://origami.design/public/origami_files/patterns"
+
+# The interaction patterns we exercise. Each maps `<name>.origami` to a public URL
+# at `{CORPUS_URL_BASE}/<name>.origami`.
+INTERACTION_CORPUS = (
+    "Interaction_Touch.origami",
+    "Interaction_Drag.origami",
+)
 
 
-def _corpus_file(name):
-    for base in PRIVATE_CORPUS_CANDIDATES:
-        if not base or not str(base): continue
-        p = base / name
-        if p.exists(): return p
-    return None
+def _fetch_corpus_file(name):
+    """Return a local `Path` to `name`, downloading from origami.design if needed.
+
+    Returns None (rather than raising) when the file is not already cached and
+    the download fails — e.g. offline dev environments or CI without egress.
+    Callers should `skipTest` in that case so the rest of the suite still runs.
+    """
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    local = CACHE_DIR / name
+    if local.exists() and local.stat().st_size > 0:
+        return local
+    url = f"{CORPUS_URL_BASE}/{name}"
+    # origami.design returns 403 to requests without a User-Agent, so set one.
+    req = urllib.request.Request(url, headers={"User-Agent": "swami-tests/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = r.read()
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
+        return None
+    if not data:
+        return None
+    local.write_bytes(data)
+    return local
 
 
-# The public repo ships one origami example that is fully public: TouchOrigamiExample.
-# Use it as a smoke test that ALWAYS runs.
+# The public repo used to ship one origami example (TouchOrigamiExample) under
+# tool/examples/. It is gitignored (see .gitignore rule for `*.origami`) so it
+# may or may not be present locally; treat it as an opportunistic smoke test.
 PUBLIC_EXAMPLE = REPO_ROOT / "tool" / "examples" / "TouchOrigamiExample.origami"
 
 
@@ -89,14 +115,15 @@ class TestPlacedRootStructural(unittest.TestCase):
 class TestInteractionCorpus(unittest.TestCase):
     """Verify placed-vs-library separation across the Interaction patterns.
 
-    These tests require the private corpus (`swami-private/patterns/Interaction/`).
-    They skip gracefully in environments (CI) where the files aren't available.
+    Corpus is fetched from origami.design at test time (ADR-0013 Path B) and
+    cached under `tool/src/parser/.cache/`. Tests skip gracefully when the
+    download fails (offline dev / CI without egress).
     """
 
     def test_interaction_touch_matches_public_example(self):
-        p = _corpus_file("Interaction_Touch.origami")
+        p = _fetch_corpus_file("Interaction_Touch.origami")
         if not p:
-            self.skipTest("Interaction_Touch.origami not available (needs swami-private)")
+            self.skipTest("Interaction_Touch.origami not fetchable (no network / origami.design down)")
         out = parse(str(p))
         kinds = out["kinds"]
         # Same signature as the public TouchOrigamiExample.
@@ -107,9 +134,9 @@ class TestInteractionCorpus(unittest.TestCase):
                              f"Interaction_Touch contaminated with {library_marker}: kinds={kinds}")
 
     def test_interaction_drag_places_drag_not_library(self):
-        p = _corpus_file("Interaction_Drag.origami")
+        p = _fetch_corpus_file("Interaction_Drag.origami")
         if not p:
-            self.skipTest("Interaction_Drag.origami not available (needs swami-private)")
+            self.skipTest("Interaction_Drag.origami not fetchable (no network / origami.design down)")
         out = parse(str(p))
         kinds = out["kinds"]
         # The Drag demo's own placed graph HAS Drag / DragSettings.
@@ -132,20 +159,20 @@ class TestStabilityAcrossCorpus(unittest.TestCase):
     """Every Interaction pattern locates SOME placed root — no silent failure."""
 
     def test_every_interaction_pattern_locates_placed_root(self):
-        base = _corpus_file("Interaction_Drag.origami")
-        if not base:
-            self.skipTest("private Interaction corpus not available")
-        base_dir = base.parent
-        found_any = False
-        for f in sorted(base_dir.glob("Interaction_*.origami")):
-            found_any = True
+        fetched = []
+        for name in INTERACTION_CORPUS:
+            p = _fetch_corpus_file(name)
+            if p:
+                fetched.append(p)
+        if not fetched:
+            self.skipTest("no Interaction_*.origami fetchable (no network / origami.design down)")
+        for f in fetched:
             with self.subTest(pattern=f.name):
                 g = Graph(read_graph_bytes(f))
                 off = g.placed_root_offset()
                 self.assertIsNotNone(off, f"{f.name}: placed_root_offset returned None")
                 self.assertGreater(off, 0)
                 self.assertLess(off, g.N)
-        self.assertTrue(found_any, "no Interaction_*.origami files found")
 
 
 if __name__ == "__main__":
