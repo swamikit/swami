@@ -1,0 +1,151 @@
+name: publish-docs
+
+# DocC publishing to GitHub Pages.
+# - On PR (opened/synchronize/ready_for_review): builds DocC for this PR and
+#   publishes it under gh-pages/pr-<N>/, then leaves a sticky comment with the URL.
+# - On push to main: builds DocC and publishes to gh-pages/ (root = latest).
+# - workflow_dispatch: manual re-publish for the current ref.
+#
+# gh-pages branch layout (target repo swamikit/swami → https://swamikit.github.io/swami/):
+#   /               <- latest (from main)
+#   /pr-<N>/        <- one directory per open PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  push:
+    branches: [main]
+    # Merges that only touch pattern sources feed post-merge.yml, which
+    # renders fresh PNGs into DocC Resources and pushes them back to main.
+    # That follow-up commit (path: app/Swami/Swami.docc/Resources/**) is
+    # what should trigger publish-docs — publishing on the raw merge would
+    # ship stale renders. Ignoring the pattern-source path keeps this
+    # workflow off the merge push; the render commit still fires it.
+    paths-ignore:
+      - 'app/Swami/Patterns/*.swift'
+  workflow_dispatch:
+
+permissions:
+  contents: write        # push to gh-pages
+  pull-requests: write   # sticky comment on the PR
+
+concurrency:
+  # Serialize every writer to gh-pages — PR previews, main publishes, and
+  # manual re-runs all mutate the same branch, so a per-ref group let two
+  # PRs race on gh-pages. One shared group + cancel-in-progress: false
+  # forces them into a queue and preserves each run's push.
+  group: gh-pages
+  cancel-in-progress: false
+
+env:
+  APP_PROJECT: app/Swami.xcodeproj
+  # DocC catalog lives inside the Swami framework target.
+  DOCC_SCHEME: Swami
+  # Public site base — https://<owner>.github.io/<repo>/
+  SITE_REPO: swami
+
+jobs:
+  build-and-publish:
+    runs-on: macos-15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Environment
+        run: |
+          xcodebuild -version
+          xcrun --find docc
+
+      - name: Resolve publish target
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            pr="${{ github.event.pull_request.number }}"
+            echo "subpath=pr-${pr}" >> "$GITHUB_OUTPUT"
+            echo "hosting_base=${SITE_REPO}/pr-${pr}" >> "$GITHUB_OUTPUT"
+            echo "public_url=https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${pr}/" >> "$GITHUB_OUTPUT"
+          else
+            echo "subpath=" >> "$GITHUB_OUTPUT"
+            echo "hosting_base=${SITE_REPO}" >> "$GITHUB_OUTPUT"
+            echo "public_url=https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build DocC archive
+        run: |
+          set -euo pipefail
+          # docbuild emits a .doccarchive into DerivedData. Generic destination
+          # keeps us off simulator boot cost — DocC only needs the symbol graph.
+          xcodebuild docbuild \
+            -project "${APP_PROJECT}" \
+            -scheme "${DOCC_SCHEME}" \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build
+
+          archive=$(find build -type d -name '*.doccarchive' | head -1)
+          if [ -z "${archive}" ]; then
+            echo "::error::no .doccarchive produced by docbuild"
+            exit 1
+          fi
+          echo "archive=${archive}" >> "$GITHUB_ENV"
+
+      - name: Transform archive for static hosting
+        run: |
+          set -euo pipefail
+          rm -rf site
+          mkdir -p site
+          xcrun docc process-archive transform-for-static-hosting \
+            "${archive}" \
+            --output-path site \
+            --hosting-base-path "${{ steps.target.outputs.hosting_base }}"
+
+      - name: Publish to gh-pages
+        env:
+          SUBPATH: ${{ steps.target.outputs.subpath }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Fetch (or create) gh-pages in a sibling worktree so we don't
+          # disturb the source checkout.
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
+            git fetch origin gh-pages:gh-pages
+            git worktree add gh-pages gh-pages
+          else
+            git worktree add --orphan -b gh-pages gh-pages
+            (cd gh-pages && git rm -rf . >/dev/null 2>&1 || true)
+          fi
+
+          # Replace only the slice we own — PR dir on PRs, or root files on main.
+          if [ -n "${SUBPATH}" ]; then
+            rm -rf "gh-pages/${SUBPATH}"
+            mkdir -p "gh-pages/${SUBPATH}"
+            cp -R site/. "gh-pages/${SUBPATH}/"
+          else
+            # Root publish: keep pr-* dirs intact, replace everything else.
+            find gh-pages -mindepth 1 -maxdepth 1 \
+              ! -name '.git' ! -name 'pr-*' -exec rm -rf {} +
+            cp -R site/. gh-pages/
+          fi
+
+          # .nojekyll so DocC's `_` paths serve as-is.
+          touch gh-pages/.nojekyll
+
+          cd gh-pages
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to publish"
+            exit 0
+          fi
+          git commit -m "docs: publish ${SUBPATH:-root} from ${GITHUB_SHA::7}"
+          git push origin gh-pages
+
+      - name: Sticky PR comment
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: publish-docs
+          message: |
+            DocC preview for this PR: ${{ steps.target.outputs.public_url }}
+
+            Rebuilds on every push. Cleaned up when the PR closes (TODO: cleanup job).
