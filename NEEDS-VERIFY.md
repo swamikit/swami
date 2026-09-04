@@ -27,16 +27,24 @@ agent — the cloud loop does not write there.
 
 ## Verify-gate bootstrap (ADR-0012 — auto-compare as V1)
 - **Origami version currency**: installed = **227.0** (build 1045240740, /Applications/Origami
-  Studio.app, modified 2026-09-02). Check on a schedule; when it changes, any references
-  rendered against an older version are stale — re-render before running the compare, or
-  the diff reads a legit Origami-side change as a swami regression.
-- **Cached reference set (bootstrap task)**: for each pattern in `swami-private/patterns/`
-  (currently 64), drive Origami headlessly to export a PNG of its artboard, commit to
-  `swami-private/references/<origami-version>/<pattern>.png`. First step is figuring out
-  Origami's scriptable export — AppleScript / UI-scripting is the assumed fallback.
-- **`verify.yml` compare step**: fetch references from `swami-private` (needs a deploy key
-  or fine-grained PAT in swamikit/swami Actions secrets — first real secret the repo needs),
-  add SSIM/perceptual diff, gate merge on score.
+  Studio.app, modified 2026-09-02). ✅ user confirmed latest as of 2026-09-04. Re-check on
+  Origami upgrade; re-render references before running the compare, or the diff reads a
+  legit Origami-side change as a swami regression.
+- **Cached reference set** — ✅ **60/62 rendered** for Origami 227.0, committed to
+  `swamikit/swami-private:references/227.0/`. Renderer at `swami-private/scripts/render-references.sh`
+  drives Origami's View → Take Screenshot menu via osascript; one-shot per Origami version.
+  MISSING (System Events auth blip on the last two): **Utilities_Viewfinder**,
+  **Utilities_Visual_Blur**. Retry: reopen Terminal / grant automation permission, then
+  `./scripts/render-references.sh Viewfinder` and `... Visual_Blur`.
+- **`verify.yml` compare step** — ✅ **wired**. Uses ImageMagick SSIM, threshold 0.95,
+  scores post into the sticky PR comment as a table, diffs uploaded as artifact. Currently
+  SKIPPED at runtime because `REFERENCES_TOKEN` secret isn't set yet. **User action to
+  unblock**: create a fine-grained PAT with `contents:read` on `swamikit/swami-private`,
+  add as `REFERENCES_TOKEN` secret in `swamikit/swami` → Settings → Secrets and variables →
+  Actions. First run after that will auto-compare Interaction_Touch.
+- **PATTERNS growth**: current single entry `touch:Interaction_Touch`. Add one line per
+  translated pattern (`<slug>:<origami-filename-stem>`) as the corpus grows; the ContentView
+  switch in `app/SwamiHost/ContentView.swift` gets a matching case.
 - **ADRs 0001–0003 accounting**: the ADR directory jumps from 0004 to 0011 with no 0001-0003.
   Either recover them from history or explicitly note they were archived — silent gaps read
   as "you forgot how to number files."

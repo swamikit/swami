@@ -22,7 +22,11 @@ permissions:
 env:
   APP_PROJECT: app/Swami.xcodeproj
   SCHEME: SwamiHost
-  PATTERNS: "touch"
+  # Each entry: <slug>:<reference-filename-without-extension>.
+  # slug drives SWAMI_PATTERN + the CI screenshot name; reference-filename maps
+  # to swami-private/references/<origami-version>/<name>.png. Grow as patterns land.
+  PATTERNS: "touch:Interaction_Touch"
+  ORIGAMI_VERSION: "227.0"
 
 jobs:
   pixel-gate:
@@ -61,16 +65,64 @@ jobs:
       - name: Screenshot every pattern (bulk)
         run: |
           mkdir -p screenshots
-          for P in $PATTERNS; do
+          for pair in $PATTERNS; do
+            slug="${pair%%:*}"
             xcrun simctl terminate "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.bid }}" 2>/dev/null || true
-            SIMCTL_CHILD_SWAMI_PATTERN="$P" xcrun simctl launch "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.bid }}"
+            SIMCTL_CHILD_SWAMI_PATTERN="$slug" xcrun simctl launch "${{ steps.sim.outputs.udid }}" "${{ steps.app.outputs.bid }}"
             sleep 3
-            xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot "screenshots/$P.png"
+            xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot "screenshots/${slug}.png"
           done
 
       - name: Upload screenshots (always — downloadable fallback)
         uses: actions/upload-artifact@v4
         with: { name: pixel-gate-screenshots, path: screenshots/, if-no-files-found: error }
+
+      # ---- Auto-compare vs cached Origami references (ADR-0012) ----
+      - name: Fetch Origami references (swami-private)
+        id: refs
+        if: env.REFERENCES_TOKEN != ''
+        env: { REFERENCES_TOKEN: "${{ secrets.REFERENCES_TOKEN }}" }
+        uses: actions/checkout@v4
+        with:
+          repository: swamikit/swami-private
+          token: ${{ secrets.REFERENCES_TOKEN }}
+          path: swami-private
+          sparse-checkout: references
+
+      - name: Auto-compare (SSIM per pattern)
+        id: compare
+        if: steps.refs.outcome == 'success'
+        run: |
+          mkdir -p diffs
+          RESULTS=""
+          THRESHOLD="0.95"
+          FAIL=0
+          for pair in $PATTERNS; do
+            slug="${pair%%:*}"; ref_name="${pair##*:}"
+            ci="screenshots/${slug}.png"
+            ref="swami-private/references/${ORIGAMI_VERSION}/${ref_name}.png"
+            diff="diffs/${slug}.png"
+            if [ ! -f "$ref" ]; then
+              RESULTS="${RESULTS}| ${slug} | NO REFERENCE (${ref_name}.png) | — |"$'\n'
+              continue
+            fi
+            # SSIM to stderr; 1.0 = identical, closer-to-0 = worse.
+            score=$(compare -metric SSIM "$ci" "$ref" "$diff" 2>&1 || true)
+            verdict=$(awk -v s="$score" -v t="$THRESHOLD" 'BEGIN{ print (s+0>=t+0 ? "✅" : "❌") }')
+            [ "$verdict" = "❌" ] && FAIL=1
+            RESULTS="${RESULTS}| ${slug} | ${score} | ${verdict} |"$'\n'
+          done
+          {
+            echo "results<<COMPARE_EOF"
+            echo "$RESULTS"
+            echo "COMPARE_EOF"
+            echo "any_fail=${FAIL}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload diffs (per-pattern)
+        if: steps.compare.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with: { name: pixel-gate-diffs, path: diffs/, if-no-files-found: warn }
 
       # ---- Evidence onto the PR (public repo → raw URLs render inline) ----
       - name: Post screenshots to the PR
@@ -91,9 +143,16 @@ jobs:
           git push origin "$BR"
           # Build a sticky comment embedding each shot via raw.githubusercontent (public repo).
           BODY="### 📸 Pixel gate — \`${SHA:0:7}\`"$'\n\n'
+          # Auto-compare scores table (if the compare step ran).
+          RESULTS_TABLE="${{ steps.compare.outputs.results }}"
+          if [ -n "$RESULTS_TABLE" ]; then
+            BODY+="**SSIM vs Origami reference** (≥0.95 = ✅)"$'\n\n'"| pattern | SSIM | verdict |"$'\n'"|---|---|---|"$'\n'"$RESULTS_TABLE"$'\n'
+          else
+            BODY+="_(auto-compare skipped — set REFERENCES_TOKEN secret to enable)_"$'\n\n'
+          fi
           for f in screenshots/*.png; do n=$(basename "$f" .png)
             BODY+="**$n**"$'\n'"![${n}](https://raw.githubusercontent.com/${REPO}/${BR}/pr-${PR}/${n}.png)"$'\n\n'; done
-          BODY+="_Static layout only — interaction (gesture) gate is separate. Compare against the Origami artboard before approving._"
+          BODY+="_Static layout only — interaction (gesture) gate is separate. Human sign-off remains for anything the auto-compare flags._"
           gh pr comment "$PR" --repo "$REPO" --edit-last --body "$BODY" 2>/dev/null \
             || gh pr comment "$PR" --repo "$REPO" --body "$BODY"
 
