@@ -1,0 +1,69 @@
+name: review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]  # for @claude review re-triggers
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  review:
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude review'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch PR context
+        id: context
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUM=${{ github.event.pull_request.number || github.event.issue.number }}
+          gh pr view $PR_NUM --json diffUrl,body,commits,files --jq . > /tmp/pr.json
+          gh pr diff $PR_NUM > /tmp/pr.diff
+          # Fetch sticky evidence comment if any
+          gh api repos/${{ github.repository }}/issues/$PR_NUM/comments \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | .body' > /tmp/sticky.md
+          echo "pr=$PR_NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Load review context
+        run: |
+          cat AGENTS.md > /tmp/context.md
+          echo '---' >> /tmp/context.md
+          cat skill/review/SKILL.md >> /tmp/context.md
+          echo '---' >> /tmp/context.md
+          for adr in docs/decisions/*.md; do cat "$adr" >> /tmp/context.md; echo '---' >> /tmp/context.md; done
+
+      # NOTE: This step is a placeholder for the Claude API call.
+      # Full implementation requires anthropic-sdk or claude-code-action; both need ANTHROPIC_API_KEY.
+      # This PR ships the workflow skeleton; the actual Claude call lands in a follow-up
+      # once Sam has added ANTHROPIC_API_KEY to Actions secrets.
+      - name: Run Claude review (placeholder)
+        if: env.ANTHROPIC_API_KEY != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR: ${{ steps.context.outputs.pr }}
+        run: |
+          echo "== would call Claude API here with:"
+          echo "  - system: /tmp/context.md (AGENTS + skill/review + ADRs)"
+          echo "  - user: /tmp/pr.diff + /tmp/sticky.md"
+          echo "  - tools: gh (post comments, request changes/approve)"
+          # Real implementation: pip install anthropic; python scripts/run-review.py
+          echo "PLACEHOLDER — real Claude integration to follow"
+
+      - name: Signal readiness (if secret not set)
+        if: env.ANTHROPIC_API_KEY == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.context.outputs.pr }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          gh pr comment $PR --body "Review GA is present but ANTHROPIC_API_KEY is not set in repo secrets. Set it in Settings -> Secrets and variables -> Actions to enable automated review."
