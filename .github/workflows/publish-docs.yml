@@ -88,7 +88,25 @@ jobs:
           fi
           echo "archive=${archive}" >> "$GITHUB_ENV"
 
+      - name: Guard empty archive
+        id: guard
+        run: |
+          set -euo pipefail
+          # DocC emits one JSON per rendered page under data/documentation/.
+          # An archive with fewer than 2 real pages is an Xcode-placeholder
+          # catalog (just the module shell) — publishing it ships a blank
+          # white page over the last good preview. Skip publish instead.
+          pages=$(find "${archive}" -type f -name '*.json' -path '*/data/documentation/*' | wc -l | tr -d ' ')
+          echo "pages=${pages}" >> "$GITHUB_OUTPUT"
+          if [ "${pages}" -lt 2 ]; then
+            echo "::warning::DocC archive has ${pages} documentation page(s) — treating as empty and skipping publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Transform archive for static hosting
+        if: steps.guard.outputs.skip != 'true'
         run: |
           set -euo pipefail
           rm -rf site
@@ -99,6 +117,7 @@ jobs:
             --hosting-base-path "${{ steps.target.outputs.hosting_base }}"
 
       - name: Publish to gh-pages
+        if: steps.guard.outputs.skip != 'true'
         env:
           SUBPATH: ${{ steps.target.outputs.subpath }}
         run: |
@@ -140,8 +159,8 @@ jobs:
           git commit -m "docs: publish ${SUBPATH:-root} from ${GITHUB_SHA::7}"
           git push origin gh-pages
 
-      - name: Sticky PR comment
-        if: github.event_name == 'pull_request'
+      - name: Sticky PR comment (published)
+        if: github.event_name == 'pull_request' && steps.guard.outputs.skip != 'true'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: publish-docs
@@ -149,3 +168,13 @@ jobs:
             DocC preview for this PR: ${{ steps.target.outputs.public_url }}
 
             Rebuilds on every push. Cleaned up when the PR closes (TODO: cleanup job).
+
+      - name: Sticky PR comment (empty archive)
+        if: github.event_name == 'pull_request' && steps.guard.outputs.skip == 'true'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: publish-docs
+          message: |
+            DocC publish skipped: the archive rendered ${{ steps.guard.outputs.pages }} documentation page(s), which is the Xcode-placeholder state (an empty catalog would overwrite the last good preview with a blank page).
+
+            Add real content under `app/Swami/Swami.docc/` — the Swami landing page, articles, or sample-code pages — and push again to publish.
