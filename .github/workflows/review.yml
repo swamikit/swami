@@ -12,29 +12,55 @@ permissions:
 
 jobs:
   review:
+    # Codex P2: restrict issue_comment re-triggers to PR comments (issues also fire issue_comment).
     if: |
       github.event_name == 'pull_request' ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude review'))
+      (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request != null
+        && contains(github.event.comment.body, '@claude review'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # Codex P1: forked pull_request events run without repo secrets and with a read-only
+      # GITHUB_TOKEN — Claude can't be called and comments can't be posted. Detect and skip.
+      # issue_comment events (even on cross-repo PRs) run in the base repo context and DO
+      # have secret access, so they are not gated here.
+      - name: Determine PR fork status
+        id: fork
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] \
+             && [ "${{ github.event.pull_request.head.repo.fork }}" = "true" ]; then
+            echo "is_fork=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_fork=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip review on forked PR
+        if: steps.fork.outputs.is_fork == 'true'
+        run: |
+          echo "::notice::Forked PR detected — ANTHROPIC_API_KEY and write permissions are unavailable on fork pull_request events. Skipping Claude review. A maintainer can re-run by commenting '@claude review' on the PR (issue_comment runs in the base repo context and has secret access)."
+
       - name: Fetch PR context
         id: context
+        if: steps.fork.outputs.is_fork != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           PR_NUM=${{ github.event.pull_request.number || github.event.issue.number }}
           gh pr view $PR_NUM --json number,title,body,url,headRefName,baseRefName,commits,files --jq . > /tmp/pr.json
           gh pr diff $PR_NUM > /tmp/pr.diff
-          # Fetch sticky evidence comment if any
+          # Codex P2 (sticky preservation): READ verify.yml's sticky comment for CONTEXT ONLY.
+          # Do not edit, update, or delete it here — the pixel gate owns that comment. The
+          # Claude review posts SEPARATE comments (see "Run Claude review" step below).
           gh api repos/${{ github.repository }}/issues/$PR_NUM/comments \
             --jq '.[] | select(.user.login == "github-actions[bot]") | .body' > /tmp/sticky.md
           echo "pr=$PR_NUM" >> "$GITHUB_OUTPUT"
 
       - name: Load review context
+        if: steps.fork.outputs.is_fork != 'true'
         run: |
           cat AGENTS.md > /tmp/context.md
           echo '---' >> /tmp/context.md
@@ -51,21 +77,26 @@ jobs:
       # Full implementation requires anthropic-sdk or claude-code-action; both need ANTHROPIC_API_KEY.
       # This PR ships the workflow skeleton; the actual Claude call lands in a follow-up
       # once Sam has added ANTHROPIC_API_KEY to Actions secrets.
+      #
+      # IMPORTANT (Codex P2): the real Claude integration MUST post its findings as a
+      # SEPARATE comment (or a dedicated review body / new thread). It MUST NOT edit or
+      # delete verify.yml's sticky evidence comment — that comment is owned by the pixel
+      # gate and is what maintainers rely on for run-over-run evidence continuity.
       - name: Run Claude review (placeholder)
-        if: env.ANTHROPIC_API_KEY != ''
+        if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PR: ${{ steps.context.outputs.pr }}
         run: |
           echo "== would call Claude API here with:"
           echo "  - system: /tmp/context.md (AGENTS + skill/review + ADRs)"
-          echo "  - user: /tmp/pr.diff + /tmp/sticky.md"
-          echo "  - tools: gh (post comments, request changes/approve)"
+          echo "  - user: /tmp/pr.diff + /tmp/sticky.md (sticky read-only, for context)"
+          echo "  - tools: gh (post SEPARATE comments — never edit verify.yml's sticky)"
           # Real implementation: pip install anthropic; python scripts/run-review.py
           echo "PLACEHOLDER — real Claude integration to follow"
 
       - name: Signal readiness (if secret not set)
-        if: env.ANTHROPIC_API_KEY == ''
+        if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY == ''
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.context.outputs.pr }}
