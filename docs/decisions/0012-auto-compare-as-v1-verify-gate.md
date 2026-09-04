@@ -28,7 +28,7 @@ first architecture (macOS runner + Codex environment) is meant to dissolve.
 
 3. **Origami version is pinned in the reference set.** When Origami updates, we
    re-render the references before running the compare — otherwise a legitimate
-   Origami-side rendering change reads as a swami regression. `NEEDS-VERIFY.md`
+   Origami-side rendering change reads as a swami regression. `BACKLOG.md`
    tracks the installed version so a drift is caught before it corrupts a run.
 
 4. **Human eyes remain the final sign-off, on a shrinking surface.** Interaction
