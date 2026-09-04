@@ -35,8 +35,13 @@ jobs:
       - name: Environment
         run: |
           xcodebuild -version
-          xcrun simctl list runtimes
-          which compare && compare -version | head -1
+          xcrun simctl list runtimes | grep "iOS "
+
+      - name: Install ImageMagick (for SSIM compare)
+        run: |
+          # macos-15 runners don't ship with ImageMagick's `compare`; install it.
+          brew install imagemagick --quiet
+          compare -version | head -1
 
       - name: Install Origami Studio (Sparkle appcast)
         id: origami
