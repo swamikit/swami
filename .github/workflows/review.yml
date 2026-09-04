@@ -1,3 +1,19 @@
+# review.yml — PR review GA (agent-pluggable).
+#
+# The reviewing agent is selected by the repo variable `AGENT` (Settings → Secrets
+# and variables → Actions → Variables). Defaults to `claude`. Each agent has its
+# own secret and its own call script; see the case statement in the "Run agent
+# review" step below.
+#
+# Supported values (add more in the case statement as agents are wired):
+#   AGENT=claude   — requires secret ANTHROPIC_API_KEY   (default; call implemented)
+#   AGENT=jules    — requires secret JULES_API_KEY       (placeholder — not wired)
+#   AGENT=copilot  — requires secret COPILOT_API_KEY     (placeholder — not wired)
+#
+# To switch agents at the repo level:
+#   gh variable set AGENT --body jules
+# Or set it per-environment via Settings → Environments.
+
 name: review
 
 on:
@@ -9,6 +25,9 @@ on:
 permissions:
   pull-requests: write
   contents: read
+
+env:
+  AGENT: ${{ vars.AGENT || 'claude' }}
 
 jobs:
   review:
@@ -73,33 +92,51 @@ jobs:
           fi
           for adr in docs/decisions/*.md; do cat "$adr" >> /tmp/context.md; echo '---' >> /tmp/context.md; done
 
-      # NOTE: This step is a placeholder for the Claude API call.
-      # Full implementation requires anthropic-sdk or claude-code-action; both need ANTHROPIC_API_KEY.
-      # This PR ships the workflow skeleton; the actual Claude call lands in a follow-up
-      # once Sam has added ANTHROPIC_API_KEY to Actions secrets.
+      # Agent dispatch — pick the reviewer by $AGENT (workflow env, from vars.AGENT).
+      # Each agent supplies its own secret name and call script. Placeholders exit 0
+      # so an unwired agent doesn't fail PRs; an unknown value fails loudly.
       #
-      # IMPORTANT (Codex P2): the real Claude integration MUST post its findings as a
-      # SEPARATE comment (or a dedicated review body / new thread). It MUST NOT edit or
-      # delete verify.yml's sticky evidence comment — that comment is owned by the pixel
-      # gate and is what maintainers rely on for run-over-run evidence continuity.
-      - name: Run Claude review (placeholder)
-        if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          PR: ${{ steps.context.outputs.pr }}
-        run: |
-          echo "== would call Claude API here with:"
-          echo "  - system: /tmp/context.md (AGENTS + skill/review + ADRs)"
-          echo "  - user: /tmp/pr.diff + /tmp/sticky.md (sticky read-only, for context)"
-          echo "  - tools: gh (post SEPARATE comments — never edit verify.yml's sticky)"
-          # Real implementation: pip install anthropic; python scripts/run-review.py
-          echo "PLACEHOLDER — real Claude integration to follow"
-
-      - name: Signal readiness (if secret not set)
-        if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY == ''
+      # IMPORTANT (Codex P2): whichever agent runs, its findings MUST post as a
+      # SEPARATE comment (or dedicated review body / new thread). It MUST NOT edit or
+      # delete verify.yml's sticky evidence comment — that comment is owned by the
+      # pixel gate and is what maintainers rely on for run-over-run evidence continuity.
+      - name: Run agent review
+        if: steps.fork.outputs.is_fork != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.context.outputs.pr }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          JULES_API_KEY: ${{ secrets.JULES_API_KEY }}
+          COPILOT_API_KEY: ${{ secrets.COPILOT_API_KEY }}
         run: |
-          gh pr comment $PR --body "Review GA is present but ANTHROPIC_API_KEY is not set in repo secrets. Set it in Settings -> Secrets and variables -> Actions to enable automated review."
+          echo "::notice::Selected review agent: $AGENT"
+          case "$AGENT" in
+            claude)
+              if [ -z "$ANTHROPIC_API_KEY" ]; then
+                echo "::notice::ANTHROPIC_API_KEY not set — skipping review"
+                gh pr comment "$PR" --body "Review GA is present but ANTHROPIC_API_KEY is not set in repo secrets. Set it in Settings -> Secrets and variables -> Actions to enable automated review." || true
+                exit 0
+              fi
+              # NOTE: placeholder for the Claude API call. Full implementation
+              # requires anthropic-sdk or claude-code-action. This PR ships the
+              # workflow skeleton; the actual Claude call lands in a follow-up.
+              echo "== would call Claude API here with:"
+              echo "  - system: /tmp/context.md (AGENTS + skill/review + ADRs)"
+              echo "  - user: /tmp/pr.diff + /tmp/sticky.md (sticky read-only, for context)"
+              echo "  - tools: gh (post SEPARATE comments — never edit verify.yml's sticky)"
+              # Real implementation: pip install anthropic; python scripts/run-review.py
+              echo "PLACEHOLDER — real Claude integration to follow"
+              ;;
+            jules)
+              echo "::notice::Jules integration not yet wired"
+              exit 0
+              ;;
+            copilot)
+              echo "::notice::Copilot Workspace integration not yet wired"
+              exit 0
+              ;;
+            *)
+              echo "::error::Unknown AGENT: $AGENT"
+              exit 1
+              ;;
+          esac
