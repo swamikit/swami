@@ -19,7 +19,16 @@ SSIM measures perceptual structure — for near-flat color fields it over-reward
 2. **The visual gate becomes: Reviewer GA (skill/review) + Sam's spot-check on flagged cases.** Reviewer reads the swami/origami/diff triplet and calls state match, alignment, chrome, semantic correctness. That's what the human eye already does; the Reviewer skill codifies it.
 3. **Structural gate** (port match) lands separately when parser port extraction ships — that's automated, deterministic, and complements the visual side.
 4. **Verify workflow doesn't need to fail on SSIM.** Keep the number as evidence; merges gate on Reviewer approval + no unresolved findings.
-5. **Threshold field stays in the YAML for future opt-in** — e.g. an interaction gate PR could set a per-pattern threshold if it makes sense — but the default gate is Reviewer-driven, not SSIM-driven.
+5. **No threshold field in the YAML today.** SSIM is informational; there is nothing for a threshold to gate. A future interaction-gate ADR can reintroduce a per-region or per-pattern threshold if that metric proves it fits the subject matter.
+
+### Interim gate (until Reviewer GA ships)
+
+This decision captures the *target* model. Reviewer GA (PR #11, skill/review) hasn't
+shipped yet, so today's visual gate is **Sam's spot-check on the posted evidence
+triplet** — same swami/origami/diff comment, human read. Once Reviewer GA lands, the
+same read becomes automated per this ADR, with Sam only spot-checking flagged cases.
+No workflow change is required at the flip — the evidence comment is already the
+Reviewer's input surface.
 
 ## Consequences
 
