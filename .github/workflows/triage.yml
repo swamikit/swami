@@ -11,6 +11,12 @@ permissions:
 jobs:
   triage:
     runs-on: ubuntu-latest
+    # Hoisted from the individual steps so step-level `if:` expressions can
+    # read `env.ANTHROPIC_API_KEY`. A step's `env:` is not in scope at the
+    # step's own `if:` evaluation time, so the secret must exist at job level
+    # for the gate to evaluate correctly.
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,7 +87,6 @@ jobs:
       - name: Run Claude triage (placeholder)
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ISSUE: ${{ steps.context.outputs.issue }}
         run: |
           echo "== would call Claude API here with:"
@@ -96,6 +101,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ steps.context.outputs.issue }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           gh issue comment $ISSUE --body "Triage GA is present but ANTHROPIC_API_KEY is not set in repo secrets. Set it in Settings -> Secrets and variables -> Actions to enable automated triage (labels + dedup)."
