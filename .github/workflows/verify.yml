@@ -63,36 +63,41 @@ jobs:
       - name: Pick + boot a simulator
         id: sim
         run: |
-          # Pull the destination list from xcodebuild itself — simctl lists devices its runtime
-          # supports, but xcodebuild only accepts ones its SDK knows about (Xcode 16.4 tops out
-          # at iPhone 16, even if simctl lists a 17). Match CLAUDE.md's Trove ProMax convention.
-          xcodebuild -showdestinations -project "$APP_PROJECT" -scheme "$SCHEME" 2>/dev/null \
-            | grep -E 'platform:iOS Simulator.*iPhone' > /tmp/destinations.txt
+          set +e  # this whole block is defensive; report before dying
+          xcodebuild -showdestinations -project "$APP_PROJECT" -scheme "$SCHEME" > /tmp/dest-raw.txt 2>&1
+          echo "==> xcodebuild -showdestinations exit=$?"
+          echo "==> raw output (first 60 lines):"
+          head -60 /tmp/dest-raw.txt
+          echo "==> iPhone rows:"
+          grep -E 'platform:iOS Simulator.*iPhone' /tmp/dest-raw.txt | tee /tmp/destinations.txt || true
+
+          set -e
+          # Rank Pro Max > Pro > iPhone > SE; higher model number wins within tier.
           UDID_AND_NAME=$(python3 -c "
-          import re, sys
+          import re
           rows = open('/tmp/destinations.txt').read()
-          # each row: { platform:iOS Simulator, arch:arm64, id:UUID, OS:X.Y, name:iPhone N Pro Max }
-          out = []
+          seen, out = set(), []
           for m in re.finditer(r'id:([0-9A-Fa-f-]+).*?name:([^}]+)}', rows):
               udid, name = m.group(1), m.group(2).strip()
-              if 'arch:arm64' not in rows.split(m.group(0))[0].splitlines()[-1]:
-                  # keep only arm64 rows to avoid duplicates
-                  pass
-              tier = 3 if 'Pro Max' in name else (2 if 'Pro' in name else (1 if 'SE' not in name else 0))
-              model = int(re.search(r'\d+', name).group()) if re.search(r'\d+', name) else 0
+              if udid in seen: continue
+              seen.add(udid)
+              tier = 3 if 'Pro Max' in name else (2 if ' Pro' in name else (1 if 'SE' not in name else 0))
+              nums = re.findall(r'\d+', name)
+              model = int(nums[0]) if nums else 0
               out.append((tier, model, udid, name))
-          # keep unique udids only
-          seen = set(); dedup = []
-          for row in sorted(out, key=lambda r: (r[0], r[1]), reverse=True):
-              if row[2] not in seen:
-                  seen.add(row[2]); dedup.append(row)
-          if dedup:
-              _, _, udid, name = dedup[0]
+          if out:
+              _, _, udid, name = sorted(out, key=lambda r: (r[0], r[1]), reverse=True)[0]
               print(f'{udid}|{name}')
           ")
-          UDID="${UDID_AND_NAME%%|*}"
-          NAME="${UDID_AND_NAME##*|}"
-          test -n "$UDID" || { echo 'No iPhone destination found for scheme'; head /tmp/destinations.txt; exit 1; }
+          if [ -z "$UDID_AND_NAME" ]; then
+            echo 'No iPhone destination found — falling back to any available iPhone via simctl'
+            UDID=$(xcrun simctl list devices available -j | python3 -c "import sys,json;d=json.load(sys.stdin)['devices'];print(next((x['udid'] for k in sorted(d) if 'iOS' in k for x in d[k] if x.get('isAvailable') and 'iPhone 16' in x['name'] and 'Pro Max' in x['name']), ''))")
+            NAME="fallback iPhone 16 Pro Max"
+          else
+            UDID="${UDID_AND_NAME%%|*}"
+            NAME="${UDID_AND_NAME##*|}"
+          fi
+          test -n "$UDID" || { echo 'no sim found by any method'; exit 1; }
           echo "==> chose: $NAME ($UDID)"
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
           xcrun simctl boot "$UDID" || true
