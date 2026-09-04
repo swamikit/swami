@@ -63,30 +63,8 @@ jobs:
       - name: Pick + boot a simulator
         id: sim
         run: |
-          # Match Origami's default artboard (Pro Max-shaped, per CLAUDE.md's Trove ProMax
-          # convention). Pick the highest-model Pro Max on the newest iOS runtime available.
-          UDID=$(xcrun simctl list devices available -j | python3 -c "
-          import sys, json, re
-          d = json.load(sys.stdin)['devices']
-          ios = sorted((k for k in d if 'iOS' in k), key=lambda k: [int(n) for n in re.findall(r'\d+', k)])
-          candidates = []
-          for k in ios:
-              for dev in d[k]:
-                  if dev.get('isAvailable') and 'iPhone' in dev['name']:
-                      # Rank: Pro Max > Pro > plain iPhone; higher model number wins within tier
-                      name = dev['name']
-                      tier = 3 if 'Pro Max' in name else (2 if 'Pro' in name else (1 if 'iPhone SE' not in name else 0))
-                      model_nums = re.findall(r'\d+', name)
-                      model = int(model_nums[0]) if model_nums else 0
-                      candidates.append((tier, model, dev))
-          candidates.sort(key=lambda t: (t[0], t[1]), reverse=True)
-          if candidates:
-              chosen = candidates[0][2]
-              print(f\"{chosen['udid']}|{chosen['name']}\", file=sys.stderr)
-              print(chosen['udid'])
-          " 2> /tmp/sim-name.log)
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import sys,json;d=json.load(sys.stdin)['devices'];ios=sorted(k for k in d if 'iOS' in k);devs=[x for k in ios for x in d[k] if x.get('isAvailable') and 'iPhone' in x['name']];print(devs[-1]['udid'] if devs else '')")
           test -n "$UDID" || { echo 'No iOS simulator on this runner image'; exit 1; }
-          echo "==> chose: $(cat /tmp/sim-name.log)"
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
           xcrun simctl boot "$UDID" || true
 
@@ -126,15 +104,9 @@ jobs:
             marker=$(mktemp); touch "$marker"; sleep 0.5
             open -a "/Applications/Origami Studio.app" "/tmp/${stem}.origami"
             sleep 12
-            # Hide Origami's editor chrome so the screenshot is pure artboard (matches SwamiHost's sim output).
-            # 'Hide Interface' is idempotent-ish per Origami version, but safer to also click 'Expand Viewer' if needed.
             osascript >/dev/null 2>&1 \
               -e 'tell application "System Events" to tell process "Origami Studio" to set frontmost to true' \
               -e 'delay 0.5' \
-              -e 'try' \
-              -e '  tell application "System Events" to tell process "Origami Studio" to tell menu bar 1 to tell menu "View" to click menu item "Hide Interface"' \
-              -e 'end try' \
-              -e 'delay 0.4' \
               -e 'tell application "System Events" to tell process "Origami Studio" to tell menu bar 1 to tell menu "View" to click menu item "Take Screenshot"' \
               || echo "  osascript click failed"
             sleep 3
