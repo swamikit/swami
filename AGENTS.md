@@ -21,7 +21,7 @@ tool/                Python parser + codegen + Swift harness package
 └── examples/        working seed translations (Touch is the oracle)
 app/                 Swami.xcodeproj — framework + SwamiHost verify host
 docs/decisions/      ADRs — read these when in doubt about a design call
-skill/               verified-delivery skill notes
+skill/               verified-delivery notes + adopted skills (unslop, …)
 ```
 
 Meta assets (patterns/, catalog snapshots, .origami downloads) are `.gitignore`d and
@@ -52,6 +52,27 @@ A compile is necessary, never sufficient. A patch translation is only *done* whe
 running host app in the simulator matches the Origami artboard visually AND Samuel has
 spot-checked. Your job here is to make the code correct enough to reach that gate; the
 gate itself is Mac-side. See `NEEDS-VERIFY.md` for what's queued and what's earned.
+
+## Beats
+
+Every pattern-level change moves through four beats. Names borrowed from
+`michaelshimeles/skills`; content is swami-specific.
+
+1. **Isolate** — one pattern per branch (per worktree when the Mac agent is running
+   alongside). The unit of change is *one .origami → one generated view → one PR*.
+2. **Build** — parser and/or codegen edits in `tool/`. Run the tree-sitter-swift
+   pre-gate on the generated `.swift` before opening a PR. Compile-clean is the
+   ticket to enter the queue, not proof of correctness.
+3. **Prove** — the Mac runner (or Cowork locally) `build_run_sim`s SwamiHost with
+   `SWAMI_PATTERN=<slug>`, screenshots the view, and pushes the shot to a
+   `ci-screenshots` branch. A sticky PR comment embeds the shot inline so the
+   reviewer sees the render next to the diff.
+4. **Ship** — Samuel spot-checks the shot against the Origami artboard, resolves the
+   matching `NEEDS-VERIFY.md` item, and merges. Only *then* is the item earned.
+
+Cross-cutting: **`unslop`** (`skill/unslop/`) is a pass on anything a human will
+read — commit messages, PR titles/bodies, ADRs, `NEEDS-VERIFY.md` entries. Run it
+before you push.
 
 ## Conventions
 
