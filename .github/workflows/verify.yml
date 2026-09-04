@@ -184,7 +184,10 @@ jobs:
             curl -sL -o "/tmp/${stem}.origami" "$src_url"
             test -s "/tmp/${stem}.origami" || { echo "  fetch failed for $src_url"; RESULTS="${RESULTS}| ${slug} | — | FETCH FAILED | ❌ |"$'\n'; FAIL=1; continue; }
 
-            # Origami: open, hide editor chrome, screenshot, close
+            # Origami: open, hide chrome, RESET to rest state, screenshot, close.
+            # Without Restart Prototype, Take Screenshot captures whatever the previous
+            # session left running — mid-interaction ovals visible on Down/Double Tap,
+            # false-passes the SSIM gate against swami's rest render.
             marker=$(mktemp); touch "$marker"; sleep 0.5
             open -a "/Applications/Origami Studio.app" "/tmp/${stem}.origami"
             sleep 12
@@ -194,7 +197,11 @@ jobs:
               -e 'try' \
               -e '  tell application "System Events" to tell process "Origami Studio" to tell menu bar 1 to tell menu "View" to click menu item "Hide Interface"' \
               -e 'end try' \
-              -e 'delay 0.4' \
+              -e 'delay 0.3' \
+              -e 'try' \
+              -e '  tell application "System Events" to tell process "Origami Studio" to tell menu bar 1 to tell menu "View" to click menu item "Restart Prototype"' \
+              -e 'end try' \
+              -e 'delay 0.8' \
               -e 'tell application "System Events" to tell process "Origami Studio" to tell menu bar 1 to tell menu "View" to click menu item "Take Screenshot"' \
               || echo "  osascript click failed"
             sleep 3
@@ -239,6 +246,14 @@ jobs:
               continue
             fi
             xcrun simctl boot "$UDID" 2>/dev/null || true
+
+            # Belt-and-suspenders: override sim status bar to a fixed, quiet state so any
+            # residual chrome (if statusBarHidden fails to hide something on some iOS build)
+            # is at least stable and doesn't diff-inflate. ContentView.statusBarHidden() is
+            # the primary defense; this backs it up.
+            xcrun simctl status_bar "$UDID" override \
+              --time "9:41" --batteryState charged --batteryLevel 100 \
+              --wifiBars 3 --cellularBars 4 --cellularMode active --dataNetwork wifi 2>/dev/null || true
 
             # Install app to this sim, launch with slug, screenshot
             xcrun simctl install "$UDID" "$APP"

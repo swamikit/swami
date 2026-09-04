@@ -7,9 +7,16 @@ import Swami
 // expression so screenshots are 1:1 with the Origami artboard — no host chrome, no nav bar.
 struct ContentView: View {
     var body: some View {
-        switch ProcessInfo.processInfo.environment["SWAMI_PATTERN"] {
-        case "touch", nil: TouchOrigamiExampleView()
-        default:           TouchOrigamiExampleView()   // add cases as patterns land
+        Group {
+            switch ProcessInfo.processInfo.environment["SWAMI_PATTERN"] {
+            case "touch", nil: Interaction_Touch()
+            default:           Interaction_Touch()   // add cases as patterns land
+            }
         }
+        // Strip every sim chrome we can from the SwiftUI side — Origami's artboard has none.
+        // status_bar override on the sim (in CI) is a belt-and-suspenders second line.
+        .ignoresSafeArea()
+        .statusBarHidden()
+        .persistentSystemOverlays(.hidden)
     }
 }

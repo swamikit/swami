@@ -1,5 +1,7 @@
 # --- Meta / third-party assets (kept private, never in this public repo) ---
-patterns/
+# Anchored to repo root — the swami-private mirror lives at /patterns/ (moved out
+# 2026-09-03). Nested `Patterns/` dirs under app/Swami/ are our own generated views.
+/patterns/
 *.origami
 *.origami.zip
 # generated catalog snapshots derived from the installed Origami Studio app
