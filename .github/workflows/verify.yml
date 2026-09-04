@@ -43,7 +43,8 @@ jobs:
           filters: |
             code:
               - 'app/**'
-              - 'tool/**'
+              - 'tool/src/**'
+              - 'tool/**/*.py'
               - '.github/workflows/verify.yml'
               - '**/*.origami'
               - '**/*.origami-config'
