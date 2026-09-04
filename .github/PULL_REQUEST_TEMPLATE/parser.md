@@ -18,4 +18,4 @@ Parser stays deterministic and stdlib-only (ADR-0004). IR is semantic-rich (ADR-
 
 ## Related
 - **ADR:** docs/decisions/ADR-XXXX-
-- **`NEEDS-VERIFY.md` entries unblocked:**
+- **`BACKLOG.md` entries unblocked:**
