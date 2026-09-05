@@ -296,10 +296,11 @@ rule_mergeability() {
 # We skip TWO things from evaluation, because a gate can't rank on itself
 # or it never reaches success:
 #   (a) the `merge-gate` StatusContext posted by this script, and
-#   (b) any check-run whose parent workflow is `merge-gate` (the workflow's
-#       own `gate` job is present in every rollup as QUEUED / IN_PROGRESS
-#       while it's running — including it would leave rule 2 permanently
-#       pending on the gate's own execution).
+#   (b) any check-run whose parent workflow is `merge-gate` (or its workflow
+#       path while the repaired workflow is not yet registered on the default
+#       branch). The workflow's own `gate` job is present in every rollup as
+#       QUEUED / IN_PROGRESS while it runs, and its prior result may also be
+#       present on reruns. Including either makes recovery self-referential.
 rule_checks() {
   local failing
   failing="$(jq -r '
@@ -307,6 +308,7 @@ rule_checks() {
     | map(select(
         (.name // .context // "") != "merge-gate"
         and (.workflowName // "") != "merge-gate"
+        and ((.workflowName // "") | endswith("/merge-gate.yml") | not)
         and (
           # Status conclusion vs check-run conclusion — .conclusion for
           # check-runs, .state for statuses. Normalize.
@@ -328,6 +330,7 @@ rule_checks() {
     | map(select(
         (.name // .context // "") != "merge-gate"
         and (.workflowName // "") != "merge-gate"
+        and ((.workflowName // "") | endswith("/merge-gate.yml") | not)
         and (
           (.conclusion // .state // "") as $s
           | ($s | ascii_upcase) as $u
@@ -899,7 +902,7 @@ cache_linked_issues() {
       printf '%s\n' "$scan" \
         | grep -Eio "https://github\\.com/${repo_re}/issues/[0-9]+" \
         | grep -Eo '/issues/[0-9]+' | grep -Eo '[0-9]+'
-    } 2>/dev/null | sort -u
+    } 2>/dev/null | sort -u || true
   )"
   local n
   for n in $nums; do
@@ -1046,6 +1049,19 @@ JSON
 JSON
   compute_gate
   assert_state "2  failing check → failure" failure "check lint"
+
+  # ---- Case 2b: gate ignores its own prior failed check -------------------
+  reset_work
+  cat > "$WORK/pr.json" <<'JSON'
+{ "mergeable": "MERGEABLE", "headSha": "abc123",
+  "statusCheckRollup": [
+    {"name":"gate","workflowName":".github/workflows/merge-gate.yml","conclusion":"FAILURE"},
+    {"context":"merge-gate","state":"FAILURE"},
+    {"name":"verify","workflowName":"verify","conclusion":"SUCCESS"}
+  ] }
+JSON
+  compute_gate
+  assert_state "2b prior gate failure is ignored" pending "waiting for deep reviewer"
 
   # ---- Case 3: missing deep review → pending -------------------------------
   reset_work
@@ -1299,6 +1315,16 @@ JSON
     printf '  PASS  7  paginated page arrays flatten into one collection\n'
   else
     printf '  FAIL  7  paginated arrays: got %s\n' "$(jq -c . "$WORK/flat.json")"
+    failures=$((failures + 1))
+  fi
+
+  # ---- Case 8: optional link patterns do not trip pipefail ----------------
+  printf 'Closes #%s. No absolute issue URL.\n' "$PR" > "$WORK/pr_body.txt"
+  echo '[]' > "$WORK/pr_comments.json"
+  if cache_linked_issues "$PR"; then
+    printf '  PASS  8  missing optional link pattern survives pipefail\n'
+  else
+    printf '  FAIL  8  optional link scan returned non-zero\n'
     failures=$((failures + 1))
   fi
 
