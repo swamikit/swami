@@ -1,14 +1,25 @@
 # Posts a single commit status context — `merge-gate` — computed from the
-# reviewer stickies (Codex sticky + Claude sticky) and Codex P1 line-level
-# comments. Same rule as scripts/safe-merge.sh, but enforced at the GitHub
-# level so it catches every merge path (CLI, UI, API) once branch protection
-# marks `merge-gate` as a required check. Branch-protection wiring is a
-# SEPARATE settings-level step — this workflow does not touch it.
+# reviewer stickies (Codex sticky + Claude sticky), Codex P1 line-level
+# comments, and Codex/Claude P2/P3 findings. Same rule as scripts/safe-merge.sh,
+# but enforced at the GitHub level so it catches every merge path (CLI, UI,
+# API) once branch protection marks `merge-gate` as a required check.
+# Branch-protection wiring is a SEPARATE settings-level step — this workflow
+# does not touch it.
+#
+# Priority order for the status:
+#   mergeability > checks (waiting-for-Claude) > freshness > P1s > P2/P3 orphans
+#
+# The P2/P3 orphan check (added in follow-up to PR #62, prompted by #58 where
+# a Claude P2 was silently ignored on merge) fails the gate when a P2 or P3
+# finding is present at HEAD AND the PR body/comments contain no issue link
+# (`#N` or a github.com/.../issues/N URL) that could be a follow-up. It's
+# deliberately lax on WHICH issue is linked — an issue reference anywhere in
+# the PR context is treated as sufficient tracking signal; the goal is to
+# force a decision (address, or file a follow-up), not to police prose.
 #
 # Non-goals: this workflow does NOT gate on the pixel-gate or any other
 # verify.yml check (those are their own required checks) and does NOT enforce
-# the P2/P3 3-pass rule (that's a human judgment call). It ONLY covers
-# reviewer freshness + P1 count.
+# the P2/P3 3-pass rule (that's a human judgment call).
 name: merge-gate
 
 on:
@@ -70,8 +81,10 @@ jobs:
           # issue_comment don't carry pull_request.head.sha, and even on
           # pull_request events the payload can lag behind a fresh push if
           # this run was queued mid-burst. Always ask the API.
+          # `body` is fetched here so the P2/P3 orphan step can scan the PR
+          # description for follow-up issue links without a second round-trip.
           gh pr view "$PR_NUM" \
-            --json headRefOid,mergeable,state,isDraft \
+            --json headRefOid,mergeable,state,isDraft,body \
             > /tmp/pr.json
           HEAD_SHA=$(jq -r '.headRefOid' /tmp/pr.json)
           echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
@@ -171,6 +184,8 @@ jobs:
           ' /tmp/review_comments.json)
 
           # ----- priority: mergeability > checks > freshness > P1 -------
+          # (P2/P3 orphan check runs in the next step; it only fires when
+          # this step would otherwise emit success.)
           STATE=""
           DESC=""
 
@@ -246,14 +261,240 @@ jobs:
 
           echo "state=$STATE" >> "$GITHUB_OUTPUT"
           echo "description=$DESC" >> "$GITHUB_OUTPUT"
+          # Exported for the P2/P3 orphan step — it needs to know which
+          # reviewers are actually present so it can skip the ones that
+          # aren't (mirrors the same absence rules used above).
+          echo "claude_present=$CLAUDE_PRESENT" >> "$GITHUB_OUTPUT"
+          echo "claude_disabled=$CLAUDE_DISABLED" >> "$GITHUB_OUTPUT"
+          echo "codex_present=$CODEX_PRESENT" >> "$GITHUB_OUTPUT"
           echo "gate: state=$STATE desc=$DESC head=$HEAD_SHA claude_head=$CLAUDE_HEAD codex_head=$CODEX_HEAD claude_p1=$CLAUDE_P1 codex_p1=$CODEX_P1_COUNT"
+
+      - name: Check P2/P3 orphans
+        id: orphans
+        env:
+          HEAD_SHA: ${{ steps.fetch.outputs.head_sha }}
+          PREV_STATE: ${{ steps.gate.outputs.state }}
+          PREV_DESC: ${{ steps.gate.outputs.description }}
+          CLAUDE_PRESENT: ${{ steps.gate.outputs.claude_present }}
+          CODEX_PRESENT: ${{ steps.gate.outputs.codex_present }}
+        # Runs unconditionally (so its outputs always exist for the next
+        # step), but the Python quickly passes through when the gate already
+        # decided failure/pending — a higher-priority reason wins, and we
+        # don't want a P2/P3 story to override "you have a P1" or "Claude is
+        # stale". Also passes through when there are no P2/P3 findings at
+        # all — the trivial-clean case in the spec.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          head_sha = os.environ["HEAD_SHA"]
+          prev_state = os.environ["PREV_STATE"]
+          prev_desc = os.environ["PREV_DESC"]
+          claude_present = os.environ.get("CLAUDE_PRESENT", "false") == "true"
+          codex_present = os.environ.get("CODEX_PRESENT", "false") == "true"
+
+          def emit(key, value):
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write(f"{key}={value}\n")
+
+          def clip(s, n=140):
+              # GitHub commit-status descriptions are capped at 140 chars.
+              return s if len(s) <= n else s[: n - 1] + "…"
+
+          # Higher-priority reason already decided the outcome — leave it be.
+          if prev_state != "success":
+              emit("final_state", prev_state)
+              emit("final_description", prev_desc)
+              print(f"orphans: passthrough (prev_state={prev_state})")
+              sys.exit(0)
+
+          with open("/tmp/issue_comments.json") as f:
+              issue_comments = json.load(f)
+          with open("/tmp/review_comments.json") as f:
+              review_comments = json.load(f)
+          with open("/tmp/pr.json") as f:
+              pr = json.load(f)
+
+          pr_body = pr.get("body") or ""
+
+          # ---- Enumerate P2/P3 findings live at HEAD -------------------
+          # A finding is "live" if the reviewer's current-HEAD read still
+          # includes it. Older-commit findings are already superseded by the
+          # push that produced them (Codex/Claude both repost per push), so
+          # per the spec they count as addressed and don't appear here.
+
+          findings = []  # {src, sev, path, line}
+
+          # Codex line-level P2/P3 comments, scoped to commit_id == HEAD.
+          # (Same filter the Compute-gate step uses for Codex P1s.)
+          if codex_present:
+              for c in review_comments:
+                  if c.get("commit_id") != head_sha:
+                      continue
+                  body = c.get("body") or ""
+                  if "P2 Badge" in body:
+                      sev = "P2"
+                  elif "P3 Badge" in body:
+                      sev = "P3"
+                  else:
+                      continue
+                  findings.append({
+                      "src": "codex",
+                      "sev": sev,
+                      "path": c.get("path"),
+                      "line": c.get("line") or c.get("original_line"),
+                  })
+
+          # Claude findings: latest `<!-- claude-review -->` sticky, sections
+          # `### P2 (N)` and `### P3 (N)`. Each finding item starts a bullet
+          # at column 0 with `- **`; the anchor is the first backtick-wrapped
+          # `path:number` token in that bullet's header. A missing anchor is
+          # allowed (Claude occasionally files repo-level findings) and is
+          # recorded as path=None so the linked-fallback rule applies.
+          if claude_present:
+              latest_body = ""
+              latest_ts = ""
+              for c in issue_comments:
+                  b = c.get("body") or ""
+                  if "<!-- claude-review -->" not in b:
+                      continue
+                  ts = c.get("updated_at") or ""
+                  if ts >= latest_ts:
+                      latest_ts = ts
+                      latest_body = b
+              if latest_body:
+                  for sev in ("P2", "P3"):
+                      m = re.search(
+                          r"^### " + sev + r" \(\d+\)\s*$(.*?)"
+                          r"(?=^### |^_reviewer skill:|\Z)",
+                          latest_body,
+                          flags=re.MULTILINE | re.DOTALL,
+                      )
+                      if not m:
+                          continue
+                      section = m.group(1)
+                      for item in re.finditer(
+                          r"^- \*\*(.+?)\*\*",
+                          section,
+                          flags=re.MULTILINE,
+                      ):
+                          header = item.group(1)
+                          anchor = re.search(r"`([^`\s]+?):(\d+)`", header)
+                          if anchor:
+                              findings.append({
+                                  "src": "claude",
+                                  "sev": sev,
+                                  "path": anchor.group(1),
+                                  "line": int(anchor.group(2)),
+                              })
+                          else:
+                              findings.append({
+                                  "src": "claude",
+                                  "sev": sev,
+                                  "path": None,
+                                  "line": None,
+                              })
+
+          # Trivial-clean: no live P2/P3 findings anywhere.
+          if not findings:
+              emit("final_state", "success")
+              emit("final_description", prev_desc)
+              print(f"orphans: no P2/P3 findings, pass ({prev_desc})")
+              sys.exit(0)
+
+          # ---- "Linked" check ------------------------------------------
+          # PR body OR any non-reviewer comment references a GitHub issue
+          # (`#N` or a full issues URL). Reviewer stickies are excluded —
+          # Claude and Codex both cite `#N` in their prose, and their own
+          # references shouldn't satisfy a "did you file a follow-up?" rule.
+          # The keyword forms called out in the spec (resolves / fixes /
+          # tracks / see #N) are all matched by the generic `#N` pattern.
+          hash_re = re.compile(r"(?<!\w)#(\d+)(?!\w)")
+          url_re = re.compile(
+              r"https?://github\.com/[^/\s]+/[^/\s]+/issues/(\d+)"
+          )
+
+          def has_link(text):
+              t = text or ""
+              return bool(hash_re.search(t) or url_re.search(t))
+
+          linked = has_link(pr_body)
+          if not linked:
+              for c in issue_comments:
+                  b = c.get("body") or ""
+                  if not b:
+                      continue
+                  # Skip reviewer stickies and the review.yml "no key" notice.
+                  if "<!-- claude-review -->" in b:
+                      continue
+                  if "codex-pull-request-review-summary" in b:
+                      continue
+                  if "ANTHROPIC_API_KEY is not set in repo secrets" in b:
+                      continue
+                  if has_link(b):
+                      linked = True
+                      break
+
+          # ---- Address vs. link accounting -----------------------------
+          # All findings enumerated above are LIVE at HEAD (see comments on
+          # the enumeration blocks). The spec's three "addressed" sub-rules
+          # all reduce to "the reviewer's latest read at HEAD no longer lists
+          # this" — which, by construction of this list, none of them satisfy.
+          # So the only escape hatch is "linked". Orphan == live AND unlinked.
+          if linked:
+              # Everything is either already gone (not enumerated) or covered
+              # by a follow-up issue link — pass through with a note.
+              n = len(findings)
+              tail = f"; {n} P2/P3 linked to follow-up"
+              desc = prev_desc + tail if len(prev_desc) + len(tail) <= 140 else prev_desc
+              emit("final_state", "success")
+              emit("final_description", clip(desc))
+              print(f"orphans: {n} live P2/P3, all linked, pass ({desc})")
+              sys.exit(0)
+
+          codex_orphans = [f for f in findings if f["src"] == "codex"]
+          claude_orphans = [f for f in findings if f["src"] == "claude"]
+
+          def render_locs(items, cap=2):
+              out = []
+              for f in items[:cap]:
+                  if f["path"] and f["line"] is not None:
+                      out.append(f"{f['path']}:{f['line']}")
+                  elif f["path"]:
+                      out.append(f["path"])
+                  else:
+                      out.append("no-anchor")
+              return out
+
+          parts = []
+          for src_label, orphans in (("Codex", codex_orphans), ("Claude", claude_orphans)):
+              if not orphans:
+                  continue
+              n = len(orphans)
+              locs = render_locs(orphans)
+              suffix = "s" if n != 1 else ""
+              label = f"{n} {src_label} P2/P3 orphan{suffix}"
+              if locs:
+                  more = ", …" if n > len(locs) else ""
+                  label += f" ({', '.join(locs)}{more})"
+              parts.append(label)
+
+          desc = " + ".join(parts) + " — address or file follow-up."
+          emit("final_state", "failure")
+          emit("final_description", clip(desc))
+          print(f"orphans: FAIL {desc}")
+          PY
 
       - name: Post commit status
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ steps.fetch.outputs.head_sha }}
-          STATE: ${{ steps.gate.outputs.state }}
-          DESCRIPTION: ${{ steps.gate.outputs.description }}
+          STATE: ${{ steps.orphans.outputs.final_state }}
+          DESCRIPTION: ${{ steps.orphans.outputs.final_description }}
           # Link back to this run so a reader who clicks the status lands on
           # the log that computed it — the "why" instead of a blank page.
           TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
