@@ -233,4 +233,8 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 echo "OK: $SUMMARY. Merging with $MERGE_STYLE."
-gh pr merge "$PR" --repo "$REPO" "$MERGE_STYLE" --delete-branch
+# --match-head-commit pins the merge to the SHA we just reviewed: if a push
+# lands between the freshness checks above and this call, GitHub rejects the
+# merge server-side instead of silently merging an unreviewed tip.
+gh pr merge "$PR" --repo "$REPO" "$MERGE_STYLE" --delete-branch \
+  --match-head-commit "$HEAD_SHA"
