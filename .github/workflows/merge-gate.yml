@@ -99,12 +99,18 @@ jobs:
 
           # Issue comments carry the stickies (Codex summary + Claude review
           # + the review.yml "ANTHROPIC_API_KEY is not set" signal).
-          gh api --paginate \
+          # `--slurp` is required with `--paginate`: without it gh emits one
+          # JSON array per page (concatenated), which crashes `json.load()`
+          # in the orphan step with `JSONDecodeError: Extra data` on any PR
+          # with >100 comments and also breaks the `.[]` jq expressions
+          # below (they'd only see the last page's array).
+          gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/issues/${PR_NUM}/comments" \
             > /tmp/issue_comments.json
 
-          # PR review comments (line-level) carry Codex P1 Badges.
-          gh api --paginate \
+          # PR review comments (line-level) carry Codex P1 Badges. Same
+          # `--slurp` rationale as above — one array over all pages.
+          gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUM}/comments" \
             > /tmp/review_comments.json
 
