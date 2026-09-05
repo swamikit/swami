@@ -55,6 +55,16 @@ permissions:
   contents: write        # push translate/<pattern> branch
   pull-requests: write   # open the PR
   issues: write          # comment back onto the tracking issue
+  actions: write         # `gh workflow run verify.yml/review.yml` — the
+                         # workflow_dispatch REST endpoint requires
+                         # actions:write, and without it both dispatches
+                         # from run-builder-from-issue.py (and the
+                         # translate job's verify.yml trigger) 403 and
+                         # `sh_ok` silently downgrades that to a warning.
+                         # The whole point of the ready path is that
+                         # verify.yml + review.yml wake on Builder-opened
+                         # PRs; missing this scope collapses the gate
+                         # unreachably (Codex P1 round 3, Claude sticky P1 #1).
 
 jobs:
   translate:

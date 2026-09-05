@@ -333,23 +333,28 @@ def main() -> int:
 
     # PRs opened with the workflow's GITHUB_TOKEN do NOT emit `pull_request`
     # events (GitHub's recursion guard on the automatic token). Without an
-    # explicit dispatch, verify.yml's pixel gate and review.yml's Claude
-    # review would never wake on this PR — the double-green gate AGENTS.md
-    # Beat 3/4 and ADR-0014 put the merge decision behind would be
-    # structurally unreachable. Fire both by workflow_dispatch after the PR
-    # is created; each dispatch is best-effort — a warning on failure, not a
-    # hard fail, so the PR still lands on the tracking issue even if a gate
-    # is temporarily unreachable (Codex P1 round 2, Claude sticky P1 #3).
+    # explicit dispatch, verify.yml's pixel gate would never wake on this PR
+    # — the double-green gate AGENTS.md Beat 3/4 and ADR-0014 put the merge
+    # decision behind would be structurally unreachable. Dispatch verify.yml
+    # here (its workflow_dispatch trigger has no required inputs); verify.yml
+    # in turn dispatches review.yml from its own final step, AFTER pixel
+    # evidence has been posted. That ordering matters: dispatching Review
+    # immediately (as the previous revision did) would race Verify and Review
+    # would fetch /tmp/sticky.md before the evidence existed (Codex P1 round
+    # 3). Each dispatch is best-effort — a warning on failure, not a hard
+    # fail, so the PR still lands on the tracking issue even if a gate is
+    # temporarily unreachable.
     pr_body = (
         plan["pr_body"].rstrip()
         + f"\n\n---\n\nTracking issue: #{issue_num}\n\n"
         + f"_Opened by Builder GA (ready path). Planner: {MODEL}._\n\n"
         + "_This PR was opened by a workflow's GITHUB_TOKEN, so GitHub's "
         + "recursion guard suppresses the automatic `pull_request` event. "
-        + "Builder explicitly dispatches `verify.yml` (against the ready "
-        + "branch) and `review.yml` (against this PR number) after PR "
-        + "creation — check the workflow-run list on the head SHA to "
-        + "distinguish a missing gate from a skipped one._"
+        + "Builder dispatches `verify.yml` against the ready branch; "
+        + "verify.yml then dispatches `review.yml` after posting pixel "
+        + "evidence so Review reads a populated sticky. Check the "
+        + "workflow-run list on the head SHA to distinguish a missing gate "
+        + "from a skipped one._"
     )
     pr_body_path = Path("/tmp/builder-pr-body.md")
     pr_body_path.write_text(pr_body)
@@ -362,54 +367,36 @@ def main() -> int:
         "--body-file", str(pr_body_path)])
 
     # Best-effort: get the PR URL back for the tracking-issue comment.
-    # Also grab the PR number for review.yml's workflow_dispatch input.
     try:
         pr_view = sh(["gh", "pr", "view", branch, "--repo", repo,
-                      "--json", "url,number", "--jq", "."]).strip()
+                      "--json", "url", "--jq", "."]).strip()
         pr_meta = json.loads(pr_view)
         url = pr_meta.get("url", f"(branch {branch})")
-        pr_number = pr_meta.get("number")
     except (subprocess.CalledProcessError, json.JSONDecodeError):
         url = f"(branch {branch})"
-        pr_number = None
 
-    # Dispatch verify.yml against the ready branch (its workflow_dispatch
-    # trigger has no required inputs — see .github/workflows/verify.yml). It
-    # runs the pixel gate on macos-15 and posts its own sticky comment.
+    # Dispatch verify.yml against the ready branch. verify.yml's final step
+    # dispatches review.yml after posting evidence, so we do NOT dispatch
+    # review.yml here — doing so directly would race Verify (macOS install +
+    # build + render takes ~5-10min while Review starts in ~10s on Ubuntu)
+    # and Review would fetch an empty /tmp/sticky.md before evidence lands.
     if not sh_ok(["gh", "workflow", "run", "verify.yml",
                   "--repo", repo, "--ref", branch]):
         sys.stderr.write(
             f"::warning::gh workflow run verify.yml --ref {branch} failed — "
-            "pixel gate must be triggered manually.\n"
+            "pixel gate must be triggered manually. Review will not fire "
+            "either (verify.yml chains to review.yml on completion).\n"
         )
-
-    # Dispatch review.yml with the PR number. review.yml's workflow_dispatch
-    # takes `pr_number` (added in the same round of fixes) so Review GA can
-    # be woken on Builder-opened PRs.
-    if pr_number is None:
-        sys.stderr.write(
-            "::warning::could not resolve PR number after `gh pr create` — "
-            "skipping review.yml dispatch. A maintainer can trigger it via "
-            "`gh workflow run review.yml -f pr_number=<N>`.\n"
-        )
-    else:
-        if not sh_ok(["gh", "workflow", "run", "review.yml",
-                      "--repo", repo,
-                      "-f", f"pr_number={pr_number}"]):
-            sys.stderr.write(
-                f"::warning::gh workflow run review.yml -f pr_number={pr_number} "
-                "failed — Review GA must be triggered manually (comment "
-                "`@claude review` on the PR).\n"
-            )
 
     post_issue_comment(repo, issue_num, (
         f"Builder GA opened a PR for this issue: {url}\n\n"
         f"Branch: `{branch}`\n\n"
         f"**Planner reasoning:** {reasoning or '(none returned)'}\n\n"
         "Review, iterate, or close — the `ready` label has done its job. "
-        "Builder dispatched `verify.yml` and `review.yml` explicitly on the "
-        "new PR (GITHUB_TOKEN-opened PRs don't fire those events on their "
-        "own); check the PR's Checks tab for the runs."
+        "Builder dispatched `verify.yml` explicitly on the new PR "
+        "(GITHUB_TOKEN-opened PRs don't fire `pull_request` on their own); "
+        "verify.yml chains to `review.yml` after posting pixel evidence. "
+        "Check the PR's Checks tab for both runs."
     ))
     print(f"opened PR from {branch} with {len(written)} file(s)")
     return 0

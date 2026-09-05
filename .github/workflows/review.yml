@@ -41,28 +41,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Codex P1: forked pull_request events run without repo secrets and with a read-only
-      # GITHUB_TOKEN — Claude can't be called and comments can't be posted. Detect and skip.
-      # issue_comment events (even on cross-repo PRs) run in the base repo context and DO
-      # have secret access, so they are not gated here.
-      - name: Determine PR fork status
-        id: fork
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ] \
-             && [ "${{ github.event.pull_request.head.repo.fork }}" = "true" ]; then
-            echo "is_fork=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_fork=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Skip review on forked PR
-        if: steps.fork.outputs.is_fork == 'true'
-        run: |
-          echo "::notice::Forked PR detected — ANTHROPIC_API_KEY and write permissions are unavailable on fork pull_request events. Skipping Claude review. A maintainer can re-run by commenting '@claude review' on the PR (issue_comment runs in the base repo context and has secret access)."
-
+      # Fetch PR context BEFORE the fork gate so we can compute fork-ness
+      # from the fetched PR (correct on all three triggers) instead of the
+      # `pull_request` event payload alone (which is empty on
+      # workflow_dispatch — Claude sticky P1 round 3). Reading a PR's
+      # metadata via `gh pr view` doesn't execute any user-supplied code, so
+      # doing it before the fork check is safe.
       - name: Fetch PR context
         id: context
-        if: steps.fork.outputs.is_fork != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           # Resolve PR number from every trigger this workflow accepts:
@@ -77,7 +63,11 @@ jobs:
             echo "::error::no PR number resolved from pull_request / issue_comment / workflow_dispatch payload"
             exit 1
           fi
-          gh pr view "$PR_NUM" --json number,title,body,url,headRefName,baseRefName,headRefOid,commits,files --jq . > /tmp/pr.json
+          # `headRepositoryOwner` is what the fork gate below compares
+          # against `github.repository_owner`. Without it a dispatched or
+          # commented review of a fork PR bypasses the fork check silently
+          # (Claude sticky P1 round 3).
+          gh pr view "$PR_NUM" --json number,title,body,url,headRefName,baseRefName,headRefOid,headRepositoryOwner,commits,files --jq . > /tmp/pr.json
           gh pr diff "$PR_NUM" > /tmp/pr.diff
           # Codex P2 (sticky preservation): READ verify.yml's sticky comment for CONTEXT ONLY.
           # Do not edit, update, or delete it here — the pixel gate owns that comment. The
@@ -91,6 +81,33 @@ jobs:
           HEAD_SHA=$(python3 -c "import json;print(json.load(open('/tmp/pr.json')).get('headRefOid',''))")
           echo "pr=$PR_NUM" >> "$GITHUB_OUTPUT"
           echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      # Fork detection using the fetched PR JSON so it is correct on all
+      # three triggers. Compare the head repo's owner login to the base
+      # repo's owner: a different owner is a fork, from any owner (user or
+      # org). Empty owner (unlikely — `gh pr view` populates it) falls
+      # through to non-fork so we don't refuse a legit PR on a JSON parse
+      # hiccup. Codex P1 round 3: the previous step read
+      # `github.event.pull_request.head.repo.fork` which is empty on
+      # `workflow_dispatch`, so a dispatched review of a fork PR silently
+      # bypassed this gate.
+      - name: Determine PR fork status
+        id: fork
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -eu
+          HEAD_OWNER=$(python3 -c "import json;d=json.load(open('/tmp/pr.json'));o=d.get('headRepositoryOwner') or {};print(o.get('login',''))")
+          if [ -n "$HEAD_OWNER" ] && [ "$HEAD_OWNER" != "$REPO_OWNER" ]; then
+            echo "is_fork=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_fork=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip review on forked PR
+        if: steps.fork.outputs.is_fork == 'true'
+        run: |
+          echo "::notice::Forked PR detected — Claude review skipped. On pull_request the fork's ANTHROPIC_API_KEY and write permissions are unavailable; on workflow_dispatch / issue_comment we refuse a fork explicitly so an untrusted diff can't reach a job holding base-repo secrets."
 
       - name: Load review context
         if: steps.fork.outputs.is_fork != 'true'

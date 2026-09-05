@@ -351,13 +351,50 @@ jobs:
         uses: actions/upload-artifact@v4
         with: { name: pixel-gate, path: out/, if-no-files-found: warn }
 
-      - name: Post evidence onto the PR
-        if: github.event_name == 'pull_request'
+      - name: Resolve PR + SHA for evidence
+        # `pull_request` payload carries both directly. Under `workflow_dispatch`
+        # (Builder GA's ready-path dispatch) the payload has neither, so resolve
+        # the PR from the dispatched ref (`gh pr list --head`) and use the
+        # dispatched SHA. Failing to resolve is not fatal — the pixel gate has
+        # still produced artifacts; we just skip the PR comment. Codex P1
+        # round 3: the previous "Post evidence" step was gated on
+        # `github.event_name == 'pull_request'`, so dispatched Verify runs
+        # completed without posting the swami/origami/diff triplet.
+        id: evidence
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.number }}
           REPO: ${{ github.repository }}
-          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR="${{ github.event.number }}"
+            SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            # workflow_dispatch — resolve from the ref that was dispatched
+            # (e.g. `ready/issue-42`). If no open PR is found for that
+            # branch, emit a warning and skip posting; a follow-up rerun
+            # via `pull_request` will fill it in.
+            BRANCH="${{ github.ref_name }}"
+            SHA="${{ github.sha }}"
+            PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
+                    --json number --jq '.[0].number // empty')
+            if [ -z "$PR" ]; then
+              echo "::warning::no open PR found for head=$BRANCH — skipping evidence post."
+              echo "pr=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Post evidence onto the PR
+        if: (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && steps.evidence.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.evidence.outputs.pr }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.evidence.outputs.sha }}
         run: |
           BR="ci-screenshots"
           git config user.name "swami-ci"
@@ -397,6 +434,32 @@ jobs:
           BODY+="_Static layout only. Interaction gate (drive gesture, compare response) is separate — ADR-0013 follow-up._"
           gh pr comment "$PR" --repo "$REPO" --edit-last --body "$BODY" 2>/dev/null \
             || gh pr comment "$PR" --repo "$REPO" --body "$BODY"
+
+      - name: Dispatch review.yml when Verify was dispatched
+        # Chain-of-triggers: Builder GA's ready path dispatches verify.yml
+        # explicitly (because GITHUB_TOKEN-opened PRs don't fire pull_request
+        # events — the same recursion guard is why builder.yml grants
+        # actions:write and dispatches). Previously the Python script
+        # dispatched review.yml immediately after verify.yml, but Verify
+        # takes 5-10 min (macOS + Origami install + build + render) while
+        # Review starts in ~10s on Ubuntu, so Review always fetched
+        # /tmp/sticky.md before the pixel-gate evidence existed and the
+        # sticky was blank (Codex P1 round 3). Fire Review from HERE — after
+        # evidence is posted — so the sticky is available. Gated on
+        # workflow_dispatch so normal pull_request runs (which already fire
+        # review.yml via its own pull_request trigger) don't double-fire.
+        if: github.event_name == 'workflow_dispatch' && steps.evidence.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.evidence.outputs.pr }}
+        run: |
+          set -eu
+          if ! gh workflow run review.yml --repo "$REPO" -f "pr_number=$PR"; then
+            echo "::warning::gh workflow run review.yml -f pr_number=$PR failed — Review must be triggered manually (e.g. \`gh workflow run review.yml -f pr_number=$PR\`, or comment '@claude review' on the PR)."
+          else
+            echo "==> dispatched review.yml for PR #$PR"
+          fi
 
 # NEXT (per ADR-0013): (a) parser-verification step that reads Origami's Inspector via AX
 # attributes and diffs against the parser's IR; (b) interaction gate — XCUITest-drives-both-sides
