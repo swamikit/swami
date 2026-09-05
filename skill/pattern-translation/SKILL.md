@@ -143,10 +143,11 @@ restated here so this skill stands alone.
 
 - **Native-first.** Prefer stdlib and native SwiftUI over adding a helper.
   Reach for `SpatialTapGesture` directly instead of wrapping it in
-  `spatialTap()`. A helper earns its place only when (a) the same patch
-  pattern recurs three or more times across the corpus, (b) no clean native
-  construct fits, and (c) the helper stays roughly under twenty lines and
-  preserves the patch's port semantics 1:1.
+  `spatialTap()`. A helper earns its place when no clean native construct
+  faithfully expresses the patch's semantics, and it preserves the patch's
+  port semantics 1:1. Fidelity to the patch is the bar — there is no
+  recurrence threshold and no line budget; the library is sized by
+  Origami's patch surface, not by an arbitrary cap.
 - **One patch = one helper.** Helpers are named after the patch
   (`drag(...)`, `interaction(...)`, `doubleTap(...)`). No bundled convenience
   wrappers that fold Double Tap + Long Press + Tap into one call. The named
