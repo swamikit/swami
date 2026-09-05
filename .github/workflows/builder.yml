@@ -90,24 +90,27 @@ jobs:
         env:
           DISPATCH_INPUT: ${{ inputs.pattern }}
           ISSUE_TITLE:    ${{ github.event.issue.title }}
-          ISSUE_BODY:     ${{ github.event.issue.body }}
         run: |
           # workflow_dispatch: pattern comes from the input.
-          # issues.labeled:    body/title carries "translate <Stem>" — pull the token
-          #                    after "translate" (case-insensitive, stops at whitespace).
+          # issues.labeled:    the *title* carries user intent as "translate <Stem>"
+          #                    (e.g. "translate Interaction_Drag"). We deliberately do
+          #                    NOT parse the body — issue bodies routinely contain the
+          #                    phrase "translate the Origami pattern ..." and a loose
+          #                    match then extracts "the" (#84 / Builder run 33958828029).
+          # Stem shape: [A-Z][A-Za-z0-9]*_[A-Za-z0-9_]+ — a capitalized category prefix
+          # (Interaction_, Layer_, Animation_, Transition_, ...) joined by an underscore
+          # to a capitalized name. That's the naming convention on origami.design.
           set -eu
           if [ -n "${DISPATCH_INPUT:-}" ]; then
             STEM="$DISPATCH_INPUT"
           else
-            # Prefer body; fall back to title. Match "translate <token>" where <token>
-            # is [A-Za-z0-9_]+ so "translate Interaction_Drag" → "Interaction_Drag".
-            STEM=$(printf '%s\n%s\n' "$ISSUE_BODY" "$ISSUE_TITLE" \
-              | grep -iEo 'translate[[:space:]]+[A-Za-z0-9_]+' \
+            STEM=$(printf '%s\n' "$ISSUE_TITLE" \
+              | grep -Eo '[Tt]ranslate[[:space:]]+[A-Z][A-Za-z0-9]*_[A-Za-z0-9_]+' \
               | head -1 \
               | awk '{print $2}')
           fi
           if [ -z "${STEM:-}" ]; then
-            echo "::error::could not resolve pattern stem from event"
+            echo "::error::could not resolve pattern stem from issue title '${ISSUE_TITLE:-}' (expected: 'translate <Category>_<Name>', e.g. 'translate Interaction_Drag')"
             exit 1
           fi
           # Slug: lowercased stem with the "Interaction_" prefix stripped so
