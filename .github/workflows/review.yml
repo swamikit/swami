@@ -8,6 +8,12 @@ on:
 
 permissions:
   pull-requests: write
+  # Needed by the "Clear stale disable signal" step to DELETE prior
+  # readiness comments once the secret is present. Issue-comment endpoints
+  # accept `pull-requests: write` on PR-scoped comments, but `issues: write`
+  # is the authoritative permission for the REST DELETE endpoint used there
+  # (`/repos/{owner}/{repo}/issues/comments/{id}`).
+  issues: write
   contents: read
 
 jobs:
@@ -77,6 +83,40 @@ jobs:
       # comment (<!-- claude-review -->) and NEVER edits verify.yml's pixel-gate
       # sticky. Subsequent runs update the same claude-review comment in place,
       # so this doesn't pile up new comments across pushes (Codex P2).
+      # If a prior run posted the "ANTHROPIC_API_KEY is not set" readiness
+      # comment while the secret was absent, delete those comments now that
+      # the secret is present. Merge-gate treats that comment as a
+      # `CLAUDE_DISABLED` signal (guarded by a timestamp comparison against
+      # the latest Claude sticky). In the window between the secret being
+      # configured and Claude posting its first sticky on the current SHA,
+      # `CLAUDE_STICKY_TIME` is empty, so the timestamp guard falls open and
+      # merge-gate treats Claude as disabled — letting the required status
+      # go green via Codex alone despite an enabled Claude reviewer. Clearing
+      # the comment at the producer removes the ambiguity: current
+      # configuration is expressed by the comment's PRESENCE, not by
+      # comparing timestamps of possibly-obsolete history. (Codex P1
+      # "Determine Claude availability from current configuration", round-3.)
+      - name: Clear stale disable signal (secret now set)
+        if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.context.outputs.pr }}
+        run: |
+          set -euo pipefail
+          # `--paginate` emits one JSON array per page; slurp+flatten before
+          # filtering so `--jq` sees a single array (same reason merge-gate
+          # slurps its issue-comment fetch).
+          ids=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+            | jq -r '.[] | select(.user.login == "github-actions[bot]")
+                          | select(.body | contains("ANTHROPIC_API_KEY is not set in repo secrets"))
+                          | .id')
+          for id in $ids; do
+            # Best-effort — a deletion failure (e.g. comment already removed
+            # by a concurrent run) should not fail the review job.
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" || true
+          done
+
       - name: Install anthropic SDK
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
         env:
