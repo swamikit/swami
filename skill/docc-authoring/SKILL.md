@@ -134,16 +134,23 @@ mirrors the shape, not the identifiers):
 struct ContentView: View {
     var body: some View {
         switch ProcessInfo.processInfo.environment["<PATTERN_SELECTOR_VAR>"] {
-        case "<pattern-slug>":  <PatternID>View()
+        case "touch":   Interaction_TouchView()
         // add cases as patterns land
-        default:                <SomeDefaultPatternView>()
+        default:        <SomeDefaultPatternView>()
         }
     }
 }
 ```
 
-- **Slug.** Lowercase, hyphen-separated, derived from the pattern name (Origami
-  side, not Swift side). `Interaction_Touch` → `interaction-touch`.
+- **Slug.** Strip the Origami category prefix (`Interaction_`, `Layer_`, …)
+  from the source stem, then lowercase the remainder. `Interaction_Touch` →
+  `touch`; `Interaction_Drag` → `drag`. In the reference project this is what
+  `builder.yml` computes (`sed -E 's/^Interaction_//' | tr '[:upper:]' '[:lower:]'`)
+  and what `verify.yml`'s `PATTERNS` env pairs (`touch:Interaction_Touch`) —
+  the pattern-selector env var is launched with that same slug, so a case
+  labelled `interaction-touch` is unreachable and the host renders the default
+  view instead. Community ports that use a different derivation must update
+  their builder + verify workflows to match.
 - **One case per pattern.** Do not fold multiple patterns behind one slug. Each
   case renders exactly one pattern's view, with no host chrome around it.
 - **Body is a single expression.** Same rule as the pattern's own body: the
