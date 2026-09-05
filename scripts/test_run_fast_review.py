@@ -27,6 +27,12 @@ mod = _load_module()
 
 
 class ModelClientContractTests(unittest.TestCase):
+    def test_finding_schema_requires_file_but_allows_line_omission(self) -> None:
+        finding_schema = mod.REVIEW_SCHEMA["properties"]["findings"]["items"]
+        self.assertIn("file", finding_schema["required"])
+        self.assertNotIn("line", finding_schema["required"])
+        self.assertEqual(finding_schema["properties"]["line"], {"type": "integer"})
+
     def test_call_model_unpacks_text_provider_tuple(self) -> None:
         reply = {"summary": "ok", "findings": [], "approve": True}
         with mock.patch.object(

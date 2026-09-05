@@ -119,7 +119,7 @@ REVIEW_SCHEMA = {
                     "reasoning": {"type": "string"},
                     "suggestion": {"type": "string"},
                 },
-                "required": ["severity", "title", "reasoning", "suggestion"],
+                "required": ["severity", "file", "title", "reasoning", "suggestion"],
             },
         },
         "approve": {"type": "boolean"},
@@ -222,7 +222,8 @@ def call_model(system: str, diff: str, truncated_bytes: int = 0) -> tuple[dict, 
     user_parts.append("## PR diff\n\n```diff\n" + diff + "\n```")
     user_content = "\n\n".join(user_parts)
 
-    # model_client's public contract is a two-tuple: (text, provider_used).
+    # model_client returns (reply_or_validated_value, provider_used). With the
+    # validate hook below, the first element is the parsed review object.
     # Unpack it directly; treating the tuple like an object makes every
     # successful response look empty and prevents this worker from ever
     # reaching the Reviews API (issue #89).
