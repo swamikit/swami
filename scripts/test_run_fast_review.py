@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from scripts import review_posting
+
 
 def _load_module():
     # gh_app_auth imports PyJWT at module load; this test never exercises auth.
@@ -27,6 +29,21 @@ mod = _load_module()
 
 
 class ModelClientContractTests(unittest.TestCase):
+    def test_real_inline_comment_format_survives_summary_only_fallback(self) -> None:
+        comments = mod.format_review_comments(
+            [{
+                "severity": "P2",
+                "file": "x.py",
+                "line": 4,
+                "_side": "RIGHT",
+                "title": "real formatter title",
+                "reasoning": "evidence",
+                "suggestion": "fix it",
+            }]
+        )
+        degraded = review_posting._summary_only({"body": "summary", "comments": comments})
+        self.assertIn("#### `x.py:4`\n\n[P2] real formatter title", degraded["body"])
+
     def test_finding_schema_requires_file_but_allows_line_omission(self) -> None:
         finding_schema = mod.REVIEW_SCHEMA["properties"]["findings"]["items"]
         self.assertIn("file", finding_schema["required"])

@@ -66,6 +66,7 @@ except ModuleNotFoundError as exc:
 # App-auth helper — same swap the deep reviewer does. Falls back to
 # GITHUB_TOKEN when App auth is unavailable so local runs stay usable.
 from scripts.gh_app_auth import AppAuthError, get_installation_token  # noqa: E402
+from scripts.review_posting import post_review as _post_review  # noqa: E402
 
 # New marker (refactor A: agent-agnostic naming). LEGACY_MARKERS still get
 # recognized on comment lookup so a mid-rename sticky is updated in place
@@ -738,29 +739,7 @@ def post_review(
     env: dict[str, str] | None = None,
 ) -> dict:
     """POST a new PR review (body + event + inline comments) atomically."""
-    body_json = json.dumps(payload)
-    result = subprocess.run(
-        [
-            "gh",
-            "api",
-            f"repos/{repo}/pulls/{pr}/reviews",
-            "-X",
-            "POST",
-            "--input",
-            "-",
-        ],
-        input=body_json,
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"POST /pulls/{pr}/reviews failed (rc={result.returncode}): "
-            f"{result.stderr.strip() or result.stdout.strip()}"
-        )
-    return json.loads(result.stdout) if result.stdout.strip() else {}
+    return _post_review(repo, pr, payload, env=env, reviewer="fast")
 
 
 def _cap_diff(diff: str, limit: int = MAX_DIFF_BYTES) -> tuple[str, int]:
