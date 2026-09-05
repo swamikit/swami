@@ -206,23 +206,36 @@ fi
 
 # ---------- step 6: Codex line-level P1 badges ----------
 
-if [[ "$CODEX_ACTIVE" -eq 1 ]]; then
-  CODEX_P1S="$(gh api --paginate "repos/$REPO/pulls/$PR/comments" --jq '
-    .[]
-    | select( ((.user.login // "") | ascii_downcase | test("codex|chatgpt-codex"))
-              and (.body | contains("P1 Badge")) )
-    | ( (.path // "?") + ":" + ((.line // .original_line // 0) | tostring) )
-  ')"
-  if [[ -n "$CODEX_P1S" ]]; then
-    {
-      echo "ABORT: Codex posted P1 findings on:" >&2
-      while IFS= read -r line; do
-        [[ -n "$line" ]] && echo "  - $line" >&2
-      done <<< "$CODEX_P1S"
-      echo "  -> Fix each P1 and push; Codex re-reviews on the new SHA." >&2
-    }
-    exit 1
-  fi
+# Run this scan unconditionally, independent of CODEX_ACTIVE. The existence of a
+# `P1 Badge` line comment from Codex is itself proof Codex is active — gating the
+# scan on the summary card (step 4) would let a PR with live P1 line comments
+# merge whenever the card is missing for any reason: marker drift on Codex's
+# side, a review posted as a `pulls/{n}/reviews` body rather than an issue
+# comment, a deleted/collapsed card, or a review still mid-flight. That is the
+# same fail-open class as the earlier secret-probe P1, in a code path the round-2
+# fix didn't touch.
+CODEX_P1S="$(gh api --paginate "repos/$REPO/pulls/$PR/comments" --jq '
+  .[]
+  | select( ((.user.login // "") | ascii_downcase | test("codex|chatgpt-codex"))
+            and (.body | contains("P1 Badge")) )
+  | ( (.path // "?") + ":" + ((.line // .original_line // 0) | tostring) )
+')"
+if [[ -n "$CODEX_P1S" ]]; then
+  {
+    echo "ABORT: Codex posted P1 findings on:" >&2
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && echo "  - $line" >&2
+    done <<< "$CODEX_P1S"
+    if [[ "$CODEX_ACTIVE" -eq 0 ]]; then
+      echo "  -> (No Codex summary card was found on this PR; P1 line comments were still discovered directly.)" >&2
+    fi
+    echo "  -> Fix each P1 and push; Codex re-reviews on the new SHA." >&2
+  }
+  exit 1
+fi
+if [[ "$CODEX_ACTIVE" -eq 0 ]]; then
+  ok "no Codex P1 line-level findings (summary card absent)"
+else
   ok "no Codex P1 line-level findings"
 fi
 
