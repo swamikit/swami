@@ -1,0 +1,105 @@
+name: merge-gate
+
+# One workflow, one job, one required status: consolidates the merge decision
+# into `merge-gate`. See scripts/merge-gate.sh for the priority-ordered rules
+# and .github/reviewers.yml for the reviewer registry.
+#
+# Refactor C of the sequential plan (A: quibble-review App auth — PR #74;
+# B: formal Reviews API — PR #75). Consolidates the intent of the closed
+# PRs #61 (safe-merge.sh wrapper), #62 (merge-gate.yml v1), and #68
+# (P2/P3 orphan extension) on top of the Reviews-API shape shipped in B.
+#
+# Making `merge-gate` a REQUIRED status check in branch protection is a
+# separate one-time repo-settings change Samuel does after this workflow
+# lands (Settings → Branches → main → require `merge-gate`). The workflow
+# only POSTS the status.
+
+on:
+  # Every event that can change the answer. `edited` on pull_request catches
+  # PR body edits (linked-issue references live there). pull_request_review
+  # catches deep-reviewer verdicts. pull_request_review_thread catches the
+  # UI "Resolve conversation" toggle Codex threads use. issue_comment catches
+  # follow-up links in a PR comment thread. pull_request_review_comment
+  # catches inline replies on a review comment.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  pull_request_review_thread:
+    types: [resolved, unresolved]
+  issue_comment:
+    types: [created, edited, deleted]
+  # Re-run when a required check finishes — otherwise a macOS `verify` run
+  # that lands after the last reviewer event leaves merge-gate pending
+  # forever (comments posted by GITHUB_TOKEN can't recursively trigger this).
+  check_run:
+    types: [completed]
+
+# One in-flight run per PR. `cancel-in-progress: true` — a burst of comments
+# on a PR doesn't queue N runs; only the latest one's status counts.
+concurrency:
+  group: 'merge-gate-${{ github.event.pull_request.number || github.event.issue.number || github.event.check_run.pull_requests[0].number }}'
+  cancel-in-progress: true
+
+permissions:
+  contents: read        # actions/checkout needs this when permissions is an
+                        # explicit allowlist (omitted scopes are disabled).
+  pull-requests: read   # reads PR + reviews + comments
+  issues: write         # reads linked-issue state/body for orphan check;
+                        # also posts/patches the sticky <!-- merge-gate -->
+                        # comment via /repos/{}/issues/{N}/comments (POST/PATCH
+                        # on that endpoint requires write, not read — a plain
+                        # `issues: read` token 403s and the workflow fails
+                        # before publishing its breakdown).
+  statuses: write       # posts the `merge-gate` commit status
+
+jobs:
+  gate:
+    # Skip on issue_comment for non-PR issues (issue_comment fires on
+    # regular Issues too — we only care about PR comment threads).
+    # Skip on check_run when the completed check has no PR (e.g. checks
+    # on direct pushes to main).
+    if: |
+      (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
+      && (github.event_name != 'check_run' || github.event.check_run.pull_requests[0].number != null)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for scripts/ + .github/reviewers.yml)
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: |
+          # ubuntu-latest ships jq; assert the version so a runner image
+          # change without jq is a loud failure rather than a silent one.
+          jq --version
+
+      - name: Resolve PR number
+        id: pr
+        run: |
+          set -eu
+          # pull_request / pull_request_review / pull_request_review_comment
+          # / pull_request_review_thread all carry pull_request.number.
+          # issue_comment carries issue.number (guarded above to only fire
+          # when issue.pull_request is set — i.e. the issue IS a PR).
+          # check_run: pull_requests[0].number (guarded above to only fire
+          # when the completed check belongs to a PR).
+          PR="${{ github.event.pull_request.number || github.event.issue.number || github.event.check_run.pull_requests[0].number }}"
+          if [ -z "$PR" ]; then
+            echo "::error::could not resolve PR number from event payload"
+            exit 1
+          fi
+          echo "number=$PR" >> "$GITHUB_OUTPUT"
+
+      - name: Compute + post merge-gate status
+        env:
+          # `GH_TOKEN` — the merge-gate script uses `gh` for reads (PR view,
+          # reviews list, issue view) AND for the POST to /statuses/{sha}.
+          # `statuses: write` permission above authorizes the POST.
+          GH_TOKEN: ${{ github.token }}
+          # REPO is redundant with `gh repo view` but explicit is faster.
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.number }}
+        run: |
+          bash scripts/merge-gate.sh --repo "$REPO" --pr "$PR"
