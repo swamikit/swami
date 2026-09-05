@@ -106,13 +106,11 @@ concurrency:
 permissions:
   contents: read        # actions/checkout needs this when permissions is an
                         # explicit allowlist (omitted scopes are disabled).
-  pull-requests: read   # reads PR + reviews + comments
-  issues: write         # reads linked-issue state/body for orphan check;
-                        # also posts/patches the sticky <!-- merge-gate -->
-                        # comment via /repos/{}/issues/{N}/comments (POST/PATCH
-                        # on that endpoint requires write, not read — a plain
-                        # `issues: read` token 403s and the workflow fails
-                        # before publishing its breakdown).
+  pull-requests: write  # reads PR + reviews and posts/patches the sticky
+                        # <!-- merge-gate --> PR comment. Although PR comments
+                        # use the issues-comments REST path, GitHub authorizes
+                        # them with pull-requests: write.
+  issues: read          # reads linked-issue state/body for orphan checking
   statuses: write       # posts the `merge-gate` commit status
 
 jobs:
