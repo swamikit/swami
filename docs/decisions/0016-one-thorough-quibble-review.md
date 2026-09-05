@@ -2,6 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-09-05
+- Relates to: PRs [#70](https://github.com/swamikit/swami/pull/70),
+  [#71](https://github.com/swamikit/swami/pull/71), and
+  [#72](https://github.com/swamikit/swami/pull/72)
 
 ## Context
 
@@ -15,6 +18,10 @@ providing the intended cheap, independent read.
 The repository already has a second independent reviewer in Codex. Two Quibble
 passes did not create two independent authorities; they created two presentations
 of one role.
+
+The fast tier and provider client were introduced directly by PRs #70-72; no
+earlier ADR recorded that decision. This ADR is the first durable rationale for
+the tier and supersedes the workflow-level choice made in those PRs.
 
 ## Decision
 
@@ -44,6 +51,9 @@ without coupling Swami to a second presentation tier.
   presentation, not parser keys.
 - `scripts/test_run_claude_review.py` exercises the remaining formatter through
   the shared summary-only fallback for both blocking and non-blocking findings.
-- A repository-wide executable-source search found no remaining importer of the
-  retired fast reviewer or provider client; Builder and triage call their model
-  runtimes independently.
+- The deleted fast worker's provider-schema assertion is intentionally not
+  copied: Quibble accepts file-less review-meta findings and missing lines, then
+  routes them to the unanchored body section. Its partitioning tests cover both
+  cases directly.
+- `rg -n 'model_client|run-fast-review|run_fast_review|reviewer:fast|GEMINI_API_KEY|OPENROUTER_API_KEY' -g '!docs/**' .`
+  returns no matches. Builder and triage call their model runtimes independently.
