@@ -292,6 +292,18 @@ collect_claude() {
   collect_claude_sticky "$pr"
 }
 
+latest_quibble_review_line() {
+  local reviews_raw="$1"
+  jq -r --arg login "quibble-review[bot]" '
+    [ .[]
+      | select(.user.login == $login)
+      | select(.body // "" | contains("<!-- reviewer:claude -->"))
+    ]
+    | last
+    | if . == null then empty else [(.id|tostring), (.body|@base64)] | @tsv end
+  ' "$reviews_raw" 2>/dev/null | { head -1 || true; }
+}
+
 # NEW SHAPE — walk the latest bot-authored PR Review on the PR. Returns 0 if
 # a review was found + walked (regardless of finding count), non-zero if no
 # such review exists (so the caller falls through to the sticky path).
@@ -311,16 +323,7 @@ collect_claude_review() {
   # Pick the newest bot review whose body carries the reviewer:claude marker.
   # `.[]` iterates in server order (oldest→newest); take the last with |last.
   local review_line review_id review_body_b64
-  review_line="$(
-    jq -r --arg login "quibble-review[bot]" '
-      [ .[]
-        | select(.user.login == $login)
-        | select(.body // "" | contains("<!-- reviewer:claude -->"))
-      ]
-      | last
-      | if . == null then empty else [(.id|tostring), (.body|@base64)] | @tsv end
-    ' "$reviews_raw" 2>/dev/null | { head -1 || true; }
-  )"
+  review_line="$(latest_quibble_review_line "$reviews_raw")"
   [[ -z "$review_line" ]] && return 1
 
   IFS=$'\t' read -r review_id review_body_b64 <<<"$review_line" || true
@@ -663,6 +666,22 @@ JSON
   assert_addressed \
     "D' codex finding with cid 1000 same path:line: must be ORPHAN" \
     0  codex  "scripts/audit-p2s.sh"  "200"  "https://c/1000"  69  1000  P2  "codex 1000"
+
+  # ---- Case E: display prose is not a parser key --------------------------
+  cat > "$WORK/review-contract.json" <<'JSON'
+[
+  {"id": 7, "user": {"login": "quibble-review[bot]"}, "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)"},
+  {"id": 8, "user": {"login": "someone-else"}, "body": "<!-- reviewer:claude -->\n\n## Anything"}
+]
+JSON
+  local selected_review
+  selected_review="$(latest_quibble_review_line "$WORK/review-contract.json" | cut -f1)"
+  if [[ "$selected_review" == "7" ]]; then
+    printf '  PASS  E  Quibble selection keys on identity and marker, not heading/status prose\n'
+  else
+    printf '  FAIL  E  Quibble selection returned review %q\n' "$selected_review"
+    failures=$((failures + 1))
+  fi
 
   echo
   if [[ $failures -eq 0 ]]; then
