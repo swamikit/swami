@@ -203,7 +203,7 @@ def call_model(system: str, diff: str, truncated_bytes: int = 0) -> tuple[dict, 
         primary=PRIMARY,
         fallback=FALLBACK,
         system=system,
-        messages=[{"role": "user", "content": user_content}],
+        user=user_content,
         max_tokens=MAX_TOKENS,
     )
 
