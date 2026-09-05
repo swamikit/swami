@@ -1,20 +1,22 @@
 ---
 name: docc-authoring
-description: Output shape for a translated Origami pattern. Covers the emitted `.swift` file's layout, struct shape, DocC sample-code header, public API surface, naming rules, and the verification-host switch a reference project uses to select which pattern renders. Community-portable, sibling to `skill/pattern-translation`. Load whenever you're about to write a pattern's `.swift` file to disk.
+description: Everything the DocC surface for a translated pattern needs. The emitted `.swift` file's shape (filename, struct, symbol-comment header, public API, verification-host switch) AND the DocC catalog conventions that receive it (directive whitelist, collection/gallery page shape, `Resources/Patterns/<PatternID>.png` basename contract, GFM patch→SwiftUI mapping table). Community-portable, sibling to `skill/pattern-translation`. Load whenever you're about to write a pattern's `.swift` file, a catalog page, or a mapping-table row.
 metadata:
   type: procedural
 ---
 
-# DocC authoring: output shape for a translated pattern
+# DocC authoring: pattern file + catalog surface
 
 Sibling to `skill/pattern-translation`. That skill decides *what* the SwiftUI
 looks like (patch-to-construct mapping, ISAT staging, native-first). This skill
-decides *what the file on disk looks like*: filename, struct, DocC header,
-public API, verification switch.
+decides *what reaches the reader*: the pattern file on disk (filename, struct,
+symbol-comment DocC header, public API, verification-host switch) and the DocC
+catalog that renders it (directives, gallery shape, resource naming, patch→SwiftUI
+mapping table).
 
-Community-portable. No repo-specific paths, PR flow, or issue numbers. Where a
-concrete path is unavoidable, framed as "the reference project" or "a
-Swami-shaped module".
+Repo-specific details (env var names, workflow filenames, `sed`/`tr` slug
+derivation) are marked as the reference project's — community ports mirror the
+shape, not the identifiers. No PR flow, no issue numbers.
 
 ## One file per pattern
 
@@ -142,15 +144,22 @@ struct ContentView: View {
 }
 ```
 
-- **Slug.** Strip the Origami category prefix (`Interaction_`, `Layer_`, …)
-  from the source stem, then lowercase the remainder. `Interaction_Touch` →
-  `touch`; `Interaction_Drag` → `drag`. In the reference project this is what
-  `builder.yml` computes (`sed -E 's/^Interaction_//' | tr '[:upper:]' '[:lower:]'`)
-  and what `verify.yml`'s `PATTERNS` env pairs (`touch:Interaction_Touch`) —
-  the pattern-selector env var is launched with that same slug, so a case
-  labelled `interaction-touch` is unreachable and the host renders the default
-  view instead. Community ports that use a different derivation must update
-  their builder + verify workflows to match.
+- **Slug.** Whatever the reference project's builder + verify workflows agree
+  the slug is — no more, no less. The rule is symmetric with the workflow, not
+  a category-stripping heuristic invented here. In the reference project,
+  `builder.yml`'s "Resolve pattern name" step runs
+  `sed -E 's/^Interaction_//' | tr '[:upper:]' '[:lower:]'`, which strips only
+  the literal `Interaction_` prefix before lowercasing; `verify.yml`'s
+  `PATTERNS` env pairs the same slug to the stem. So today:
+  `Interaction_Touch` → `touch`, `Interaction_Drag` → `drag`, but
+  `Layer_Frame` → `layer_frame` (underscore kept — the `Layer_` prefix is not
+  stripped) and `Animation_ClassicAnimation` → `animation_classicanimation`.
+  Read the current `builder.yml` before adding a case; a case labelled
+  `interaction-touch` or `frame` (guessing a broader strip than the builder
+  actually does) is unreachable and the host renders the default view instead.
+  A community port that wants a broader rule (strip every category, or a
+  hyphen-separated slug) changes builder + verify atomically in the same PR
+  and updates this bullet.
 - **One case per pattern.** Do not fold multiple patterns behind one slug. Each
   case renders exactly one pattern's view, with no host chrome around it.
 - **Body is a single expression.** Same rule as the pattern's own body: the
@@ -194,9 +203,134 @@ struct ContentView: View {
 - If the pattern is under a verification-host switch, one new case has been
   added; the case renders `<PatternID>View()` and nothing else.
 
+## DocC catalog
+
+The catalog is the human-facing surface: gallery pages, per-pattern sample-code
+pages, mapping references. Pattern `.swift` files carry a symbol-comment header
+(above); catalog `.md` files carry the gallery shape, resource bindings, and
+the patch→SwiftUI mapping table. In a Swami-shaped module the catalog lives at
+`<Module>.docc/`.
+
+### Directives — the whole allowed set
+
+Everything else stops and asks. In particular, no ad-hoc HTML, no custom card
+grids by hand.
+
+- **`@Metadata { ... }`** — page-level config wrapper. `@PageKind`, `@PageImage`,
+  `@CallToAction` sit inside it.
+- **`@PageKind(article)` / `@PageKind(sampleCode)`** — page classification.
+  `sampleCode` gives the sample-code chrome (download slot, code-forward layout).
+  For sample-code pages, prefer a **standalone `.md`** in the catalog — see the
+  caveat under "DocC sample-code header" above; symbol comments carry the
+  metadata, the standalone page carries the layout when the symbol version
+  won't render.
+- **`@PageImage(purpose: card, source: "<PatternID>")`** — gallery-card preview.
+  `source` is the resource basename, no extension (see "Resources" below).
+- **`@CallToAction(url: "<zip-url>", purpose: download, label: "Download")`** —
+  download button on a pattern page, pointing at the Xcode-project zip
+  published alongside the site.
+- **`@Links(visualStyle: detailedGrid)`** — content-aware gallery cards. Each
+  card pulls its preview from the linked page's own `@PageImage`. Do not
+  hand-build the grid.
+- **`@TabNavigator { @Tab("<Category>") { ... } }`** — category grouping on
+  gallery pages. One tab per Origami sidebar category (Featured, Interaction,
+  Layer, …).
+- **`@Row` / `@Column`** — finer layout only when `@Links` doesn't fit, e.g. a
+  single preview beside prose. Never for the main gallery grid.
+
+### Catalog files and resources
+
+- **Collection pages.** `<Module>.docc/<Collection>.md`. One article per Origami
+  sidebar category (Featured, Animation, Interaction, Layer, …). These are the
+  gallery pages that host `@TabNavigator` + `@Links`.
+- **Standalone sample-code pages.** `<Module>.docc/Patterns/<PatternID>.md`.
+  One file per pattern. Filename basename = pattern ID = image basename = doc
+  link. Same `PatternID` the pattern's `.swift` file uses.
+- **Preview images.** `<Module>.docc/Resources/Patterns/<PatternID>.png`.
+  Basename = `PatternID`; keep the `.swift` file, the standalone catalog page,
+  and the resource in lockstep so the gallery card resolves.
+- **Framework symbol docs.** The `///` comments on public symbols in Swift
+  source. DocC auto-generates the symbol pages; do not shadow them with a
+  hand-authored article carrying the same title.
+
+### Gallery article shape
+
+```markdown
+# Patterns
+
+@Metadata {
+    @PageKind(article)
+    @PageImage(purpose: card, source: "Gallery")
+}
+
+Every Origami pattern, ported to SwiftUI.
+
+@TabNavigator {
+    @Tab("Featured") {
+        @Links(visualStyle: detailedGrid) {
+            - <doc:Interaction_Touch>
+            - <doc:Interaction_Drag>
+            - <doc:Layer_Frame>
+        }
+    }
+    @Tab("Interaction") {
+        @Links(visualStyle: detailedGrid) {
+            - <doc:Interaction_Touch>
+            - <doc:Interaction_Drag>
+        }
+    }
+    @Tab("Layer") {
+        @Links(visualStyle: detailedGrid) {
+            - <doc:Layer_Frame>
+        }
+    }
+}
+```
+
+No per-card prose. `@Links` reads each linked page's `@PageImage` and title;
+that is the card.
+
+### Mapping table on the collection page
+
+The collection page carries a **GFM table** mapping Origami patches to their
+SwiftUI equivalents — one row per patch, symbol references in double backticks
+so DocC auto-links, right-hand cells tagged `(native)` or `(helper)` so readers
+know whether it's stock SwiftUI or a Swami helper. The catalog is the only
+mapping reference — there is no separate mapping doc — so a patch that lands
+without a row here is effectively undocumented for the human reader.
+
+```markdown
+| Origami patch                     | SwiftUI                                                                       |
+|-----------------------------------|-------------------------------------------------------------------------------|
+| `interaction.tap` — Tap           | ``onTapGesture(_:)`` (native)                                                 |
+| `interaction.drag` — Drag         | ``drag(enable:momentum:bounds:position:translation:velocity:reset:)`` (helper) |
+| `layer.oval` — Oval               | `Circle()` (native)                                                           |
+```
+
+When a helper lands, add its row here in the same commit. When a helper is
+retired in favour of a native construct, update the row to `(native)` and drop
+the helper. That's the "know to reach for it" record — the codebase enforces
+correctness, the mapping table enforces *reachability* by a reader.
+
+### Catalog: what NOT to do
+
+- **No per-pattern prose articles.** Sample-code pages are image + code + a
+  sentence or two of context. If it starts to read like a walkthrough, delete
+  it — the render and the code are the walkthrough.
+- **No `@Row`/`@Column` for the gallery.** `@Links` auto-cards from
+  `@PageImage`. Rows and columns are for one-off layouts.
+- **No hand-added binaries in `Resources/Patterns/`.** Those PNGs come from
+  CI-composited renders. Don't drop a hand-cropped screenshot in and commit it
+  — regenerate through the render pipeline so the image matches the code.
+- **No mapping-table row without a landed patch.** Rows describe what the
+  codegen actually emits today. A row for a patch the parser doesn't decode is
+  a lie the reader will trip over.
+
 ## Where to read next
 
 - **`skill/pattern-translation/SKILL.md`**. The judgment half. What each patch
   becomes in SwiftUI, how state, animation, and interpolation are staged. Read
-  before deciding *what* to emit; read this skill for *how the file is shaped*.
-- **`skill/unslop/SKILL.md`**. Style rules for the prose in the DocC header.
+  before deciding *what* to emit; read this skill for *how the file is shaped*
+  and how it lands in the catalog.
+- **`skill/unslop/SKILL.md`**. Style rules for the prose in the DocC header
+  and in the catalog's collection pages.
