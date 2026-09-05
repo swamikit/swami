@@ -219,7 +219,7 @@ def validate_plan(plan: dict) -> tuple[bool, str]:
         # refusing to write over anything that exists at HEAD; a follow-up
         # PR can lift this once the workflow reads the target files back into
         # /tmp/context.md and hands them to the planner (Codex P1 round 2,
-        # Claude review sticky P1 #1).
+        # Reviewer sticky P1 #1).
         if Path(norm).exists():
             return False, (
                 f"plan.files[{i}].path {path!r} already exists at HEAD, and "

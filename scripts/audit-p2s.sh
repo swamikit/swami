@@ -2,7 +2,7 @@
 #
 # audit-p2s.sh — for every PR merged since --since (default: today), collect
 # every P2/P3 finding left on it by BOTH reviewers (Codex line comments +
-# Claude review sticky), decide whether each finding is already tracked by a
+# Quibble review), decide whether each finding is already tracked by a
 # repo issue, and print the orphans. With --file-issues, open one issue per
 # orphan.
 #
@@ -65,6 +65,9 @@ fi
 # ---------------------------------------------------------------------------
 WORK="$(mktemp -d -t audit-p2s.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REVIEWERS_CONFIG="${REVIEWERS_CONFIG:-$SCRIPT_DIR/../.github/reviewers.yml}"
 
 FINDINGS="$WORK/findings.jsonl"          # one JSON object per finding
 ORPHANS="$WORK/orphans.jsonl"            # subset that are un-tracked
@@ -292,6 +295,66 @@ collect_claude() {
   collect_claude_sticky "$pr"
 }
 
+quibble_review_contract() {
+  awk '
+    function unquote(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^"|"$/, "", value)
+      return value
+    }
+    /^[[:space:]]*-[[:space:]]+id:[[:space:]]*/ {
+      if (found) exit
+      value = $0
+      sub(/^[[:space:]]*-[[:space:]]+id:[[:space:]]*/, "", value)
+      in_reviewer = (unquote(value) == "claude")
+      if (in_reviewer) found = 1
+      next
+    }
+    in_reviewer && /^[[:space:]]+identities:[[:space:]]*$/ {
+      in_identities = 1
+      next
+    }
+    in_reviewer && in_identities && /^[[:space:]]+-[[:space:]]+/ {
+      value = $0
+      sub(/^[[:space:]]+-[[:space:]]+/, "", value)
+      value = unquote(value)
+      identities = identities (identities ? "," : "") value
+      next
+    }
+    in_reviewer && /^[[:space:]]+marker:[[:space:]]*/ {
+      in_identities = 0
+      value = $0
+      sub(/^[[:space:]]+marker:[[:space:]]*/, "", value)
+      marker = unquote(value)
+    }
+    END {
+      if (found && identities && marker) print identities "\t" marker
+    }
+  ' "$REVIEWERS_CONFIG"
+}
+
+latest_quibble_review_line() {
+  local reviews_raw="$1"
+  local contract identities marker
+  contract="$(quibble_review_contract)"
+  IFS=$'\t' read -r identities marker <<<"$contract" || true
+  if [[ -z "${identities:-}" || -z "${marker:-}" ]]; then
+    printf 'audit-p2s: could not parse claude reviewer contract from %s\n' \
+      "$REVIEWERS_CONFIG" >&2
+    return 2
+  fi
+  jq -r --arg identities "$identities" --arg marker "$marker" '
+    ($identities | split(",")) as $allowed
+    |
+    [ .[]
+      | select(.user.login as $login | $allowed | index($login))
+      | select(.body // "" | contains($marker))
+    ]
+    | last
+    | if . == null then empty else [(.id|tostring), (.body|@base64)] | @tsv end
+  ' "$reviews_raw" 2>/dev/null | { head -1 || true; }
+}
+
 # NEW SHAPE — walk the latest bot-authored PR Review on the PR. Returns 0 if
 # a review was found + walked (regardless of finding count), non-zero if no
 # such review exists (so the caller falls through to the sticky path).
@@ -311,16 +374,12 @@ collect_claude_review() {
   # Pick the newest bot review whose body carries the reviewer:claude marker.
   # `.[]` iterates in server order (oldest→newest); take the last with |last.
   local review_line review_id review_body_b64
-  review_line="$(
-    jq -r --arg login "quibble-review[bot]" '
-      [ .[]
-        | select(.user.login == $login)
-        | select(.body // "" | contains("<!-- reviewer:claude -->"))
-      ]
-      | last
-      | if . == null then empty else [(.id|tostring), (.body|@base64)] | @tsv end
-    ' "$reviews_raw" 2>/dev/null | { head -1 || true; }
-  )"
+  if ! review_line="$(latest_quibble_review_line "$reviews_raw")"; then
+    FAILED_FETCHES+=("claude:$pr:reviewer-config")
+    # The legacy sticky collector does not depend on reviewers.yml, so let the
+    # caller use it while retaining the visible partial-audit diagnostic.
+    return 1
+  fi
   [[ -z "$review_line" ]] && return 1
 
   IFS=$'\t' read -r review_id review_body_b64 <<<"$review_line" || true
@@ -663,6 +722,66 @@ JSON
   assert_addressed \
     "D' codex finding with cid 1000 same path:line: must be ORPHAN" \
     0  codex  "scripts/audit-p2s.sh"  "200"  "https://c/1000"  69  1000  P2  "codex 1000"
+
+  # ---- Case E: display prose is not a parser key --------------------------
+  cat > "$WORK/review-contract.json" <<'JSON'
+[
+  {"id": 7, "user": {"login": "quibble-review[bot]"}, "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)"},
+  {"id": 8, "user": {"login": "someone-else"}, "body": "<!-- reviewer:claude -->\n\n## Anything"},
+  {"id": 9, "user": {"login": "github-actions[bot]"}, "body": "<!-- reviewer:claude -->\n\n## Legacy display heading\n\nlegacy-label: **approve**\n\n### P1 (0)"}
+]
+JSON
+  local selected_review
+  selected_review="$(latest_quibble_review_line "$WORK/review-contract.json" | cut -f1)"
+  if [[ "$selected_review" == "9" ]]; then
+    printf '  PASS  E  Quibble selection accepts configured identities and ignores display prose\n'
+  else
+    printf '  FAIL  E  Quibble selection returned review %q\n' "$selected_review"
+    failures=$((failures + 1))
+  fi
+
+  # ---- Case F: legacy sticky parser ignores the display heading -----------
+  cat > "$WORK/sticky-contract.json" <<'JSON'
+[
+  {
+    "id": 10,
+    "html_url": "https://example.test/sticky",
+    "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P2 (1)\n- **`scripts/sticky.sh:12` — [P2] Sticky finding survives heading rename**\n"
+  }
+]
+JSON
+  local case_f_findings="$WORK/findings-case-f.jsonl"
+  (
+    FINDINGS="$case_f_findings"
+    : > "$FINDINGS"
+    gh() { cat "$WORK/sticky-contract.json"; }
+    collect_claude_sticky 999
+  )
+  if jq -e 'select(.path == "scripts/sticky.sh" and (.line|tostring) == "12" and .severity == "P2")' "$case_f_findings" >/dev/null; then
+    printf '  PASS  F  legacy sticky findings ignore heading/status prose\n'
+  else
+    printf '  FAIL  F  legacy sticky finding was not collected\n'
+    failures=$((failures + 1))
+  fi
+
+  # ---- Case G: malformed reviewer config is visible and fail-closed -------
+  printf 'reviewers:\n  - id: claude\n    identities: []\n' \
+    > "$WORK/reviewers-invalid.yml"
+  local contract_status=0
+  if REVIEWERS_CONFIG="$WORK/reviewers-invalid.yml" \
+      latest_quibble_review_line "$WORK/review-contract.json" \
+      > /dev/null 2> "$WORK/reviewer-contract.err"; then
+    contract_status=0
+  else
+    contract_status=$?
+  fi
+  if [[ "$contract_status" -ne 0 ]] && \
+      grep -q 'could not parse claude reviewer contract' "$WORK/reviewer-contract.err"; then
+    printf '  PASS  G  malformed reviewer config is visible and fail-closed\n'
+  else
+    printf '  FAIL  G  malformed reviewer config was silent or successful\n'
+    failures=$((failures + 1))
+  fi
 
   echo
   if [[ $failures -eq 0 ]]; then

@@ -55,6 +55,9 @@ agent — the cloud loop does not write there.
   withAnimation → interpolation` stack. Live example per stage.
 
 ## Housekeeping
+- **Revoke retired review secrets** — remove the repository's unused
+  `GEMINI_API_KEY` and `OPENROUTER_API_KEY` Actions secrets after PR #93 lands;
+  ADR-0016 removed their final workflow consumer.
 - **swami-private/references/ deletion** — cache is now dead weight per ADR-0013. Delete
   the directory in a follow-up swami-private commit; keep `scripts/render-references.sh`
   (still useful for local troubleshooting).
@@ -78,4 +81,3 @@ agent — the cloud loop does not write there.
 - **Builder pre-flight step** (blocked on Builder GA — PR #27) — before real work, `gh issue list --label infra-blocker --state open --limit 100` and check for matches against current environment. Apply workaround or escalate.
 - **Triage GA** (in-flight — PR #22) — fires on `on: issues: [opened, edited]`. Runs on ubuntu-latest (Claude API). Categorize, dedupe, route (label 'ready' / 'needs-info' / 'translate' / etc.). Closes the loop Codex findings → issues → routed to Builder or human.
 - **Triage on PRs** (not yet scheduled) — extend triage.yml to also fire on `pull_request: [opened, edited]` so it can proactively skim new PRs for cross-ADR contradictions and stale assumptions. Gap surfaced 2026-09-04.
-

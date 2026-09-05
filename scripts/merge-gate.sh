@@ -1194,7 +1194,7 @@ JSON
   "state": "CHANGES_REQUESTED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **request changes**\n\n### P1 (2)\n### P2 (0)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **request changes**\n\n### P1 (2)\n### P2 (0)\n### P3 (0)\n"
 }]
 JSON
   compute_gate
@@ -1213,7 +1213,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (1)\n### P2 (0)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (1)\n### P2 (0)\n### P3 (0)\n"
 }]
 JSON
   compute_gate
@@ -1231,7 +1231,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1254,7 +1254,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (0)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (0)\n### P3 (0)\n"
 }]
 JSON
   # findings.jsonl empty on purpose — the previous-push finding disappeared.
@@ -1273,7 +1273,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1300,7 +1300,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1325,7 +1325,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1350,7 +1350,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1375,14 +1375,6 @@ reviewers:
     failure_marker: "<!-- reviewer:claude-failure -->"
     style: reviews-api
     gates_merge: true
-  - id: fast
-    identities:
-      - quibble-review[bot]
-      - github-actions[bot]
-    marker: "<!-- reviewer:fast -->"
-    failure_marker: "<!-- reviewer:fast-failure -->"
-    style: reviews-api
-    gates_merge: false
   - id: codex
     identities:
       - chatgpt-codex-connector[bot]
@@ -1393,8 +1385,8 @@ reviewers:
 YAML
   local rows
   rows="$(parse_reviewers "$cfg")"
-  if [[ "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')" == "3" ]]; then
-    printf '  PASS  6a config parser emits 3 rows\n'
+  if [[ "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')" == "2" ]]; then
+    printf '  PASS  6a config parser emits 2 rows\n'
   else
     printf '  FAIL  6a config parser row count: got %d rows\n' \
       "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')"

@@ -29,8 +29,8 @@ permissions:
 # and submit a verdict for the OLDER diff — approving code that no
 # longer exists at HEAD. `cancel-in-progress: true` kills the older run
 # the moment a newer trigger fires; the newer run then owns the PR's
-# review. Belt-and-suspenders: run-claude-review.py and run-fast-review.py
-# also re-fetch HEAD immediately before POST and abort if it has moved,
+# review. Belt-and-suspenders: run-claude-review.py also re-fetches HEAD
+# immediately before POST and aborts if it has moved,
 # so a race that beats the concurrency gate still doesn't ship a stale
 # verdict.
 #
@@ -82,15 +82,9 @@ jobs:
         && github.event.issue.pull_request != null
         && contains(github.event.comment.body, '@claude review'))
     runs-on: ubuntu-latest
-    # Job-level env: expose all review-model secrets to every step and to `if:`
-    # expressions (`env.ANTHROPIC_API_KEY != ''`). ANTHROPIC drives Claude Opus
-    # (full review + fast-review fallback). GEMINI drives the fast-review pre-pass.
-    # OPENROUTER is reserved for future model_client backends. All three may be
-    # unset — steps gate on the specific keys they need.
+    # One thorough model pass is the only Quibble review.
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # `quibble-review` GitHub App credentials — the review scripts mint an
       # installation access token from these so review comments post as
       # `quibble-review[bot]` instead of `github-actions[bot]`. When either
@@ -133,7 +127,7 @@ jobs:
           gh pr diff "$PR_NUM" > /tmp/pr.diff
           # Codex P2 (sticky preservation): READ verify.yml's sticky comment for CONTEXT ONLY.
           # Do not edit, update, or delete it here — the pixel gate owns that comment. The
-          # Claude review posts SEPARATE comments (see "Run Claude review" step below).
+          # Quibble posts a separate formal review (see "Run Quibble review" below).
           gh api repos/${{ github.repository }}/issues/"$PR_NUM"/comments \
             --jq '.[] | select(.user.login == "github-actions[bot]") | .body' > /tmp/sticky.md
           # Resolve HEAD_SHA from the PR payload — on workflow_dispatch the
@@ -169,7 +163,7 @@ jobs:
       - name: Skip review on forked PR
         if: steps.fork.outputs.is_fork == 'true'
         run: |
-          echo "::notice::Forked PR detected — Claude review skipped. On pull_request the fork's ANTHROPIC_API_KEY and write permissions are unavailable; on workflow_dispatch / issue_comment we refuse a fork explicitly so an untrusted diff can't reach a job holding base-repo secrets."
+          echo "::notice::Forked PR detected — Quibble review skipped. On pull_request the fork's model credential and write permissions are unavailable; on workflow_dispatch / issue_comment we refuse a fork explicitly so an untrusted diff can't reach a job holding base-repo secrets."
 
       - name: Load review context
         if: steps.fork.outputs.is_fork != 'true'
@@ -185,46 +179,20 @@ jobs:
           fi
           for adr in docs/decisions/*.md; do cat "$adr" >> /tmp/context.md; echo '---' >> /tmp/context.md; done
 
-      # The Claude review posts its findings as a SEPARATE marker-tagged sticky
-      # comment (<!-- claude-review -->) and NEVER edits verify.yml's pixel-gate
-      # sticky. Subsequent runs update the same claude-review comment in place,
-      # so this doesn't pile up new comments across pushes (Codex P2).
+      # Quibble posts one marker-tagged formal review and never edits the
+      # evidence comment owned by verify.yml.
       - name: Install review SDKs
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
         # Pin every SDK: an unpinned `pip install` silently follows future major
-        # bumps and can move the surface out from under run-claude-review.py
-        # (streaming/thinking), run-fast-review.py, or scripts/model_client.py.
+        # bumps and can move the surface out from under run-claude-review.py.
         # Bump these pins deliberately when we've verified the new major behaves.
-        #   anthropic -> Claude Opus (full review + fast-review Opus fallback)
-        #   google-generativeai -> Gemini (fast-review primary)
-        #   openai -> OpenRouter-compatible client used by model_client
+        #   anthropic -> Claude Opus review
         #   PyJWT + cryptography -> quibble-review App installation-token minting
         #     (scripts/gh_app_auth.py). Same pin discipline: bump deliberately
         #     when we've verified the new majors of PyJWT / cryptography behave.
-        run: python3 -m pip install --quiet 'anthropic==1.4.0' 'google-generativeai==0.8.3' 'openai==1.51.0' 'PyJWT==2.9.0' 'cryptography==43.0.3'
+        run: python3 -m pip install --quiet 'anthropic==1.4.0' 'PyJWT==2.9.0' 'cryptography==43.0.3'
 
-      # Fast-review pre-pass. Posts a lightweight review comment (~15s) before
-      # the full Claude Opus review lands (~60s). Gated on ANTHROPIC_API_KEY
-      # because model_client.chat_with_fallback falls back to Opus when
-      # GEMINI_API_KEY is unset. `continue-on-error: true` so a Gemini
-      # rate-limit / transient failure never blocks the full review that
-      # follows.
-      - name: Run fast-review (Gemini)
-        if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ steps.context.outputs.pr }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_DIFF_FILE: /tmp/pr.diff
-          STICKY_FILE: /tmp/sticky.md
-        run: |
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "::notice::GEMINI_API_KEY not set; fast-review falling back to Opus"
-          fi
-          python3 scripts/run-fast-review.py
-
-      - name: Run Claude review
+      - name: Run Quibble review
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -239,10 +207,37 @@ jobs:
         run: python3 scripts/run-claude-review.py
 
       - name: Signal readiness (if secret not set)
+        # Forks intentionally take the skip step above; never turn their
+        # expected lack of base-repository secrets into a failed review run.
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY == ''
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.context.outputs.pr }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.context.outputs.head_sha || github.event.pull_request.head.sha }}
         run: |
-          gh pr comment $PR --body "Review GA is present but ANTHROPIC_API_KEY is not set in repo secrets. Set it in Settings -> Secrets and variables -> Actions to enable automated review."
+          body='<!-- reviewer:claude-failure -->
+
+          ## Quibble Review Summary'
+          if [ -n "${HEAD_SHA:-}" ]; then
+            body="$body
+
+          HEAD: \`$HEAD_SHA\`"
+          fi
+          body="$body
+
+          _reviewer failed — no findings this run._
+
+          \`MissingCredential: ANTHROPIC_API_KEY is not set\`
+
+          Set the repository Actions secret and retry the review."
+          comment_id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq \
+            '.[] | select(.user.login == "github-actions[bot]" or .user.login == "quibble-review[bot]") | select(.body | startswith("<!-- reviewer:claude-failure -->")) | .id' \
+            | tail -1)
+          if [ -n "$comment_id" ]; then
+            gh api "repos/$REPO/issues/comments/$comment_id" -X PATCH -f body="$body" >/dev/null
+          else
+            gh pr comment "$PR" --body "$body"
+          fi
+          echo "::error::ANTHROPIC_API_KEY is not set; posted Quibble failure marker"
+          exit 1

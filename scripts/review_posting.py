@@ -159,7 +159,11 @@ def post_review(
     env: dict[str, str] | None = None,
     reviewer: str = "reviewer",
 ) -> dict[str, Any]:
-    """Post atomically, degrading a 422 to a summary-only review once."""
+    """Post atomically, degrading a 422 to a summary-only review once.
+
+    ``reviewer`` is used only as a diagnostic label; it never dispatches
+    reviewer-specific behavior.
+    """
     result = _post(repo, pr, payload, env)
     if result.returncode == 0:
         return json.loads(result.stdout) if result.stdout.strip() else {}

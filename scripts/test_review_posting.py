@@ -36,7 +36,7 @@ class PostReviewTests(unittest.TestCase):
 
         log = io.StringIO()
         with mock.patch("subprocess.run", side_effect=fake_run), redirect_stderr(log):
-            result = review_posting.post_review("o/r", "5", self.payload, reviewer="fast")
+            result = review_posting.post_review("o/r", "5", self.payload, reviewer="claude")
 
         self.assertEqual(result, {"id": 42})
         self.assertEqual(len(calls), 2)
