@@ -34,7 +34,6 @@ concurrency:
   # manual re-runs all mutate the same branch, so a per-ref group let two
   # PRs race on gh-pages. One shared group + cancel-in-progress: false
   # forces them into a queue and preserves each run's push.
-  # cleanup-docs-preview.yml uses this exact repository-wide group too.
   group: gh-pages
   cancel-in-progress: false
 

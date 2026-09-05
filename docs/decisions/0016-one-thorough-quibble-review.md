@@ -36,3 +36,14 @@ without coupling Swami to a second presentation tier.
 - A provider outage is visible and fail-closed rather than hidden by fallback.
 - Changing provider policy later requires a deliberate Agent Factory contract,
   not another Swami-only reviewer script.
+
+## Compatibility evidence
+
+- `scripts/merge-gate.sh` and `scripts/audit-p2s.sh` identify Quibble by its
+  machine marker and severity buckets. The summary heading and status label are
+  presentation, not parser keys.
+- `scripts/test_run_claude_review.py` exercises the remaining formatter through
+  the shared summary-only fallback for both blocking and non-blocking findings.
+- A repository-wide executable-source search found no remaining importer of the
+  retired fast reviewer or provider client; Builder and triage call their model
+  runtimes independently.

@@ -1022,19 +1022,19 @@ format_gate_comment() {
 }
 
 gate_comment_ids_from_file() {
-  local flat="$1" order="${2:-oldest}" ownership="${3:-any}"
+  local flat="$1" order="${2:-oldest}" owner="${3:-}"
   local filter='.[]
     | select((.body // "") | startswith("<!-- merge-gate -->"))
-    | select($ownership != "actions" or .user.login == "github-actions[bot]")'
+    | select($owner == "" or .user.login == $owner)'
   if [[ "$order" == "newest" ]]; then
-    jq -r --arg ownership "$ownership" "[$filter] | reverse | .[].id" "$flat"
+    jq -r --arg owner "$owner" "[$filter] | reverse | .[].id" "$flat"
   else
-    jq -r --arg ownership "$ownership" "$filter | .id" "$flat"
+    jq -r --arg owner "$owner" "$filter | .id" "$flat"
   fi
 }
 
 find_gate_comment_ids() {
-  local pr="$1" order="${2:-oldest}" prefix="${3:-gate-comment-list}" ownership="${4:-any}"
+  local pr="$1" order="${2:-oldest}" prefix="${3:-gate-comment-list}" owner="${4:-}"
   local pages="$WORK/${prefix}-pages.json"
   local flat="$WORK/${prefix}-flat.json"
   local err="$WORK/${prefix}.err"
@@ -1044,7 +1044,30 @@ find_gate_comment_ids() {
     echo "::warning::merge-gate: could not list diagnostic comments ($(head -1 "$err" 2>/dev/null || true))" >&2
     return 1
   fi
-  gate_comment_ids_from_file "$flat" "$order" "$ownership"
+  gate_comment_ids_from_file "$flat" "$order" "$owner"
+}
+
+comment_author_login() {
+  local login=""
+  if [[ -n "${MERGE_GATE_COMMENT_AUTHOR:-}" ]]; then
+    printf '%s' "$MERGE_GATE_COMMENT_AUTHOR"
+    return 0
+  fi
+  login="$(gh api graphql -f query='{viewer{login}}' --jq '.data.viewer.login' 2>/dev/null || true)"
+  if [[ -n "$login" ]]; then
+    printf '%s' "$login"
+    return 0
+  fi
+  # GitHub's standard workflow token may not expose a GraphQL viewer on every
+  # event type. Its comment identity is nevertheless stable. A workflow using
+  # a custom App token must set MERGE_GATE_COMMENT_AUTHOR to that App's bot
+  # login if viewer lookup is unavailable.
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    printf 'github-actions[bot]'
+    return 0
+  fi
+  echo "::warning::merge-gate: could not resolve authenticated comment identity" >&2
+  return 1
 }
 
 gate_comment_action() {
@@ -1066,10 +1089,13 @@ upsert_gate_comment() {
   # `--paginate --slurp` fetches ALL pages; flatten once, then reverse the
   # complete collection so edit attempts run newest-to-oldest across page
   # boundaries.
-  local existing_ids="" existing_id updated=0 patch_rc=0 patch_status=""
+  local existing_ids="" existing_id updated=0 patch_rc=0 patch_status="" owner=""
   local patch_err="$WORK/upsert-patch.err"
   local patch_response="$WORK/upsert-patch-response.txt"
-  existing_ids="$(find_gate_comment_ids "$pr" newest upsert-comment actions || true)"
+  if ! owner="$(comment_author_login)"; then
+    return 0
+  fi
+  existing_ids="$(find_gate_comment_ids "$pr" newest upsert-comment "$owner" || true)"
 
   : > "$patch_err"
   while IFS= read -r existing_id; do
@@ -1101,10 +1127,13 @@ upsert_gate_comment() {
 }
 
 clear_gate_comment() {
-  local pr="$1" id listing
+  local pr="$1" id listing owner=""
   # A green gate already has a first-class commit status in the Checks UI.
   # Remove our diagnostic sticky so successful PRs do not accumulate bot prose.
-  if ! listing="$(find_gate_comment_ids "$pr" oldest clear-comment actions)"; then
+  if ! owner="$(comment_author_login)"; then
+    return 0
+  fi
+  if ! listing="$(find_gate_comment_ids "$pr" oldest clear-comment "$owner")"; then
     return 0
   fi
   while IFS= read -r id; do
@@ -1546,10 +1575,11 @@ MARKDOWN
 [
   {"id": 1, "user": {"login": "github-actions[bot]"}, "body": "<!-- merge-gate -->\nowned"},
   {"id": 2, "user": {"login": "sam"}, "body": "Quoting <!-- merge-gate --> for discussion"},
-  {"id": 3, "user": {"login": "sam"}, "body": "<!-- merge-gate -->\nhuman-authored"}
+  {"id": 3, "user": {"login": "sam"}, "body": "<!-- merge-gate -->\nhuman-authored"},
+  {"id": 4, "user": {"login": "github-actions[bot]"}, "body": "Quoting <!-- merge-gate --> in a bot note"}
 ]
 JSON
-  if [[ "$(gate_comment_ids_from_file "$WORK/gate-comments.json" oldest actions)" == "1" ]]; then
+  if [[ "$(gate_comment_ids_from_file "$WORK/gate-comments.json" oldest 'github-actions[bot]')" == "1" ]]; then
     printf '  PASS  10 upsert and cleanup select only owned marker-first comments\n'
   else
     printf '  FAIL  10 gate comment selection included an unsafe comment\n'

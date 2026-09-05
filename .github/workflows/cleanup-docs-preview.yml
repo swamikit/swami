@@ -9,10 +9,11 @@ on:
 permissions:
   contents: write
 
-# Concurrency groups are repository-wide. Sharing this group with
-# publish-docs.yml serializes every gh-pages writer.
+# Do not share publish-docs' queue: GitHub retains at most one pending run per
+# group, so a later publish could displace a queued close cleanup. Cross-writer
+# races are handled by the bounded fetch/rebase/push loop below.
 concurrency:
-  group: gh-pages
+  group: gh-pages-cleanup-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
@@ -25,6 +26,7 @@ jobs:
       - name: Checkout published site
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 0
       - name: Remove closed pull request preview
         env:
@@ -45,8 +47,8 @@ jobs:
             exit 0
           fi
           git commit -m "docs: remove preview for PR #${PR}"
-          # The shared gh-pages concurrency group serializes known workflow
-          # writers. Rebase as a final guard against a manual or unknown push.
+          # Rebase before each push so concurrent publishers or other cleanup
+          # runs cannot strand this preview.
           for attempt in 1 2 3; do
             git fetch origin gh-pages
             if ! git rebase origin/gh-pages; then
