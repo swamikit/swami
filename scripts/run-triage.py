@@ -31,9 +31,17 @@ MAX_TOKENS = 8000
 # The label vocabulary the task pins for GA. Anything the model returns outside
 # these sets is discarded — labels are load-bearing (Builder gates on `ready`),
 # so a hallucinated label must never leak into `gh issue edit --add-label`.
+# Canonical type taxonomy from `skill/triage/SKILL.md#type-taxonomy`. The
+# script mirrors that set verbatim so Triage GA can never emit a `type:*`
+# label the rest of the workflow (Builder GA routing, verified-delivery lane
+# selection) doesn't recognize. If the canon adds/renames a type, update it
+# there first and copy the exact string here — do not invent a parallel
+# vocabulary. `type:duplicate` and `type:no-longer-reproducible` are close-
+# time labels per SKILL.md; they stay in the set so a re-triage after a
+# reopen doesn't fail to clear them.
 TYPE_LABELS = {
-    "type:bug", "type:feat", "type:refactor", "type:docs",
-    "type:ci", "type:security", "type:meta",
+    "type:bug", "type:feature", "type:meta", "type:infra-blocker",
+    "type:feedback", "type:duplicate", "type:no-longer-reproducible",
 }
 SEVERITY_LABELS = {"P1", "P2", "P3"}
 STATUS_VALUES = {"ready", "needs-info", "blocked", "duplicate"}
@@ -132,7 +140,7 @@ def build_system(context: str) -> str:
         "                integer `duplicate_of` (issue number from the corpus)\n"
         "                and a short `comment` naming why it's a dupe.\n\n"
         "Respond with a SINGLE JSON object and nothing else, matching this shape:\n"
-        '{"type": "type:bug"|"type:feat"|"type:refactor"|"type:docs"|"type:ci"|"type:security"|"type:meta",'
+        '{"type": "type:bug"|"type:feature"|"type:meta"|"type:infra-blocker"|"type:feedback"|"type:duplicate"|"type:no-longer-reproducible",'
         ' "severity": "P1"|"P2"|"P3",'
         ' "status": "ready"|"needs-info"|"blocked"|"duplicate",'
         ' "duplicate_of": <int or null — required if status=duplicate>,'
