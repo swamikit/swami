@@ -707,6 +707,21 @@ compute_gate() {
 # Real-run data gathering (skipped under --self-test).
 # ---------------------------------------------------------------------------
 
+# `gh api --paginate --slurp` emits one array per page and then wraps those
+# pages in an outer array. Downstream gate rules consume a single flat array.
+# Normalize at the API boundary so one-page and multi-page responses have the
+# same shape.
+flatten_paginated_arrays() {
+  local input="$1" output="$2"
+  jq '
+    if type != "array" or any(.[]; type != "array") then
+      error("expected gh --paginate --slurp page arrays")
+    else
+      add // []
+    end
+  ' "$input" > "$output"
+}
+
 # Collect deep reviewer's findings (P2/P3 only — P1 is rule 4's job) from the
 # body's `### P2/P3 (N)` sections OR the review's inline comments. For the
 # consolidated gate we walk the inline comments — refactor B moved per-finding
@@ -732,13 +747,12 @@ collect_deep_findings() {
   )"
   [[ -z "$review_id" ]] && return 0
   local comments_json="$WORK/deep-review-comments.json"
-  # --paginate --slurp: without --slurp the file holds one JSON array per
-  # page, which the jq call below cannot parse (same class of bug fixed
-  # on the top-level Reviews / Issues fetches).
+  local comments_pages="$WORK/deep-review-comment-pages.json"
   if ! gh api "/repos/$REPO/pulls/$pr/reviews/$review_id/comments" --paginate --slurp \
-       > "$comments_json" 2>"$WORK/deep-review-comments.err"; then
+       > "$comments_pages" 2>"$WORK/deep-review-comments.err"; then
     return 0
   fi
+  flatten_paginated_arrays "$comments_pages" "$comments_json"
   jq -c '
     .[]
     | . as $c
@@ -957,10 +971,14 @@ upsert_gate_comment() {
   # crosses page boundaries, so a sticky on page 1 with more comments on
   # page 2 would be dropped in favor of an empty page-2 result.
   local existing_id
-  existing_id="$(
-    gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
-      --jq '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | last | .id // empty'
-  )" || true
+  local comment_pages="$WORK/upsert-comment-pages.json"
+  if gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
+       > "$comment_pages" 2>/dev/null; then
+    existing_id="$(
+      jq -r 'add // [] | [.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | last | .id // empty' \
+        "$comment_pages"
+    )"
+  fi
 
   if [[ -n "$existing_id" ]]; then
     gh api "/repos/$REPO/issues/comments/$existing_id" -X PATCH \
@@ -1271,6 +1289,18 @@ YAML
     failures=$((failures + 1))
   fi
 
+  # ---- Case 7: gh --paginate --slurp response normalization ---------------
+  cat > "$WORK/pages.json" <<'JSON'
+[[{"id":1},{"id":2}],[{"id":3}]]
+JSON
+  flatten_paginated_arrays "$WORK/pages.json" "$WORK/flat.json"
+  if [[ "$(jq -c . "$WORK/flat.json")" == '[{"id":1},{"id":2},{"id":3}]' ]]; then
+    printf '  PASS  7  paginated page arrays flatten into one collection\n'
+  else
+    printf '  FAIL  7  paginated arrays: got %s\n' "$(jq -c . "$WORK/flat.json")"
+    failures=$((failures + 1))
+  fi
+
   echo
   if [[ $failures -eq 0 ]]; then
     echo "merge-gate --self-test: OK (all cases passed)"
@@ -1328,24 +1358,25 @@ fi
 
 # Reviews API.
 #
-# `gh api --paginate` writes each page as a SEPARATE JSON array — two pages
-# of reviews produce two consecutive top-level arrays in the file, which
-# any subsequent `jq` call refuses to parse. `--slurp` (available in gh
-# 2.34+; ubuntu-latest runners are far newer) collapses them into one big
-# JSON array. Without this, sufficiently active PRs (dismissed reviews stay
-# in history) hit page 2 and the gate exits before posting a status.
+# `--slurp` wraps the per-page arrays in an outer array. Flatten that wrapper
+# before gate rules inspect reviews.
+reviews_pages="$WORK/review-pages.json"
 if ! gh api "/repos/$REPO/pulls/$PR/reviews" --paginate --slurp \
-     > "$WORK/reviews.json" 2>"$WORK/reviews.err"; then
+     > "$reviews_pages" 2>"$WORK/reviews.err"; then
   echo "::warning::merge-gate: /pulls/$PR/reviews fetch failed — treating as no reviews" >&2
   echo '[]' > "$WORK/reviews.json"
+else
+  flatten_paginated_arrays "$reviews_pages" "$WORK/reviews.json"
 fi
 
 # Issue comments (for failure marker + linked-issue candidates + reviewer replies).
-# Same --paginate --slurp treatment: multi-page issue comments would otherwise
-# arrive as consecutive top-level arrays and break the downstream jq calls.
+# Normalize the same page-array wrapper used by the Reviews endpoint.
+failure_pages="$WORK/failure-pages.json"
 if ! gh api "/repos/$REPO/issues/$PR/comments" --paginate --slurp \
-     > "$WORK/failures.json" 2>"$WORK/failures.err"; then
+     > "$failure_pages" 2>"$WORK/failures.err"; then
   echo '[]' > "$WORK/failures.json"
+else
+  flatten_paginated_arrays "$failure_pages" "$WORK/failures.json"
 fi
 # Filter comments EXCLUDING reviewer bot identities (avoid a reviewer bot
 # "linking" to its own sibling issue counting as a followup).
