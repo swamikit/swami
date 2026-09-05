@@ -8,6 +8,19 @@ permissions:
   issues: write
   contents: read
 
+# Serialize runs per issue so a rapid `opened` + `edited` pair cannot race
+# inside `apply_labels`. Both runs read current labels via `gh issue view`
+# before computing the remove-set; if they read concurrently and their
+# classifications differ (e.g. run A picks `ready`, run B picks `blocked`),
+# neither remove-set contains the other's newly-added status label and the
+# issue can finish with both `ready` and `blocked` on it — Builder GA then
+# treats a blocked issue as actionable. Grouping by issue number and using
+# cancel-in-progress: false queues the second run behind the first so
+# each pass sees a settled label state (Codex P1 #66).
+concurrency:
+  group: triage-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 jobs:
   triage:
     runs-on: ubuntu-latest
