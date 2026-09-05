@@ -17,20 +17,31 @@ name: merge-gate
 on:
   # Every event that can change the answer. `edited` on pull_request catches
   # PR body edits (linked-issue references live there). pull_request_review
-  # catches deep-reviewer verdicts. pull_request_review_thread catches the
-  # UI "Resolve conversation" toggle Codex threads use. issue_comment catches
-  # follow-up links in a PR comment thread. pull_request_review_comment
-  # catches inline replies on a review comment.
+  # catches deep-reviewer verdicts. issue_comment catches follow-up links in a
+  # PR comment thread. pull_request_review_comment catches inline replies on a
+  # review comment. After resolving a thread, post a PR comment to trigger an
+  # issue_comment recheck, or dispatch manually with the explicit PR number.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, edited]
   pull_request_review:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
-  pull_request_review_thread:
-    types: [resolved, unresolved]
   issue_comment:
     types: [created, edited, deleted]
+  # GitHub exposes `pull_request_review_thread` as a webhook event, but it is
+  # not an Actions workflow trigger. Listing it under `on:` prevents the whole
+  # workflow from registering (issue #81). Manual dispatch is the supported
+  # re-check path after resolving a review thread when a PR comment is not
+  # desirable. Both recheck paths become available only after this file is
+  # registered on the default branch; repairing a de-registered required gate
+  # needs one admin merge first.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to recompute
+        required: true
+        type: number
   # NOTE: `check_run: [completed]` was intentionally REMOVED.
   #
   # Symptom: after adding that trigger together with a concurrency-group
@@ -47,24 +58,24 @@ on:
   # Losing "auto re-run when verify finishes" is acceptable. If we want
   # to restore that re-trigger, verify.yml (or any other workflow) can
   # explicitly call:
-  #   gh workflow run merge-gate.yml --ref "$HEAD_REF"
+  #   gh workflow run merge-gate.yml --ref "$HEAD_REF" -f pr="$PR"
   # at the end of its run instead of relying on the check_run event.
 
-# Partition triggers by "actionable" vs "ignorable" — same fix shape as
+# Partition triggers by "actionable" vs "isolated" — same fix shape as
 # review.yml on this PR (quibble P2 on this PR flagged the asymmetry):
 #
 #   Actionable — pull_request, pull_request_review,
-#   pull_request_review_comment, and pull_request_review_thread. All
-#   of these change the merge-gate answer, so they share one group
+#   pull_request_review_comment, and workflow_dispatch. All of these change
+#   the merge-gate answer, so they share one group
 #   `merge-gate-<PR-or-no-pr>` and a newer run cancels the older one
 #   (correct staleness behavior).
 #
-#   Ignorable — issue_comment. The gate doesn't consume comment bodies
-#   (PR body edits arrive via pull_request:edited, not issue_comment),
-#   so these are essentially always ignorable for gate purposes. Each is
-#   given its own per-comment group `merge-gate-<PR>-ignorable-<comment-id>`
-#   so it (a) never touches the actionable group, and (b) still
-#   de-duplicates same-comment edit/delete churn among itself.
+#   Isolated — issue_comment. A maintainer comment can provide a follow-up
+#   issue link or intentionally request a recheck, but bot comments must not
+#   cancel an in-flight actionable run. Each gets its own per-comment group
+#   `merge-gate-<PR>-isolated-<comment-id>` so it (a) never touches the
+#   actionable group, and (b) still de-duplicates same-comment edit/delete
+#   churn among itself.
 #
 # Without this partition the same stomping class fixed on review.yml
 # applies here: another bot's PR comment fires issue_comment, enters
@@ -89,9 +100,9 @@ on:
 # to parse the YAML). See the block-comment on `on:` above for detail.
 concurrency:
   group: >-
-    merge-gate-${{ github.event.pull_request.number || github.event.issue.number || 'no-pr' }}${{
+    merge-gate-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr || github.event.inputs.pr || 'no-pr' }}${{
       (github.event_name == 'issue_comment' && github.event.comment)
-        && format('-ignorable-{0}', github.event.comment.id)
+        && format('-isolated-{0}', github.event.comment.id)
         || ''
     }}
   cancel-in-progress: true
@@ -99,13 +110,12 @@ concurrency:
 permissions:
   contents: read        # actions/checkout needs this when permissions is an
                         # explicit allowlist (omitted scopes are disabled).
-  pull-requests: read   # reads PR + reviews + comments
-  issues: write         # reads linked-issue state/body for orphan check;
-                        # also posts/patches the sticky <!-- merge-gate -->
-                        # comment via /repos/{}/issues/{N}/comments (POST/PATCH
-                        # on that endpoint requires write, not read — a plain
-                        # `issues: read` token 403s and the workflow fails
-                        # before publishing its breakdown).
+  pull-requests: write  # reads PR + reviews and posts/patches the sticky
+                        # <!-- merge-gate --> PR comment. Although PR comments
+                        # use the issues-comments REST path, GitHub authorizes
+                        # them with pull-requests: write. Live proof under this
+                        # exact scope: PR #88 run 33974901494 patched the sticky.
+  issues: read          # reads linked-issue state/body for orphan checking
   statuses: write       # posts the `merge-gate` commit status
 
 jobs:
@@ -114,8 +124,11 @@ jobs:
     # regular Issues too — we only care about PR comment threads).
     # (The check_run guard was removed with the check_run trigger; see
     # the `on:` block-comment for why.)
+    # Every non-issue_comment event is admitted, including workflow_dispatch;
+    # only issue comments on ordinary issues are filtered out.
     if: >-
-      github.event_name != 'issue_comment' || github.event.issue.pull_request != null
+      github.event_name != 'issue_comment' ||
+      github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for scripts/ + .github/reviewers.yml)
@@ -132,12 +145,13 @@ jobs:
         run: |
           set -eu
           # pull_request / pull_request_review / pull_request_review_comment
-          # / pull_request_review_thread all carry pull_request.number.
+          # all carry pull_request.number.
           # issue_comment carries issue.number (guarded above to only fire
           # when issue.pull_request is set — i.e. the issue IS a PR).
           # (The check_run branch was removed with the check_run trigger;
           # see the `on:` block-comment for why.)
-          PR="${{ github.event.pull_request.number || github.event.issue.number }}"
+          # workflow_dispatch uses the explicit `pr` input.
+          PR="${{ github.event.pull_request.number || github.event.issue.number || inputs.pr || github.event.inputs.pr }}"
           if [ -z "$PR" ]; then
             echo "::error::could not resolve PR number from event payload"
             exit 1
@@ -154,4 +168,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ steps.pr.outputs.number }}
         run: |
+          # The script resolves headRefOid from `gh pr view "$PR"`; it never
+          # relies on github.event.pull_request.head.sha, so dispatch and
+          # comment triggers post status to the same source-of-truth HEAD.
           bash scripts/merge-gate.sh --repo "$REPO" --pr "$PR"

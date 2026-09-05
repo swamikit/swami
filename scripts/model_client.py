@@ -99,14 +99,29 @@ def chat_with_fallback(
     max_tokens: int = 8000,
     schema: Optional[dict] = None,
     on_fallback: Optional[Callable[[str, BaseException], None]] = None,
-) -> Tuple[str, str]:
-    """Try the primary provider; on :class:`RateLimited` or :class:`ModelError`
-    fall back to the secondary. Return ``(reply, provider_used)``.
+    validate: Optional[Callable[[str], Any]] = None,
+) -> Tuple[Any, str]:
+    """Try the primary provider; on :class:`RateLimited`, :class:`ModelError`,
+    or response-validation failure, fall back to the secondary. Return
+    ``(reply_or_validated_value, provider_used)``.
 
     ``on_fallback(provider_name, exc)`` fires once, right before the secondary
     call, so callers can log which path fired and why. It's optional — a
     silent fallback still works.
+
+    ``validate(text)`` may parse or otherwise validate the provider response.
+    It runs inside the fallback boundary so malformed structured output from a
+    nominally successful provider is treated as a provider failure, not as a
+    worker crash after fallback has already returned.
     """
+    def accepted(text: str, provider: str) -> Any:
+        if validate is None:
+            return text
+        try:
+            return validate(text)
+        except Exception as exc:  # noqa: BLE001
+            raise ModelError(f"{provider}: response validation failed: {exc}") from exc
+
     prim_provider, prim_model = primary
     try:
         text = chat(
@@ -114,7 +129,7 @@ def chat_with_fallback(
             system=system, user=user,
             max_tokens=max_tokens, schema=schema,
         )
-        return text, prim_provider
+        return accepted(text, prim_provider), prim_provider
     except (RateLimited, ModelError) as exc:
         if on_fallback is not None:
             try:
@@ -128,7 +143,7 @@ def chat_with_fallback(
             system=system, user=user,
             max_tokens=max_tokens, schema=schema,
         )
-        return text, fb_provider
+        return accepted(text, fb_provider), fb_provider
 
 
 # ---------------------------------------------------------------------------

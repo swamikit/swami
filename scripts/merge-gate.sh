@@ -40,7 +40,13 @@
 #     `merge-gate`) — the workflow only POSTS the status.
 #   - Auto-merging. This script is the GATE, not the merger.
 
-set -euo pipefail
+set -Eeuo pipefail
+
+# GitHub's step summary otherwise reports only "exit code 1" for failures
+# inside command substitutions. Keep the failing line and command visible so
+# the enforcement path is diagnosable without reproducing it on a maintainer's
+# machine.
+trap 'rc=$?; printf "::error::merge-gate: line %s exited %s: %s\n" "$LINENO" "$rc" "$BASH_COMMAND" >&2' ERR
 
 # ---------------------------------------------------------------------------
 # Args
@@ -210,37 +216,29 @@ parse_reviewers() {
   unset -f _flush
 }
 
+# Return one field from the reviewer row. awk consumes the complete parser
+# output before exiting so `set -o pipefail` cannot turn an early-reader
+# SIGPIPE into a fatal configuration error.
+reviewer_field() {
+  local want="$1" cfg="$2" field="$3"
+  parse_reviewers "$cfg" | awk -F'\t' -v want="$want" -v field="$field" '
+    $1 == want && !found { print $field; found = 1 }
+  '
+}
+
 # Return the identities CSV for reviewer id, or "" if not found.
 reviewer_identities() {
-  local want="$1" cfg="$2"
-  parse_reviewers "$cfg" | while IFS=$'\t' read -r id ids marker fmarker style gates; do
-    if [[ "$id" == "$want" ]]; then
-      printf '%s' "$ids"
-      return 0
-    fi
-  done
+  reviewer_field "$1" "$2" 2
 }
 
 # Return the marker for reviewer id (or `null`).
 reviewer_marker() {
-  local want="$1" cfg="$2"
-  parse_reviewers "$cfg" | while IFS=$'\t' read -r id ids marker fmarker style gates; do
-    if [[ "$id" == "$want" ]]; then
-      printf '%s' "$marker"
-      return 0
-    fi
-  done
+  reviewer_field "$1" "$2" 3
 }
 
 # Return the failure marker for reviewer id (or `null`).
 reviewer_failure_marker() {
-  local want="$1" cfg="$2"
-  parse_reviewers "$cfg" | while IFS=$'\t' read -r id ids marker fmarker style gates; do
-    if [[ "$id" == "$want" ]]; then
-      printf '%s' "$fmarker"
-      return 0
-    fi
-  done
+  reviewer_field "$1" "$2" 4
 }
 
 # ---------------------------------------------------------------------------
@@ -303,10 +301,11 @@ rule_mergeability() {
 # We skip TWO things from evaluation, because a gate can't rank on itself
 # or it never reaches success:
 #   (a) the `merge-gate` StatusContext posted by this script, and
-#   (b) any check-run whose parent workflow is `merge-gate` (the workflow's
-#       own `gate` job is present in every rollup as QUEUED / IN_PROGRESS
-#       while it's running — including it would leave rule 2 permanently
-#       pending on the gate's own execution).
+#   (b) any check-run whose parent workflow is `merge-gate` (or its workflow
+#       path while the repaired workflow is not yet registered on the default
+#       branch). The workflow's own `gate` job is present in every rollup as
+#       QUEUED / IN_PROGRESS while it runs, and its prior result may also be
+#       present on reruns. Including either makes recovery self-referential.
 rule_checks() {
   local failing
   failing="$(jq -r '
@@ -314,6 +313,7 @@ rule_checks() {
     | map(select(
         (.name // .context // "") != "merge-gate"
         and (.workflowName // "") != "merge-gate"
+        and ((.workflowName // "") | endswith("/merge-gate.yml") | not)
         and (
           # Status conclusion vs check-run conclusion — .conclusion for
           # check-runs, .state for statuses. Normalize.
@@ -335,6 +335,7 @@ rule_checks() {
     | map(select(
         (.name // .context // "") != "merge-gate"
         and (.workflowName // "") != "merge-gate"
+        and ((.workflowName // "") | endswith("/merge-gate.yml") | not)
         and (
           (.conclusion // .state // "") as $s
           | ($s | ascii_upcase) as $u
@@ -542,6 +543,33 @@ rule_p1_count() {
   return 1
 }
 
+# Extract issue numbers from text without touching the network. This is shared
+# by the gate rule and the issue-detail cache so their notion of a link cannot
+# drift. Optional patterns deliberately yield an empty successful result.
+extract_issue_numbers() {
+  local scan="$1" repo_re body_refs url_refs
+  if [[ -n "${REPO:-}" ]]; then
+    repo_re="$(printf '%s' "$REPO" | sed 's/[.[\*^$/]/\\&/g')"
+  else
+    repo_re="[^/]+/[^/]+"
+  fi
+  body_refs="$(
+    { printf '%s\n' "$scan" \
+        | grep -Eio '(resolves|fixes|closes|tracks|see|per|→|->)[[:space:]]*#[0-9]+' \
+        | grep -Eo '#[0-9]+' \
+        | grep -Eo '[0-9]+' \
+        | sort -u; } || true
+  )"
+  url_refs="$(
+    { printf '%s\n' "$scan" \
+        | grep -Eio "https://github\\.com/${repo_re}/issues/[0-9]+" \
+        | grep -Eo '/issues/[0-9]+' \
+        | grep -Eo '[0-9]+' \
+        | sort -u; } || true
+  )"
+  printf '%s\n%s\n' "$body_refs" "$url_refs" | sort -u | grep -E '^[0-9]+$' || true
+}
+
 # --- Rule 5: P2/P3 orphans ---
 # Every P2/P3 finding must be either:
 #   (a) addressed — no longer present in the reviewer's HEAD read (reviewers
@@ -551,6 +579,8 @@ rule_p1_count() {
 #       The issue must be OPEN or CLOSED-COMPLETED (not "not_planned") and
 #       its body must reference the PR number or the finding's `path:line`
 #       so we know the link is genuine.
+# Resolving a review thread does not emit an Actions event. Recompute by
+# posting a PR comment, or dispatch merge-gate.yml with `-f pr="$PR"`.
 #
 # Inputs:
 #   $WORK/findings.jsonl — one JSON per finding (deep + codex)
@@ -572,37 +602,8 @@ rule_p2p3_orphans() {
   fi
   local scan="$body"$'\n'"$comments"
 
-  # Extract candidate issue numbers.  Sources:
-  #   - `resolves|fixes|closes|tracks|see|per|→|-> #123`
-  #   - `https://github.com/OWNER/REPO/issues/123`
-  # (issues/N is what we care about — PR URLs use /pull/, so we don't
-  # collapse PRs into "linked".)
-  local repo_re
-  if [[ -n "${REPO:-}" ]]; then
-    # Escape any regex-metachars in owner/name (unlikely but cheap).
-    repo_re="$(printf '%s' "$REPO" | sed 's/[.[\*^$/]/\\&/g')"
-  else
-    repo_re="[^/]+/[^/]+"
-  fi
-
-  local body_refs url_refs
-  body_refs="$(
-    printf '%s\n' "$scan" \
-      | grep -Eio '(resolves|fixes|closes|tracks|see|per|→|->)[[:space:]]*#[0-9]+' \
-      | grep -Eo '#[0-9]+' \
-      | grep -Eo '[0-9]+' \
-      | sort -u
-  )" || true
-  url_refs="$(
-    printf '%s\n' "$scan" \
-      | grep -Eio "https://github\\.com/${repo_re}/issues/[0-9]+" \
-      | grep -Eo '/issues/[0-9]+' \
-      | grep -Eo '[0-9]+' \
-      | sort -u
-  )" || true
-
   local candidates
-  candidates="$(printf '%s\n%s\n' "$body_refs" "$url_refs" | sort -u | grep -E '^[0-9]+$' || true)"
+  candidates="$(extract_issue_numbers "$scan")"
 
   # For each finding, decide handled vs orphan.
   local orphans_file="$WORK/orphans.txt"
@@ -707,6 +708,31 @@ compute_gate() {
 # Real-run data gathering (skipped under --self-test).
 # ---------------------------------------------------------------------------
 
+# `gh api --paginate --slurp` emits one array per page and then wraps those
+# pages in an outer array. Downstream gate rules consume a single flat array.
+# Normalize at the API boundary so one-page and multi-page responses have the
+# same shape.
+flatten_paginated_arrays() {
+  local input="$1" output="$2"
+  if jq -e '
+      type == "array" and
+      (length == 0 or all(.[]; type == "array") or all(.[]; type == "object"))
+    ' "$input" >/dev/null 2>&1; then
+    jq '
+      if length == 0 then []
+      elif all(.[]; type == "array") then add // []
+      else .
+      end
+    ' "$input" > "$output"
+  else
+    # Shape drift must not abort before the required commit status can be
+    # posted. An empty collection keeps the later freshness/check rules
+    # fail-closed while leaving a diagnostic in the run log.
+    echo "::warning::merge-gate: unexpected paginated response shape in $input; using an empty collection" >&2
+    echo '[]' > "$output"
+  fi
+}
+
 # Collect deep reviewer's findings (P2/P3 only — P1 is rule 4's job) from the
 # body's `### P2/P3 (N)` sections OR the review's inline comments. For the
 # consolidated gate we walk the inline comments — refactor B moved per-finding
@@ -732,13 +758,12 @@ collect_deep_findings() {
   )"
   [[ -z "$review_id" ]] && return 0
   local comments_json="$WORK/deep-review-comments.json"
-  # --paginate --slurp: without --slurp the file holds one JSON array per
-  # page, which the jq call below cannot parse (same class of bug fixed
-  # on the top-level Reviews / Issues fetches).
+  local comments_pages="$WORK/deep-review-comment-pages.json"
   if ! gh api "/repos/$REPO/pulls/$pr/reviews/$review_id/comments" --paginate --slurp \
-       > "$comments_json" 2>"$WORK/deep-review-comments.err"; then
+       > "$comments_pages" 2>"$WORK/deep-review-comments.err"; then
     return 0
   fi
+  flatten_paginated_arrays "$comments_pages" "$comments_json"
   jq -c '
     .[]
     | . as $c
@@ -877,23 +902,8 @@ cache_linked_issues() {
     comments="$(jq -r '[.[].body // ""] | join("\n\n---\n\n")' "$WORK/pr_comments.json")"
   fi
   local scan="$body"$'\n'"$comments"
-  local repo_re
-  if [[ -n "$REPO" ]]; then
-    repo_re="$(printf '%s' "$REPO" | sed 's/[.[\*^$/]/\\&/g')"
-  else
-    repo_re="[^/]+/[^/]+"
-  fi
   local nums
-  nums="$(
-    {
-      printf '%s\n' "$scan" \
-        | grep -Eio '(resolves|fixes|closes|tracks|see|per|→|->)[[:space:]]*#[0-9]+' \
-        | grep -Eo '#[0-9]+' | grep -Eo '[0-9]+'
-      printf '%s\n' "$scan" \
-        | grep -Eio "https://github\\.com/${repo_re}/issues/[0-9]+" \
-        | grep -Eo '/issues/[0-9]+' | grep -Eo '[0-9]+'
-    } 2>/dev/null | sort -u
-  )"
+  nums="$(extract_issue_numbers "$scan")"
   local n
   for n in $nums; do
     [[ "$n" == "$pr" ]] && continue  # skip self-ref
@@ -951,21 +961,54 @@ upsert_gate_comment() {
   local comment_file="$WORK/gate-comment.md"
   format_gate_comment "$state" "$desc" "$long" "$sha" > "$comment_file"
 
-  # Find prior gate comment (any author — GitHub Actions bots may post).
-  # `--paginate --slurp` so the jq filter runs once across ALL pages —
-  # without --slurp, --jq runs independently per page and `last` never
-  # crosses page boundaries, so a sticky on page 1 with more comments on
-  # page 2 would be dropped in favor of an empty page-2 result.
-  local existing_id
-  existing_id="$(
-    gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
-      --jq '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | last | .id // empty'
-  )" || true
-
-  if [[ -n "$existing_id" ]]; then
-    gh api "/repos/$REPO/issues/comments/$existing_id" -X PATCH \
-      -F body=@"$comment_file" >/dev/null
+  # Find prior gate comments (any author — local maintainers and GitHub
+  # Actions may both run this script). A token may only edit comments created
+  # by its own identity, so try newest-to-oldest and create a new sticky if
+  # none are editable.
+  # `--paginate --slurp` fetches ALL pages; flatten once, then reverse the
+  # complete collection so edit attempts run newest-to-oldest across page
+  # boundaries.
+  local existing_ids="" existing_id updated=0 patch_rc=0 patch_status=""
+  local comment_pages="$WORK/upsert-comment-pages.json"
+  local comments_flat="$WORK/upsert-comments.json"
+  local comments_err="$WORK/upsert-comments.err"
+  local patch_err="$WORK/upsert-patch.err"
+  local patch_response="$WORK/upsert-patch-response.txt"
+  if gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
+       > "$comment_pages" 2>"$comments_err" \
+       && flatten_paginated_arrays "$comment_pages" "$comments_flat"; then
+    existing_ids="$(
+      jq -r '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | reverse | .[].id' \
+        "$comments_flat"
+    )"
   else
+    echo "::warning::merge-gate: could not list prior comments; a duplicate sticky may be created ($(head -1 "$comments_err" 2>/dev/null || true))" >&2
+  fi
+
+  : > "$patch_err"
+  while IFS= read -r existing_id; do
+    [[ -z "$existing_id" ]] && continue
+    if gh api "/repos/$REPO/issues/comments/$existing_id" -X PATCH --include \
+         -F body=@"$comment_file" >"$patch_response" 2>"$patch_err"; then
+      updated=1
+      break
+    else
+      patch_rc=$?
+      # A comment owned by another identity is expected to reject edits.
+      # Network/server/rate-limit failures are not identity mismatches and
+      # must stay loud instead of degrading into duplicate-comment spam.
+      patch_status="$(awk '/^HTTP\// { code=$2 } END { print code }' "$patch_response")"
+      if [[ "$patch_status" != "403" && "$patch_status" != "404" ]]; then
+        echo "::error::merge-gate: sticky PATCH failed (HTTP ${patch_status:-unknown}) — $(head -1 "$patch_err")" >&2
+        return "$patch_rc"
+      fi
+    fi
+  done <<<"$existing_ids"
+
+  if [[ "$updated" -eq 0 ]]; then
+    if [[ -n "$existing_ids" ]]; then
+      echo "::warning::merge-gate: no prior sticky was editable; creating one for this token ($(head -1 "$patch_err"))" >&2
+    fi
     gh api "/repos/$REPO/issues/$pr/comments" -X POST \
       -F body=@"$comment_file" >/dev/null
   fi
@@ -1035,6 +1078,19 @@ JSON
 JSON
   compute_gate
   assert_state "2  failing check → failure" failure "check lint"
+
+  # ---- Case 2b: gate ignores its own prior failed check -------------------
+  reset_work
+  cat > "$WORK/pr.json" <<'JSON'
+{ "mergeable": "MERGEABLE", "headSha": "abc123",
+  "statusCheckRollup": [
+    {"name":"gate","workflowName":".github/workflows/merge-gate.yml","conclusion":"FAILURE"},
+    {"context":"merge-gate","state":"FAILURE"},
+    {"name":"verify","workflowName":"verify","conclusion":"SUCCESS"}
+  ] }
+JSON
+  compute_gate
+  assert_state "2b prior gate failure is ignored" pending "waiting for deep reviewer"
 
   # ---- Case 3: missing deep review → pending -------------------------------
   reset_work
@@ -1270,6 +1326,64 @@ YAML
     printf '  FAIL  6c codex marker: %q\n' "$codex_marker"
     failures=$((failures + 1))
   fi
+  local helper_values
+  helper_values="$(reviewer_identities claude "$cfg")|$(reviewer_marker claude "$cfg")|$(reviewer_failure_marker claude "$cfg")"
+  if [[ "$helper_values" == 'quibble-review[bot],github-actions[bot]|<!-- reviewer:claude -->|<!-- reviewer:claude-failure -->' ]]; then
+    printf '  PASS  6d reviewer helpers survive pipefail\n'
+  else
+    printf '  FAIL  6d reviewer helpers: %q\n' "$helper_values"
+    failures=$((failures + 1))
+  fi
+  local unknown_marker
+  unknown_marker="$(reviewer_marker unknown-reviewer "$cfg")"
+  if [[ -z "$unknown_marker" ]]; then
+    printf '  PASS  6e unknown reviewer returns empty successfully\n'
+  else
+    printf '  FAIL  6e unknown reviewer returned %q\n' "$unknown_marker"
+    failures=$((failures + 1))
+  fi
+
+  # ---- Case 7: gh --paginate --slurp response normalization ---------------
+  cat > "$WORK/pages.json" <<'JSON'
+[[{"id":1},{"id":2}],[{"id":3}]]
+JSON
+  flatten_paginated_arrays "$WORK/pages.json" "$WORK/flat.json"
+  if [[ "$(jq -c . "$WORK/flat.json")" == '[{"id":1},{"id":2},{"id":3}]' ]]; then
+    printf '  PASS  7  paginated page arrays flatten into one collection\n'
+  else
+    printf '  FAIL  7  paginated arrays: got %s\n' "$(jq -c . "$WORK/flat.json")"
+    failures=$((failures + 1))
+  fi
+
+  cat > "$WORK/pages.json" <<'JSON'
+[{"id":1},{"id":2}]
+JSON
+  flatten_paginated_arrays "$WORK/pages.json" "$WORK/flat.json"
+  if [[ "$(jq -c . "$WORK/flat.json")" == '[{"id":1},{"id":2}]' ]]; then
+    printf '  PASS  7b already-flat arrays remain unchanged\n'
+  else
+    printf '  FAIL  7b already-flat arrays: got %s\n' "$(jq -c . "$WORK/flat.json")"
+    failures=$((failures + 1))
+  fi
+
+  printf '{"message":"unexpected"}\n' > "$WORK/pages.json"
+  flatten_paginated_arrays "$WORK/pages.json" "$WORK/flat.json"
+  if [[ "$(jq -c . "$WORK/flat.json")" == '[]' ]]; then
+    printf '  PASS  7c unexpected payload degrades without aborting\n'
+  else
+    printf '  FAIL  7c unexpected payload: got %s\n' "$(jq -c . "$WORK/flat.json")"
+    failures=$((failures + 1))
+  fi
+
+  # ---- Case 8: pure link extraction stays hermetic under pipefail ---------
+  local extracted
+  extracted="$(extract_issue_numbers 'Closes #4242. No absolute issue URL.')"
+  if [[ "$extracted" == "4242" ]]; then
+    printf '  PASS  8  pure link extraction survives missing optional pattern\n'
+  else
+    printf '  FAIL  8  pure link extraction returned %q\n' "$extracted"
+    failures=$((failures + 1))
+  fi
 
   echo
   if [[ $failures -eq 0 ]]; then
@@ -1328,27 +1442,30 @@ fi
 
 # Reviews API.
 #
-# `gh api --paginate` writes each page as a SEPARATE JSON array — two pages
-# of reviews produce two consecutive top-level arrays in the file, which
-# any subsequent `jq` call refuses to parse. `--slurp` (available in gh
-# 2.34+; ubuntu-latest runners are far newer) collapses them into one big
-# JSON array. Without this, sufficiently active PRs (dismissed reviews stay
-# in history) hit page 2 and the gate exits before posting a status.
+# `--slurp` wraps the per-page arrays in an outer array. Flatten that wrapper
+# before gate rules inspect reviews.
+reviews_pages="$WORK/review-pages.json"
 if ! gh api "/repos/$REPO/pulls/$PR/reviews" --paginate --slurp \
-     > "$WORK/reviews.json" 2>"$WORK/reviews.err"; then
+     > "$reviews_pages" 2>"$WORK/reviews.err"; then
   echo "::warning::merge-gate: /pulls/$PR/reviews fetch failed — treating as no reviews" >&2
   echo '[]' > "$WORK/reviews.json"
+else
+  flatten_paginated_arrays "$reviews_pages" "$WORK/reviews.json"
 fi
 
 # Issue comments (for failure marker + linked-issue candidates + reviewer replies).
-# Same --paginate --slurp treatment: multi-page issue comments would otherwise
-# arrive as consecutive top-level arrays and break the downstream jq calls.
+# Normalize the same page-array wrapper used by the Reviews endpoint.
+failure_pages="$WORK/failure-pages.json"
 if ! gh api "/repos/$REPO/issues/$PR/comments" --paginate --slurp \
-     > "$WORK/failures.json" 2>"$WORK/failures.err"; then
+     > "$failure_pages" 2>"$WORK/failures.err"; then
   echo '[]' > "$WORK/failures.json"
+else
+  flatten_paginated_arrays "$failure_pages" "$WORK/failures.json"
 fi
-# Filter comments EXCLUDING reviewer bot identities (avoid a reviewer bot
-# "linking" to its own sibling issue counting as a followup).
+# Filter the already-normalized failures.json into pr_comments.json, EXCLUDING
+# reviewer bot identities (avoid a reviewer bot "linking" to its own sibling
+# issue counting as a followup). pr_comments.json is therefore flat too; it is
+# not another raw --slurp consumer.
 all_ids_csv="$(parse_reviewers "$REVIEWERS_CONFIG" | awk -F'\t' '{print $2}' | tr ',' '\n' | sort -u | tr '\n' ',')"
 all_ids_json="$(printf '%s' "${all_ids_csv%,}" | jq -Rc 'split(",")')"
 jq --argjson ids "$all_ids_json" \
