@@ -46,7 +46,7 @@ set -Eeuo pipefail
 # inside command substitutions. Keep the failing line and command visible so
 # the enforcement path is diagnosable without reproducing it on a maintainer's
 # machine.
-trap 'rc=$?; printf "::error::merge-gate: line %s exited %s: %s\\n" "$LINENO" "$rc" "$BASH_COMMAND" >&2' ERR
+trap 'rc=$?; printf "::error::merge-gate: line %s exited %s: %s\n" "$LINENO" "$rc" "$BASH_COMMAND" >&2' ERR
 
 # ---------------------------------------------------------------------------
 # Args
@@ -954,10 +954,9 @@ upsert_gate_comment() {
   # Actions may both run this script). A token may only edit comments created
   # by its own identity, so try newest-to-oldest and create a new sticky if
   # none are editable.
-  # `--paginate --slurp` so the jq filter runs once across ALL pages —
-  # without --slurp, --jq runs independently per page and `last` never
-  # crosses page boundaries, so a sticky on page 1 with more comments on
-  # page 2 would be dropped in favor of an empty page-2 result.
+  # `--paginate --slurp` fetches ALL pages; flatten once, then reverse the
+  # complete collection so edit attempts run newest-to-oldest across page
+  # boundaries.
   local existing_ids="" existing_id updated=0 patch_rc=0
   local comment_pages="$WORK/upsert-comment-pages.json"
   local comments_flat="$WORK/upsert-comments.json"
