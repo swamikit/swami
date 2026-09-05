@@ -1,9 +1,24 @@
 #!/usr/bin/env python3
-"""Claude review of the current PR, posted as a marker-tagged sticky comment.
+"""Claude review of the current PR, posted as a formal GitHub PR Review.
 
-Env: GITHUB_REPOSITORY, PR_NUMBER, HEAD_SHA (opt), GITHUB_WORKSPACE (repo root),
-ANTHROPIC_API_KEY, GH_TOKEN. Optional: PR_DIFF_FILE (default /tmp/pr.diff),
-STICKY_FILE (default /tmp/sticky.md).
+Refactor B (issue #36): posts findings via the Reviews API — one call creates a
+formal Review (APPROVE / REQUEST_CHANGES / COMMENT) with per-finding inline
+comments anchored to file:line. That gives branch protection something legally
+gate-able (an approving Review), which a sticky ISSUE comment cannot provide.
+
+The summary body still carries the marker `<!-- reviewer:claude -->` and the
+`### P1/P2/P3 (N)` count headers so downstream tooling (merge-gate,
+audit-p2s.sh) can grep counts without walking each inline comment.
+
+Update semantics: Reviews are timeline entries — they cannot be edited in
+place the way an issue comment can. On a new push we DISMISS any prior review
+authored by `quibble-review[bot]` (never a human review) and post a fresh one.
+Dismissed reviews stay visible in the timeline but no longer count toward
+branch protection.
+
+Env: GITHUB_REPOSITORY, PR_NUMBER, HEAD_SHA (opt), GITHUB_WORKSPACE (repo
+root), ANTHROPIC_API_KEY, GH_TOKEN. Optional: PR_DIFF_FILE (default
+/tmp/pr.diff), STICKY_FILE (default /tmp/sticky.md).
 """
 from __future__ import annotations
 import json, os, subprocess, sys
@@ -28,6 +43,18 @@ from gh_app_auth import AppAuthError, get_installation_token  # noqa: E402
 # stickies on open PRs — the sticky flips to the new marker on next update.
 MARKER = "<!-- reviewer:claude -->"
 LEGACY_MARKERS = ("<!-- claude-review -->",)
+# Per-finding marker embedded in each inline PR-review comment. Distinct from
+# the summary MARKER so tooling can grep the two independently — the summary
+# says "one review was posted"; the per-finding markers say "N findings".
+FINDING_MARKER = "<!-- reviewer:claude:finding -->"
+# Distinct failure marker on the fallback ISSUE comment we post when the
+# Reviews API call fails after retries. Refactor B: the merge-gate needs to
+# tell "review failed, retry" apart from "review succeeded with no P1s".
+FAILURE_MARKER = "<!-- reviewer:claude-failure -->"
+# GitHub App login the App identifies as when it authors reviews. Used to
+# filter prior reviews for dismissal — we ONLY ever dismiss reviews authored
+# by the bot; human reviews are never touched.
+BOT_LOGIN = "quibble-review[bot]"
 MODEL = "claude-opus-5"
 MAX_TOKENS = 16000
 # Cap the diff we send to Claude. Origami-Patterns-scale PRs comfortably fit;
@@ -144,25 +171,71 @@ def _extract_json(text: str) -> dict:
     return json.loads(t[start : end + 1])
 
 
-def format_comment(review: dict, head_sha: str, truncated_bytes: int = 0) -> str:
+def _normalize_findings(findings: list[dict]) -> dict[str, list[dict]]:
+    """Sort findings into P1/P2/P3 buckets.
+
+    Legacy severity words (`blocking`/`nit`/`nice-to-have` from older runs)
+    fold into P1/P2/P3 respectively; unknown values default to P3 so no
+    finding is silently dropped by callers that only iterate the three known
+    buckets.
+    """
+    legacy = {"blocking": "P1", "nit": "P2", "nice-to-have": "P3"}
+    buckets: dict[str, list[dict]] = {"P1": [], "P2": [], "P3": []}
+    for f in findings:
+        raw = str(f.get("severity") or "").strip()
+        sev = raw.upper() if raw.upper() in buckets else legacy.get(raw.lower(), "P3")
+        buckets[sev].append(f)
+    return buckets
+
+
+def compute_event(review: dict) -> str:
+    """Map the model's `approve` bool + P1 count to a Reviews-API event.
+
+    Event mapping (refactor B):
+      APPROVE          — `approve is True` AND no P1 findings.
+      REQUEST_CHANGES  — any P1 finding exists, OR `approve is False`.
+      COMMENT          — everything else: `approve` was neither True nor
+                         False (missing / null), and no P1s. Treated as
+                         "reviewer took no stance" so branch protection does
+                         not consider the review approving OR blocking.
+    """
+    buckets = _normalize_findings(review.get("findings") or [])
+    p1_count = len(buckets["P1"])
+    approve = review.get("approve")
+    if approve is True and p1_count == 0:
+        return "APPROVE"
+    if p1_count > 0 or approve is False:
+        return "REQUEST_CHANGES"
+    return "COMMENT"
+
+
+def format_review_body(
+    review: dict, head_sha: str, truncated_bytes: int = 0
+) -> str:
+    """Build the summary body posted as the Review's top-level `body`.
+
+    Keeps MARKER + `### P1/P2/P3 (N)` headers so merge-gate / audit-p2s can
+    grep counts on the review body without walking each inline comment.
+    Findings themselves ship inline in Files changed, not repeated here.
+    """
     findings = review.get("findings") or []
-    approve = bool(review.get("approve"))
     summary = (review.get("summary") or "").strip()
-    verdict = "approve" if approve else "request changes"
+    event = compute_event(review)
+    verdict = {
+        "APPROVE": "approve",
+        "REQUEST_CHANGES": "request changes",
+        "COMMENT": "comment (no verdict)",
+    }[event]
     lines = [MARKER, "", "## Claude review"]
-    # Verdict rides on the HEAD line — a single header row at the top so tooling
-    # that greps for the marker can read HEAD + verdict without scanning the
-    # whole comment. Codex's format does the same.
     head_bits = []
     if head_sha:
         head_bits.append(f"HEAD: `{head_sha}`")
     head_bits.append(f"verdict: **{verdict}**")
     lines += [" · ".join(head_bits), ""]
     if truncated_bytes > 0:
-        # Visible banner so a human reader sees the truncation immediately
-        # without having to dig into the workflow logs. Pair with the
-        # main()-level enforcement that overrides an approve verdict to
-        # request-changes when the diff was truncated (see ADR-0014).
+        # Visible banner so a human reader sees the truncation immediately.
+        # Pair with the main()-level enforcement that overrides approve to
+        # REQUEST_CHANGES when the diff was truncated (see ADR-0014).
         lines += [
             f"> ⚠ diff truncated at {MAX_DIFF_BYTES} bytes "
             f"({truncated_bytes} bytes omitted) — full review requires "
@@ -171,79 +244,179 @@ def format_comment(review: dict, head_sha: str, truncated_bytes: int = 0) -> str
         ]
     if summary:
         lines += [summary, ""]
-    if not findings:
+    buckets = _normalize_findings(findings)
+    total = sum(len(v) for v in buckets.values())
+    if total == 0:
         lines.append("_No findings._")
     else:
-        # Normalize severity to P1/P2/P3 (aligned with Codex). Unknown / null /
-        # legacy values (blocking/nit/nice-to-have from older runs) fold into P3
-        # so the render loop — which iterates the three known buckets — never
-        # silently drops a finding.
-        legacy = {"blocking": "P1", "nit": "P2", "nice-to-have": "P3"}
-        buckets: dict[str, list[dict]] = {"P1": [], "P2": [], "P3": []}
-        for f in findings:
-            raw = str(f.get("severity") or "").strip()
-            sev = raw.upper() if raw.upper() in buckets else legacy.get(raw.lower(), "P3")
-            buckets[sev].append(f)
+        # Emit count headers even with zero items so downstream regex greps
+        # find `### P1 (0)` predictably. Merge-gate keys off these lines.
         for sev in ("P1", "P2", "P3"):
-            items = buckets.get(sev) or []
-            if not items:
-                continue
-            lines += [f"### {sev} ({len(items)})"]
-            for f in items:
-                loc = str(f.get("file") or "?")
-                if f.get("line"):
-                    loc += f":{f['line']}"
-                # Accept both new (`title`/`reasoning`) and legacy (`claim`/
-                # `evidence`) field names so a cached prompt-side or replayed
-                # response still renders cleanly during the transition.
-                title = (f.get("title") or f.get("claim") or "").strip()
-                reasoning = (f.get("reasoning") or f.get("evidence") or "").strip()
-                suggestion = (f.get("suggestion") or "").strip()
-                lines.append(f"- **`{loc}` — [{sev}] {title}**")
-                if reasoning:
-                    lines.append(f"  - {reasoning}")
-                if suggestion:
-                    lines.append(f"  - {suggestion}")
-            lines.append("")
-    lines += ["_reviewer skill: `skill/review/SKILL.md`_"]
+            lines.append(f"### {sev} ({len(buckets[sev])})")
+        lines += ["", "_Findings inline in Files changed._"]
+    lines += ["", "_reviewer skill: `skill/review/SKILL.md`_"]
     return "\n".join(lines)
 
 
-def find_existing_comment(repo: str, pr: str, env: dict[str, str] | None = None) -> str | None:
-    # Let gh do the filtering: `--paginate` walks every page and `--jq` runs on
-    # each page's array, so we get back a plain newline-separated list of ids
-    # (one per matching comment) instead of the concatenated-JSON-arrays blob
-    # that `json.loads` chokes on once the PR has more than one page of
-    # comments. Also match LEGACY_MARKERS so a mid-rename sticky
-    # (`<!-- claude-review -->`) is updated in place rather than orphaned.
-    markers = (MARKER, *LEGACY_MARKERS)
-    contains_clause = " or ".join(
-        f'(.body | contains("{m}"))' for m in markers
+def format_review_comments(review: dict) -> list[dict]:
+    """Build the `comments` array for the Reviews API.
+
+    One entry per finding, each anchored to `path` + `line` on the `RIGHT`
+    side of the diff (the post-change line). Findings without a file OR
+    without a line are skipped (the Reviews API rejects the whole review if
+    any inline comment cannot be anchored) — those findings still show in
+    the summary via the count headers.
+
+    Every inline comment carries the FINDING_MARKER so the audit script can
+    grep individual findings out of the review's comment list.
+    """
+    out: list[dict] = []
+    for f in review.get("findings") or []:
+        path = f.get("file")
+        line = f.get("line")
+        if not path or not line:
+            # Un-anchorable: no file, or no line. Keep the finding in the
+            # body's severity counts, but drop it from the inline set so
+            # one bad anchor cannot poison the whole review call.
+            continue
+        raw = str(f.get("severity") or "").strip()
+        legacy = {"blocking": "P1", "nit": "P2", "nice-to-have": "P3"}
+        sev = raw.upper() if raw.upper() in {"P1", "P2", "P3"} else legacy.get(raw.lower(), "P3")
+        title = (f.get("title") or f.get("claim") or "").strip()
+        reasoning = (f.get("reasoning") or f.get("evidence") or "").strip()
+        suggestion = (f.get("suggestion") or "").strip()
+        body_parts = [f"[{sev}] {title}"]
+        if reasoning:
+            body_parts += ["", reasoning]
+        if suggestion:
+            body_parts += ["", f"_suggestion:_ {suggestion}"]
+        body_parts += ["", FINDING_MARKER]
+        out.append(
+            {
+                "path": str(path),
+                "line": int(line),
+                "side": "RIGHT",
+                "body": "\n".join(body_parts),
+            }
+        )
+    return out
+
+
+def format_review(
+    review: dict, head_sha: str, truncated_bytes: int = 0
+) -> dict:
+    """Build the full Reviews-API payload: `{body, event, comments}`.
+
+    This is what `POST /repos/{o}/{r}/pulls/{N}/reviews` accepts as its JSON
+    body. Keep the return type a plain dict so callers can json.dumps it
+    straight into the API call or a test can inspect the shape without
+    parsing markdown.
+    """
+    return {
+        "body": format_review_body(review, head_sha, truncated_bytes=truncated_bytes),
+        "event": compute_event(review),
+        "comments": format_review_comments(review),
+    }
+
+
+def find_prior_reviews(
+    repo: str, pr: str, env: dict[str, str] | None = None
+) -> list[int]:
+    """Return the ids of reviews on `pr` authored by `quibble-review[bot]`.
+
+    Only NON-dismissed reviews are returned — dismissing an already-dismissed
+    review 422s. State PENDING should not occur (we always submit atomically),
+    but if one existed we would leave it alone rather than dismiss.
+    """
+    out = sh(
+        [
+            "gh",
+            "api",
+            "--paginate",
+            f"repos/{repo}/pulls/{pr}/reviews",
+            "--jq",
+            f'.[] | select(.user.login == "{BOT_LOGIN}" and .state != "DISMISSED" and .state != "PENDING") | .id',
+        ],
+        env=env,
     )
-    out = sh([
-        "gh", "api", "--paginate",
-        f"repos/{repo}/issues/{pr}/comments",
-        "--jq", f'.[] | select({contains_clause}) | .id',
-    ], env=env)
+    ids: list[int] = []
     for line in out.splitlines():
         line = line.strip()
         if line:
-            return line
-    return None
+            try:
+                ids.append(int(line))
+            except ValueError:
+                continue
+    return ids
 
 
-def post_or_update(repo: str, pr: str, body_path: Path, env: dict[str, str] | None = None) -> None:
-    existing = find_existing_comment(repo, pr, env=env)
-    if existing:
-        sh([
-            "gh", "api", "--method", "PATCH",
-            f"repos/{repo}/issues/comments/{existing}",
-            "-F", f"body=@{body_path}",
-        ], env=env)
-        print(f"updated comment {existing}")
-    else:
-        sh(["gh", "pr", "comment", pr, "--body-file", str(body_path)], env=env)
-        print("created new comment")
+def dismiss_review(
+    repo: str,
+    pr: str,
+    review_id: int,
+    message: str,
+    env: dict[str, str] | None = None,
+) -> None:
+    """PUT /repos/.../pulls/{N}/reviews/{id}/dismissals with a short message.
+
+    Only the bot's own reviews are dismissed — the caller (`main`) filters
+    for `user.login == BOT_LOGIN` via `find_prior_reviews`. A dismissed
+    review stays in the timeline (so history is visible) but no longer
+    satisfies / blocks branch protection.
+    """
+    payload = json.dumps({"message": message, "event": "DISMISS"})
+    subprocess.run(
+        [
+            "gh",
+            "api",
+            f"repos/{repo}/pulls/{pr}/reviews/{review_id}/dismissals",
+            "-X",
+            "PUT",
+            "--input",
+            "-",
+        ],
+        input=payload,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
+    )
+
+
+def post_review(
+    repo: str,
+    pr: str,
+    payload: dict,
+    env: dict[str, str] | None = None,
+) -> dict:
+    """POST a new PR review with body + event + inline comments atomically.
+
+    One call creates the Review timeline entry AND all its inline comments.
+    Returns the parsed API response so the caller can log the new review id.
+    """
+    body_json = json.dumps(payload)
+    result = subprocess.run(
+        [
+            "gh",
+            "api",
+            f"repos/{repo}/pulls/{pr}/reviews",
+            "-X",
+            "POST",
+            "--input",
+            "-",
+        ],
+        input=body_json,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"POST /pulls/{pr}/reviews failed (rc={result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+    return json.loads(result.stdout) if result.stdout.strip() else {}
 
 
 def _cap_diff(diff: str, limit: int = MAX_DIFF_BYTES) -> tuple[str, int]:
@@ -275,10 +448,16 @@ def _post_failure_comment(
     exc: BaseException,
     env: dict[str, str] | None = None,
 ) -> None:
-    """Best-effort: post a small marker-tagged comment so the PR sees the failure
-    instead of a silent workflow-status miss. Never raises — a broken poster
-    should not compound the original error."""
-    lines = [MARKER, "", "## Claude review"]
+    """Best-effort: post a small marker-tagged ISSUE comment so the PR sees the
+    failure instead of a silent workflow-status miss. Never raises — a broken
+    poster should not compound the original error.
+
+    Uses FAILURE_MARKER (distinct from MARKER) so the merge-gate can tell
+    "review failed, retry" apart from "review succeeded with no P1s". Falls
+    back to an issue comment (not a Review) because Review posting is what
+    just failed; retrying that here would likely re-fail for the same reason.
+    """
+    lines = [FAILURE_MARKER, "", "## Claude review"]
     if head_sha:
         lines += ["", f"HEAD: `{head_sha}`"]
     lines += [
@@ -287,13 +466,20 @@ def _post_failure_comment(
         "",
         f"`{type(exc).__name__}: {exc}`",
         "",
-        "See the workflow logs for the full trace. This comment updates in place on retry.",
+        "See the workflow logs for the full trace. A retry will post a new "
+        "review (and this comment stays as history).",
     ]
     body = "\n".join(lines)
     try:
-        out_path = Path("/tmp/claude-review-body.md")
+        out_path = Path("/tmp/claude-review-failure.md")
         out_path.write_text(body)
-        post_or_update(repo, pr, out_path, env=env)
+        subprocess.run(
+            ["gh", "pr", "comment", pr, "--body-file", str(out_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
     except Exception as post_exc:  # noqa: BLE001
         print(f"could not post failure comment: {post_exc}", file=sys.stderr)
 
@@ -383,12 +569,48 @@ def main() -> int:
         existing = review.get("findings") or []
         review["findings"] = [synthetic] + list(existing)
 
-    body = format_comment(review, head_sha, truncated_bytes=omitted_bytes)
-    out_path = Path("/tmp/claude-review-body.md")
-    out_path.write_text(body)
-    post_or_update(repo, pr, out_path, env=gh_env)
+    payload = format_review(review, head_sha, truncated_bytes=omitted_bytes)
+
+    # Dismiss any prior review authored by the bot BEFORE posting the new one.
+    # Order matters: if a prior REQUEST_CHANGES review is still standing when
+    # the new APPROVE lands, branch protection will still see the block. Only
+    # the bot's own reviews are ever touched — filter is in find_prior_reviews.
+    try:
+        prior_ids = find_prior_reviews(repo, pr, env=gh_env)
+    except Exception as exc:  # noqa: BLE001
+        # Non-fatal: a failed listing means we'll post an additional review,
+        # not the wrong review. Log and continue.
+        print(f"::warning::could not list prior reviews: {exc}", file=sys.stderr)
+        prior_ids = []
+    for rid in prior_ids:
+        try:
+            dismiss_review(
+                repo,
+                pr,
+                rid,
+                "Superseded by a newer quibble-review run.",
+                env=gh_env,
+            )
+            print(f"dismissed prior review {rid}")
+        except Exception as exc:  # noqa: BLE001
+            # A dismissal failure is not fatal — the new review still posts.
+            # Log so a manual sweep can see it.
+            print(f"::warning::could not dismiss review {rid}: {exc}", file=sys.stderr)
+
+    try:
+        result = post_review(repo, pr, payload, env=gh_env)
+    except Exception as exc:  # noqa: BLE001
+        print(f"claude reviews-API post failed: {exc}", file=sys.stderr)
+        _post_failure_comment(repo, pr, head_sha, exc, env=gh_env)
+        return 1
+
     n = len(review.get("findings") or [])
-    print(f"posted review with {n} finding(s); approve={bool(review.get('approve'))}")
+    inline = len(payload["comments"])
+    review_id = result.get("id", "?")
+    print(
+        f"posted review {review_id} with {n} finding(s) ({inline} inline); "
+        f"event={payload['event']}"
+    )
     return 0
 
 

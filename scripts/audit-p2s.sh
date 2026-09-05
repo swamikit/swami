@@ -265,13 +265,112 @@ collect_codex() {
   done
 }
 
-# Claude review sticky: one comment per PR, tagged with either the current
-# `<!-- reviewer:claude -->` marker or the legacy `<!-- claude-review -->`
-# marker (kept recognized so audits over open PRs cross the reviewer-identity
-# refactor without losing history). Findings live under `### P2 (N)` and
-# `### P3 (N)` headers as `- **`path:line` — [P2] title**` bullets, with
-# reasoning/suggestion on indented sublines.
+# Claude findings on a PR live in one of two places depending on when the PR
+# was reviewed:
+#
+#   (A) NEW SHAPE (refactor B onward): a formal PR Review authored by
+#       `quibble-review[bot]`. Its `body` still carries `### P1/P2/P3 (N)`
+#       count headers so a merge-gate grep still works, but the per-finding
+#       DETAIL lives in the review's inline `comments[]` collection —
+#       `/pulls/{N}/reviews/{review_id}/comments`. Each inline comment
+#       carries the `<!-- reviewer:claude:finding -->` marker.
+#
+#   (B) LEGACY SHAPE: a sticky ISSUE comment tagged `<!-- reviewer:claude -->`
+#       (or the earlier `<!-- claude-review -->`) with `- **`path:line` —
+#       [P2] title**` bullets under severity headers. Kept recognized for one
+#       release so PRs merged before refactor B still audit.
+#
+# We try (A) first — if a bot-authored review with the marker exists on this
+# PR, use it. Otherwise fall back to the sticky-issue path (B). This keeps
+# backward compat across the transition; the sticky path can be removed a
+# release after refactor B ships.
 collect_claude() {
+  local pr="$1"
+  if collect_claude_review "$pr"; then
+    return 0
+  fi
+  collect_claude_sticky "$pr"
+}
+
+# NEW SHAPE — walk the latest bot-authored PR Review on the PR. Returns 0 if
+# a review was found + walked (regardless of finding count), non-zero if no
+# such review exists (so the caller falls through to the sticky path).
+collect_claude_review() {
+  local pr="$1"
+  local reviews_raw="$WORK/claude-reviews-$pr.json"
+  local err="$WORK/claude-reviews-$pr.err"
+
+  if ! gh api "/repos/$REPO/pulls/$pr/reviews" --paginate > "$reviews_raw" 2>"$err"; then
+    FAILED_FETCHES+=("claude:$pr")
+    echo "audit-p2s: gh api pulls/$pr/reviews FAILED — $(head -1 "$err" 2>/dev/null || echo 'no stderr')" >&2
+    # Signal "found path A but broken" so we do NOT fall through to sticky —
+    # a partial audit lies about coverage if we do both paths on error.
+    return 0
+  fi
+
+  # Pick the newest bot review whose body carries the reviewer:claude marker.
+  # `.[]` iterates in server order (oldest→newest); take the last with |last.
+  local review_line review_id review_body_b64
+  review_line="$(
+    jq -r --arg login "quibble-review[bot]" '
+      [ .[]
+        | select(.user.login == $login)
+        | select(.body // "" | contains("<!-- reviewer:claude -->"))
+      ]
+      | last
+      | if . == null then empty else [(.id|tostring), (.body|@base64)] | @tsv end
+    ' "$reviews_raw" 2>/dev/null | { head -1 || true; }
+  )"
+  [[ -z "$review_line" ]] && return 1
+
+  IFS=$'\t' read -r review_id review_body_b64 <<<"$review_line" || true
+  [[ -z "${review_id:-}" ]] && return 1
+
+  local review_url="https://github.com/$REPO/pull/$pr#pullrequestreview-$review_id"
+
+  # Pull the per-line comments attached to that review.
+  local comments_raw="$WORK/claude-review-comments-$pr.json"
+  local cerr="$WORK/claude-review-comments-$pr.err"
+  if ! gh api "/repos/$REPO/pulls/$pr/reviews/$review_id/comments" --paginate > "$comments_raw" 2>"$cerr"; then
+    FAILED_FETCHES+=("claude:$pr:review-comments")
+    echo "audit-p2s: gh api pulls/$pr/reviews/$review_id/comments FAILED — $(head -1 "$cerr" 2>/dev/null || echo 'no stderr')" >&2
+    return 0
+  fi
+
+  # Walk each inline comment. Each one is one finding. The first line of the
+  # body has `[P<n>] <title>`; the remainder is reasoning + suggestion. Only
+  # P2/P3 matter for orphan tracking (P1 blocks merge, so it never becomes a
+  # merged-PR orphan — codex_collect drops them too).
+  jq -r --arg finding_marker "<!-- reviewer:claude:finding -->" '
+    .[]
+    | select(.body // "" | contains($finding_marker))
+    | . as $c
+    | ($c.body | capture("\\[P(?<n>[23])\\][[:space:]]+(?<title>[^\\n]+)")) as $m
+    | select($m != null)
+    | [ "P" + $m.n,
+        ($c.path // ""),
+        (($c.line // $c.original_line // 0) | tostring),
+        ($c.id | tostring),
+        ($c.html_url // ""),
+        ($m.title | gsub("^[[:space:]]+|[[:space:]]+$"; "")),
+        ($c.body | @base64)
+      ]
+    | @tsv
+  ' "$comments_raw" | while IFS=$'\t' read -r sev path line cid curl title body_b64; do
+    [[ -z "$sev" ]] && continue
+    local body; body="$(printf '%s' "$body_b64" | base64 -d)"
+    # comment_id fed into finding_marker() is the review comment id — unique
+    # per finding, so the audit-p2s marker never collides across findings.
+    record_finding "$pr" "claude" "$sev" "$path" "$line" "$cid" "$curl" "$title" "$body"
+  done
+  return 0
+}
+
+# LEGACY SHAPE — sticky issue comment. Kept for backward compat with PRs
+# merged before refactor B (issue #36) shipped. Findings live under
+# `### P2 (N)` and `### P3 (N)` headers as `- **`path:line` — [P2] title**`
+# bullets. Removed a release after refactor B stabilizes.
+collect_claude_sticky() {
   local pr="$1"
   local raw="$WORK/claude-$pr.json"
   local err="$WORK/claude-$pr.err"
