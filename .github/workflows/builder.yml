@@ -1,13 +1,26 @@
 name: builder
 
-# Builder GA — issue-triggered pattern translation.
+# Builder GA — issue-triggered work.
 #
-# A tracking issue labeled `translate` (body: "translate <PatternStem>", e.g.
-# "translate Interaction_Drag") fires this workflow. Builder pulls the .origami,
-# runs parser → codegen → writes app/Swami/Patterns/<Stem>.swift, wires the new
-# case into SwamiHost's ContentView switch, appends the pattern to verify.yml's
-# PATTERNS env, and opens a PR against main using the pattern.md template so
-# verify.yml's pixel gate self-verifies the translation (Beat 3).
+# Two entry points, one workflow:
+#
+#   1. `translate` label (or workflow_dispatch): pattern-translation path.
+#      A tracking issue labeled `translate` (body: "translate <PatternStem>",
+#      e.g. "translate Interaction_Drag") fires the `translate` job. Builder
+#      pulls the .origami, runs parser → codegen → writes
+#      app/Swami/Patterns/<Stem>.swift, wires the new case into SwamiHost's
+#      ContentView switch, appends the pattern to verify.yml's PATTERNS env,
+#      and opens a PR against main using the pattern.md template so verify.yml's
+#      pixel gate self-verifies the translation (Beat 3).
+#
+#   2. `ready` label: general issue-pickup path. Any issue Triage GA promotes
+#      to `ready` (see .github/workflows/triage.yml + scripts/run-triage.py)
+#      is picked up by the `ready` job. It hands the issue body — the spec
+#      for what to do — to Claude, which returns a plan (branch, files to
+#      write, commit message, PR body). Builder applies the plan and opens
+#      a PR. This is what closes the "filed follow-up issues have no
+#      consumer" failure mode: Triage decides the issue is actionable →
+#      Builder picks it up.
 #
 # V1: parser + codegen are placeholders — they may not yet handle a given pattern.
 # Ship the skeleton so it's wired end-to-end; upgrade the translate step (Claude
@@ -16,11 +29,13 @@ name: builder
 # Guardrails:
 #  - Forks never get to run (no secret access, no push rights).
 #  - Missing ANTHROPIC_API_KEY skips the API-driven translate step (parser+codegen
-#    still run; the PR still opens, marked as skeleton).
+#    still run; the PR still opens, marked as skeleton). The `ready` job hard-
+#    requires the key — without Claude it has no way to plan the change.
 #  - macos-15 chosen to match verify.yml's runner so a follow-on interactive
 #    verify (Origami-installed) can reuse the same environment; codegen itself
 #    doesn't need macOS, so a later cost-cut may split parser+codegen back to
-#    ubuntu with verify staying on macos-15.
+#    ubuntu with verify staying on macos-15. The `ready` job runs on
+#    ubuntu-latest (no macOS/Origami needs).
 
 on:
   issues:
@@ -28,23 +43,39 @@ on:
   workflow_dispatch:
     inputs:
       pattern:
-        description: 'Origami pattern stem (e.g. Interaction_Drag). Resolves to https://origami.design/public/origami_files/patterns/<stem>.origami.'
-        required: true
+        description: 'Origami pattern stem (e.g. Interaction_Drag). Resolves to https://origami.design/public/origami_files/patterns/<stem>.origami. Leave blank when dispatching the ready path.'
+        required: false
+        type: string
+      issue_number:
+        description: 'Issue number to pick up on the ready path. Triage GA dispatches this workflow with an issue number because the label it applied with GITHUB_TOKEN cannot itself fire an issues.labeled workflow run (GitHub recursion guard). Leave blank when dispatching the translate path.'
+        required: false
         type: string
 
 permissions:
   contents: write        # push translate/<pattern> branch
   pull-requests: write   # open the PR
   issues: write          # comment back onto the tracking issue
+  actions: write         # `gh workflow run verify.yml/review.yml` — the
+                         # workflow_dispatch REST endpoint requires
+                         # actions:write, and without it both dispatches
+                         # from run-builder-from-issue.py (and the
+                         # translate job's verify.yml trigger) 403 and
+                         # `sh_ok` silently downgrades that to a warning.
+                         # The whole point of the ready path is that
+                         # verify.yml + review.yml wake on Builder-opened
+                         # PRs; missing this scope collapses the gate
+                         # unreachably (Codex P1 round 3, Claude sticky P1 #1).
 
 jobs:
   translate:
     # issues.labeled fires for every label; gate to the `translate` label only.
-    # workflow_dispatch is always allowed. Fork PRs can't reach this workflow
+    # workflow_dispatch is allowed only when a `pattern` input is provided, so a
+    # ready-path dispatch (which passes `issue_number` and leaves `pattern`
+    # blank) doesn't also fire this job. Fork PRs can't reach this workflow
     # (issues events run in the base repo), but the api-key gate below still
     # protects the Claude call from a missing-secret environment.
     if: |
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && inputs.pattern != '') ||
       (github.event_name == 'issues' && github.event.label.name == 'translate')
     runs-on: macos-15
     steps:
@@ -423,3 +454,109 @@ jobs:
           name: builder-${{ steps.pattern.outputs.stem }}
           path: out/
           if-no-files-found: warn
+
+  ready:
+    # Triage GA promotes an issue to `ready` when it's actionable as written.
+    # This job picks up any such issue: Claude reads the body (the spec),
+    # returns a plan, Builder applies it and opens a PR. Separate from the
+    # translate job because the machinery is different (no .origami fetch,
+    # no ContentView wiring, no macOS runner needed) — sharing steps behind
+    # a mode gate would fork the readability of the translate path.
+    #
+    # Two entry points on purpose (Codex P1 discussion_r3938968244): a human
+    # applying the `ready` label directly fires the issues.labeled path, and
+    # Triage GA (whose GITHUB_TOKEN-applied label CANNOT itself fire this
+    # workflow — GitHub's recursion guard) instead dispatches this workflow
+    # explicitly with `inputs.issue_number`. The dispatch path exists because
+    # workflow_dispatch is the documented exception to the GITHUB_TOKEN
+    # recursion rule (see .github/workflows/builder.yml translate-job's
+    # "Trigger verify.yml" step for the same pattern applied downstream).
+    if: |
+      (github.event_name == 'issues' && github.event.label.name == 'ready') ||
+      (github.event_name == 'workflow_dispatch' && inputs.issue_number != '')
+    runs-on: ubuntu-latest
+    env:
+      # Same job-level hoist as review.yml — step-level `if:` needs to read
+      # env.ANTHROPIC_API_KEY at gate-evaluation time.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch issue context
+        id: context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # On the issues.labeled path, github.event.issue.number is set.
+          # On the workflow_dispatch path (Triage GA calling in — see the
+          # job-level `if:` above), it's empty and we fall through to the
+          # dispatch input. Guard the empty case so we fail loudly instead
+          # of running `gh issue view ""` and getting a confusing error.
+          ISSUE_NUM: ${{ github.event.issue.number || inputs.issue_number }}
+        run: |
+          set -eu
+          if [ -z "${ISSUE_NUM:-}" ]; then
+            echo "::error::no issue number resolved — issues.labeled payload was empty and inputs.issue_number was not set."
+            exit 1
+          fi
+          gh issue view "$ISSUE_NUM" \
+            --json number,title,body,url,labels,author,createdAt,state \
+            --jq . > /tmp/issue.json
+          echo "issue=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+          echo "branch=ready/issue-$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Load builder context
+        run: |
+          set -eu
+          : > /tmp/context.md
+          [ -f AGENTS.md ] && { cat AGENTS.md >> /tmp/context.md; echo '---' >> /tmp/context.md; }
+          for adr in docs/decisions/*.md; do
+            [ -f "$adr" ] && { cat "$adr" >> /tmp/context.md; echo '---' >> /tmp/context.md; }
+          done
+
+      - name: Guard — ANTHROPIC_API_KEY presence
+        # The ready path hard-requires the key: without Claude there's no
+        # planner. Comment on the issue so the failure isn't silent, then
+        # fail the job so the workflow-run status flags the miss.
+        if: env.ANTHROPIC_API_KEY == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ steps.context.outputs.issue }}
+        run: |
+          gh issue comment "$ISSUE" --body "Builder GA saw the \`ready\` label but ANTHROPIC_API_KEY is not set in repo secrets. Set it in Settings → Secrets and variables → Actions to enable Builder pickup."
+          exit 1
+
+      - name: Install anthropic SDK
+        if: env.ANTHROPIC_API_KEY != ''
+        # Pin the SDK — same reasoning as review.yml / triage.yml.
+        run: python3 -m pip install --quiet 'anthropic==1.4.0'
+
+      - name: Configure git author
+        # swami-builder identity matches the translate job so PR history reads
+        # consistently regardless of which entry point produced the branch.
+        run: |
+          git config user.name  "swami-builder"
+          git config user.email "builder@swami.local"
+
+      - name: Plan + open PR (Claude)
+        if: env.ANTHROPIC_API_KEY != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_JSON_FILE: /tmp/issue.json
+          CONTEXT_FILE: /tmp/context.md
+          BRANCH: ${{ steps.context.outputs.branch }}
+        # scripts/run-builder-from-issue.py:
+        #   - reads /tmp/issue.json (the spec) + /tmp/context.md (AGENTS + ADRs)
+        #   - asks Claude for a plan (files-to-write + commit message + PR body)
+        #   - writes the files, commits, pushes $BRANCH, opens the PR
+        #   - comments back on the triggering issue with the PR link
+        # git and gh live in the script so the workflow stays declarative.
+        run: python3 scripts/run-builder-from-issue.py

@@ -5,6 +5,19 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   issue_comment:
     types: [created]  # for @claude review re-triggers
+  workflow_dispatch:
+    # Builder GA's ready-path job opens PRs authenticated with GITHUB_TOKEN,
+    # and PRs opened with GITHUB_TOKEN do NOT emit `pull_request` events
+    # (GitHub's recursion guard). Without a dispatch entry point, Review GA
+    # would never wake on Builder-opened PRs — the exact double-green gate
+    # AGENTS.md Beat 3/4 and ADR-0014 put the merge decision behind. Any
+    # workflow can call `gh workflow run review.yml -f pr_number=<N>` to
+    # trigger Review against a specific PR (Codex P1 round 2).
+    inputs:
+      pr_number:
+        description: 'PR number to review (used when dispatched from another workflow).'
+        required: true
+        type: string
 
 permissions:
   pull-requests: write
@@ -13,8 +26,12 @@ permissions:
 jobs:
   review:
     # Codex P2: restrict issue_comment re-triggers to PR comments (issues also fire issue_comment).
+    # workflow_dispatch is trusted (only maintainers / other workflows in the
+    # base repo can invoke it) and always carries a `pr_number` input by
+    # schema, so no extra body-substring gate is needed on that path.
     if: |
       github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issue_comment'
         && github.event.issue.pull_request != null
         && contains(github.event.comment.body, '@claude review'))
@@ -33,15 +50,64 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Codex P1: forked pull_request events run without repo secrets and with a read-only
-      # GITHUB_TOKEN — Claude can't be called and comments can't be posted. Detect and skip.
-      # issue_comment events (even on cross-repo PRs) run in the base repo context and DO
-      # have secret access, so they are not gated here.
+      # Fetch PR context BEFORE the fork gate so we can compute fork-ness
+      # from the fetched PR (correct on all three triggers) instead of the
+      # `pull_request` event payload alone (which is empty on
+      # workflow_dispatch — Claude sticky P1 round 3). Reading a PR's
+      # metadata via `gh pr view` doesn't execute any user-supplied code, so
+      # doing it before the fork check is safe.
+      - name: Fetch PR context
+        id: context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Resolve PR number from every trigger this workflow accepts:
+          # pull_request (auto), issue_comment (comment on PR), or
+          # workflow_dispatch (Builder GA's ready-path handoff — Codex P1
+          # round 2). Fail loudly if none resolved rather than pass an empty
+          # string to `gh pr view` and get a confusing error downstream.
+          PR_NUM: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+        run: |
+          set -eu
+          if [ -z "${PR_NUM:-}" ]; then
+            echo "::error::no PR number resolved from pull_request / issue_comment / workflow_dispatch payload"
+            exit 1
+          fi
+          # `headRepositoryOwner` is what the fork gate below compares
+          # against `github.repository_owner`. Without it a dispatched or
+          # commented review of a fork PR bypasses the fork check silently
+          # (Claude sticky P1 round 3).
+          gh pr view "$PR_NUM" --json number,title,body,url,headRefName,baseRefName,headRefOid,headRepositoryOwner,commits,files --jq . > /tmp/pr.json
+          gh pr diff "$PR_NUM" > /tmp/pr.diff
+          # Codex P2 (sticky preservation): READ verify.yml's sticky comment for CONTEXT ONLY.
+          # Do not edit, update, or delete it here — the pixel gate owns that comment. The
+          # Claude review posts SEPARATE comments (see "Run Claude review" step below).
+          gh api repos/${{ github.repository }}/issues/"$PR_NUM"/comments \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | .body' > /tmp/sticky.md
+          # Resolve HEAD_SHA from the PR payload — on workflow_dispatch the
+          # github.event.pull_request.* fields are empty. run-claude-review.py
+          # treats HEAD_SHA as optional (used only for the sticky "HEAD:"
+          # line), but populating it keeps the comment self-documenting.
+          HEAD_SHA=$(python3 -c "import json;print(json.load(open('/tmp/pr.json')).get('headRefOid',''))")
+          echo "pr=$PR_NUM" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      # Fork detection using the fetched PR JSON so it is correct on all
+      # three triggers. Compare the head repo's owner login to the base
+      # repo's owner: a different owner is a fork, from any owner (user or
+      # org). Empty owner (unlikely — `gh pr view` populates it) falls
+      # through to non-fork so we don't refuse a legit PR on a JSON parse
+      # hiccup. Codex P1 round 3: the previous step read
+      # `github.event.pull_request.head.repo.fork` which is empty on
+      # `workflow_dispatch`, so a dispatched review of a fork PR silently
+      # bypassed this gate.
       - name: Determine PR fork status
         id: fork
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ] \
-             && [ "${{ github.event.pull_request.head.repo.fork }}" = "true" ]; then
+          set -eu
+          HEAD_OWNER=$(python3 -c "import json;d=json.load(open('/tmp/pr.json'));o=d.get('headRepositoryOwner') or {};print(o.get('login',''))")
+          if [ -n "$HEAD_OWNER" ] && [ "$HEAD_OWNER" != "$REPO_OWNER" ]; then
             echo "is_fork=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_fork=false" >> "$GITHUB_OUTPUT"
@@ -50,23 +116,7 @@ jobs:
       - name: Skip review on forked PR
         if: steps.fork.outputs.is_fork == 'true'
         run: |
-          echo "::notice::Forked PR detected — ANTHROPIC_API_KEY and write permissions are unavailable on fork pull_request events. Skipping Claude review. A maintainer can re-run by commenting '@claude review' on the PR (issue_comment runs in the base repo context and has secret access)."
-
-      - name: Fetch PR context
-        id: context
-        if: steps.fork.outputs.is_fork != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          PR_NUM=${{ github.event.pull_request.number || github.event.issue.number }}
-          gh pr view $PR_NUM --json number,title,body,url,headRefName,baseRefName,commits,files --jq . > /tmp/pr.json
-          gh pr diff $PR_NUM > /tmp/pr.diff
-          # Codex P2 (sticky preservation): READ verify.yml's sticky comment for CONTEXT ONLY.
-          # Do not edit, update, or delete it here — the pixel gate owns that comment. The
-          # Claude review posts SEPARATE comments (see "Run Claude review" step below).
-          gh api repos/${{ github.repository }}/issues/$PR_NUM/comments \
-            --jq '.[] | select(.user.login == "github-actions[bot]") | .body' > /tmp/sticky.md
-          echo "pr=$PR_NUM" >> "$GITHUB_OUTPUT"
+          echo "::notice::Forked PR detected — Claude review skipped. On pull_request the fork's ANTHROPIC_API_KEY and write permissions are unavailable; on workflow_dispatch / issue_comment we refuse a fork explicitly so an untrusted diff can't reach a job holding base-repo secrets."
 
       - name: Load review context
         if: steps.fork.outputs.is_fork != 'true'
@@ -123,7 +173,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.context.outputs.pr }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Prefer the fetch-step's resolved sha (works on all three trigger
+          # shapes) and fall back to the pull_request event field for parity
+          # with older payloads that predated the workflow_dispatch entry
+          # point.
+          HEAD_SHA: ${{ steps.context.outputs.head_sha || github.event.pull_request.head.sha }}
           PR_DIFF_FILE: /tmp/pr.diff
           STICKY_FILE: /tmp/sticky.md
         run: python3 scripts/run-claude-review.py

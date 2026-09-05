@@ -21,6 +21,11 @@ on:
 permissions:
   contents: write        # push renders to the evidence branch
   pull-requests: write   # comment onto the PR
+  actions: write         # dispatch-review job calls `gh workflow run review.yml`
+                         # POST /actions/workflows/{id}/dispatches — 403s without this
+                         # scope, at which point the step's `if !` fallback would exit 0
+                         # with only a ::warning::, leaving a ready-path PR with no
+                         # Reviewer input (ADR-0014 §2 requires Reviewer approval).
 
 env:
   APP_PROJECT: app/Swami.xcodeproj
@@ -351,13 +356,50 @@ jobs:
         uses: actions/upload-artifact@v4
         with: { name: pixel-gate, path: out/, if-no-files-found: warn }
 
-      - name: Post evidence onto the PR
-        if: github.event_name == 'pull_request'
+      - name: Resolve PR + SHA for evidence
+        # `pull_request` payload carries both directly. Under `workflow_dispatch`
+        # (Builder GA's ready-path dispatch) the payload has neither, so resolve
+        # the PR from the dispatched ref (`gh pr list --head`) and use the
+        # dispatched SHA. Failing to resolve is not fatal — the pixel gate has
+        # still produced artifacts; we just skip the PR comment. Codex P1
+        # round 3: the previous "Post evidence" step was gated on
+        # `github.event_name == 'pull_request'`, so dispatched Verify runs
+        # completed without posting the swami/origami/diff triplet.
+        id: evidence
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.number }}
           REPO: ${{ github.repository }}
-          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR="${{ github.event.number }}"
+            SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            # workflow_dispatch — resolve from the ref that was dispatched
+            # (e.g. `ready/issue-42`). If no open PR is found for that
+            # branch, emit a warning and skip posting; a follow-up rerun
+            # via `pull_request` will fill it in.
+            BRANCH="${{ github.ref_name }}"
+            SHA="${{ github.sha }}"
+            PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
+                    --json number --jq '.[0].number // empty')
+            if [ -z "$PR" ]; then
+              echo "::warning::no open PR found for head=$BRANCH — skipping evidence post."
+              echo "pr=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Post evidence onto the PR
+        if: (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && steps.evidence.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.evidence.outputs.pr }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.evidence.outputs.sha }}
         run: |
           BR="ci-screenshots"
           git config user.name "swami-ci"
@@ -397,6 +439,51 @@ jobs:
           BODY+="_Static layout only. Interaction gate (drive gesture, compare response) is separate — ADR-0013 follow-up._"
           gh pr comment "$PR" --repo "$REPO" --edit-last --body "$BODY" 2>/dev/null \
             || gh pr comment "$PR" --repo "$REPO" --body "$BODY"
+
+  # Chain-of-triggers: Builder GA's ready path dispatches verify.yml explicitly
+  # (because GITHUB_TOKEN-opened PRs don't fire pull_request events — the same
+  # recursion guard is why builder.yml grants actions:write and dispatches).
+  # Previously this dispatch lived as the final step of pixel-gate, which made
+  # Review's reachability a child of pixel-gate's: docs-only PRs skip pixel-gate
+  # via paths-filter and a red pixel-gate short-circuits the step, so the
+  # common ready-path PR arrived with no Reviewer input (Claude P1 round 3).
+  # Lifted into its own job that `needs: [changes, pixel-gate]` with
+  # `if: always()`, so it fires whether pixel-gate ran green, red, or skipped
+  # — as long as the run was a workflow_dispatch (normal pull_request events
+  # already trigger review.yml via its own on:pull_request handler, no
+  # double-fire).
+  #
+  # Sticky-race note: firing from a job downstream of pixel-gate still gives
+  # the "Post evidence" step time to publish the sticky when pixel-gate ran;
+  # when pixel-gate skipped (docs-only) there is no sticky to wait for and an
+  # empty read is a correct read.
+  dispatch-review:
+    needs: [changes, pixel-gate]
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch review.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -eu
+          # Resolve PR from the dispatched ref (e.g. `ready/issue-42`). If no
+          # open PR is found we still exit 0 — the pixel-gate artifacts stand
+          # on their own, and a follow-up rerun via pull_request will fill in
+          # the Reviewer pass.
+          PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
+                  --json number --jq '.[0].number // empty')
+          if [ -z "$PR" ]; then
+            echo "::warning::no open PR found for head=$BRANCH — skipping review.yml dispatch."
+            exit 0
+          fi
+          if ! gh workflow run review.yml --repo "$REPO" -f "pr_number=$PR"; then
+            echo "::warning::gh workflow run review.yml -f pr_number=$PR failed — Review must be triggered manually (e.g. \`gh workflow run review.yml -f pr_number=$PR\`, or comment '@claude review' on the PR)."
+          else
+            echo "==> dispatched review.yml for PR #$PR"
+          fi
 
 # NEXT (per ADR-0013): (a) parser-verification step that reads Origami's Inspector via AX
 # attributes and diffs against the parser's IR; (b) interaction gate — XCUITest-drives-both-sides
