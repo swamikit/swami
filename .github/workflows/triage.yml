@@ -67,34 +67,27 @@ jobs:
             echo '---' >> /tmp/context.md
           done
 
-      # NOTE: This step is a placeholder for the Claude API call.
-      # Full implementation requires anthropic-sdk or claude-code-action; both need ANTHROPIC_API_KEY.
-      # This PR ships the workflow skeleton; the actual Claude call lands in a follow-up
-      # once ANTHROPIC_API_KEY is present in Actions secrets.
-      #
-      # Actions the Claude call is expected to take (documented so the follow-up
-      # implementation has a fixed spec, and so the placeholder self-documents):
-      #   - Apply labels to the triggering issue:
-      #       * type:{bug,feature,docs,chore,parser,codegen,harness,infra}
-      #       * priority:{p0,p1,p2,p3}
-      #   - Dedup analysis: scan /tmp/open-issues.json for near-duplicates. If a
-      #     match is found, comment on the triggering issue with the match URL
-      #     and a suggestion to close as duplicate (do NOT auto-close — human gate).
-      #   - Readiness label:
-      #       * 'ready'      — issue is actionable as written (repro, scope, DoD legible)
-      #       * 'needs-info' — issue is missing repro / scope / expected behavior
-      #   - Never edit the issue body. Never close the issue. Labels + comment only.
-      - name: Run Claude triage (placeholder)
+      # Real Claude triage. The script categorizes the issue into a fixed
+      # label vocabulary (type:*, P1/P2/P3, ready/needs-info/blocked/duplicate),
+      # applies the labels via `gh issue edit`, and posts a marker-tagged
+      # comment when status is needs-info / blocked / duplicate. `ready`
+      # emits the `ready` label which Builder GA gates on — that's the
+      # issue-pickup loop closing.
+      - name: Install anthropic SDK
+        if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
+        # Pin the SDK — same reasoning as review.yml (an unpinned install
+        # follows any future major and can move the streaming/thinking
+        # surface out from under run-triage.py).
+        run: python3 -m pip install --quiet 'anthropic==1.4.0'
+
+      - name: Run Claude triage
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
         env:
-          ISSUE: ${{ steps.context.outputs.issue }}
-        run: |
-          echo "== would call Claude API here with:"
-          echo "  - system: /tmp/context.md (AGENTS + skill/triage + ADRs)"
-          echo "  - user: /tmp/issue.json + /tmp/open-issues.json (dedup corpus)"
-          echo "  - tools: gh (label the issue, comment with dedup suggestion)"
-          # Real implementation: pip install anthropic; python scripts/run-triage.py
-          echo "PLACEHOLDER — real Claude integration to follow"
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_JSON_FILE: /tmp/issue.json
+          OPEN_ISSUES_FILE: /tmp/open-issues.json
+          CONTEXT_FILE: /tmp/context.md
+        run: python3 scripts/run-triage.py
 
       - name: Signal readiness (if secret not set)
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY == ''
