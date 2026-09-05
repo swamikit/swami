@@ -40,7 +40,12 @@ concurrency:
 
 permissions:
   pull-requests: read   # reads PR + reviews + comments
-  issues: read          # reads linked-issue state/body for orphan check
+  issues: write         # reads linked-issue state/body for orphan check;
+                        # also posts/patches the sticky <!-- merge-gate -->
+                        # comment via /repos/{}/issues/{N}/comments (POST/PATCH
+                        # on that endpoint requires write, not read — a plain
+                        # `issues: read` token 403s and the workflow fails
+                        # before publishing its breakdown).
   statuses: write       # posts the `merge-gate` commit status
 
 jobs:

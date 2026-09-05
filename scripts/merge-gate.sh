@@ -300,14 +300,20 @@ rule_mergeability() {
 # --- Rule 2: required checks ---
 # Input: $WORK/pr.json with .statusCheckRollup[].
 # Fails on the FIRST rollup entry outside {SUCCESS, SKIPPED, NEUTRAL}.
-# `merge-gate` context itself is skipped from evaluation — a status can't
-# gate on its own prior value or it never turns green.
+# We skip TWO things from evaluation, because a gate can't rank on itself
+# or it never reaches success:
+#   (a) the `merge-gate` StatusContext posted by this script, and
+#   (b) any check-run whose parent workflow is `merge-gate` (the workflow's
+#       own `gate` job is present in every rollup as QUEUED / IN_PROGRESS
+#       while it's running — including it would leave rule 2 permanently
+#       pending on the gate's own execution).
 rule_checks() {
   local failing
   failing="$(jq -r '
     (.statusCheckRollup // [])
     | map(select(
         (.name // .context // "") != "merge-gate"
+        and (.workflowName // "") != "merge-gate"
         and (
           # Status conclusion vs check-run conclusion — .conclusion for
           # check-runs, .state for statuses. Normalize.
@@ -328,6 +334,7 @@ rule_checks() {
     (.statusCheckRollup // [])
     | map(select(
         (.name // .context // "") != "merge-gate"
+        and (.workflowName // "") != "merge-gate"
         and (
           (.conclusion // .state // "") as $s
           | ($s | ascii_upcase) as $u
@@ -370,6 +377,26 @@ rule_reviewer_freshness() {
   head_sha="$(jq -r '.headSha // ""' "$WORK/pr.json")"
 
   # Failure-marker fast path.
+  #
+  # A failure-marker comment (`<!-- reviewer:claude-failure -->`) is left
+  # behind whenever the deep reviewer crashed — see
+  # scripts/run-claude-review.py:783-784 which explicitly keeps failure
+  # comments as history. It carries the HEAD SHA verbatim in its body.
+  #
+  # Naively "failure marker at HEAD → pending" permanently blocks the SHA:
+  # if the reviewer is retried against the same HEAD and this time SUCCEEDS,
+  # the old failure comment still contains the same SHA and would trap the
+  # gate in pending forever unless someone deletes the comment or force-pushes.
+  #
+  # Compare event timing: if a non-DISMISSED deep review at HEAD was
+  # submitted STRICTLY AFTER the newest failure-marker comment at HEAD,
+  # treat the failure as superseded and fall through to the review verdict
+  # below. ISO 8601 timestamps sort lexicographically, so a plain string
+  # compare is correct.
+  #
+  # Fail-closed when timestamps are missing on either side (fixtures,
+  # future-shaped payloads): we can't prove supersession, so keep the
+  # original "waiting for reviewer to succeed" behavior.
   if [[ -n "$head_sha" && -f "$WORK/failures.json" ]]; then
     local has_failure
     has_failure="$(
@@ -381,9 +408,41 @@ rule_reviewer_freshness() {
       ' "$WORK/failures.json"
     )"
     if [[ "${has_failure:-0}" -gt 0 ]]; then
-      set_result "pending" "waiting for reviewer to succeed" \
-        "Deep reviewer errored on this HEAD (failure-marker comment present). Retry the review workflow."
-      return 0
+      local failure_at review_at=""
+      failure_at="$(
+        jq -r --arg m "$DEEP_FAILURE_MARKER" --arg sha "$head_sha" '
+          [ .[]
+            | select((.body // "") | contains($m))
+            | select((.body // "") | contains($sha))
+            | (.created_at // "")
+          ] | max // ""
+        ' "$WORK/failures.json"
+      )"
+      if [[ -f "$WORK/reviews.json" ]]; then
+        review_at="$(
+          jq -r --argjson ids "$DEEP_IDENTITIES_JSON" --arg m "$DEEP_MARKER" --arg sha "$head_sha" '
+            [ .[]
+              | . as $r
+              | select(($r.user.login // "") as $l | $ids | index($l))
+              | select((.body // "") | contains($m))
+              | select((.state // "") != "DISMISSED")
+              | select((.commit_id // "") == $sha)
+              | (.submitted_at // "")
+            ] | max // ""
+          ' "$WORK/reviews.json"
+        )"
+      fi
+      local superseded=0
+      if [[ -n "$failure_at" && -n "$review_at" && "$review_at" > "$failure_at" ]]; then
+        superseded=1
+      fi
+      if [[ "$superseded" -eq 0 ]]; then
+        set_result "pending" "waiting for reviewer to succeed" \
+          "Deep reviewer errored on this HEAD (failure-marker comment present). Retry the review workflow."
+        return 0
+      fi
+      # Else: a newer deep review at HEAD exists — the failure was
+      # retried successfully; fall through to inspect that review below.
     fi
   fi
 
@@ -673,7 +732,10 @@ collect_deep_findings() {
   )"
   [[ -z "$review_id" ]] && return 0
   local comments_json="$WORK/deep-review-comments.json"
-  if ! gh api "/repos/$REPO/pulls/$pr/reviews/$review_id/comments" --paginate \
+  # --paginate --slurp: without --slurp the file holds one JSON array per
+  # page, which the jq call below cannot parse (same class of bug fixed
+  # on the top-level Reviews / Issues fetches).
+  if ! gh api "/repos/$REPO/pulls/$pr/reviews/$review_id/comments" --paginate --slurp \
        > "$comments_json" 2>"$WORK/deep-review-comments.err"; then
     return 0
   fi
@@ -890,9 +952,13 @@ upsert_gate_comment() {
   format_gate_comment "$state" "$desc" "$long" "$sha" > "$comment_file"
 
   # Find prior gate comment (any author — GitHub Actions bots may post).
+  # `--paginate --slurp` so the jq filter runs once across ALL pages —
+  # without --slurp, --jq runs independently per page and `last` never
+  # crosses page boundaries, so a sticky on page 1 with more comments on
+  # page 2 would be dropped in favor of an empty page-2 result.
   local existing_id
   existing_id="$(
-    gh api "/repos/$REPO/issues/$pr/comments" --paginate \
+    gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
       --jq '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | last | .id // empty'
   )" || true
 
@@ -1261,14 +1327,23 @@ if [[ -z "$HEAD_SHA" ]]; then
 fi
 
 # Reviews API.
-if ! gh api "/repos/$REPO/pulls/$PR/reviews" --paginate \
+#
+# `gh api --paginate` writes each page as a SEPARATE JSON array — two pages
+# of reviews produce two consecutive top-level arrays in the file, which
+# any subsequent `jq` call refuses to parse. `--slurp` (available in gh
+# 2.34+; ubuntu-latest runners are far newer) collapses them into one big
+# JSON array. Without this, sufficiently active PRs (dismissed reviews stay
+# in history) hit page 2 and the gate exits before posting a status.
+if ! gh api "/repos/$REPO/pulls/$PR/reviews" --paginate --slurp \
      > "$WORK/reviews.json" 2>"$WORK/reviews.err"; then
   echo "::warning::merge-gate: /pulls/$PR/reviews fetch failed — treating as no reviews" >&2
   echo '[]' > "$WORK/reviews.json"
 fi
 
 # Issue comments (for failure marker + linked-issue candidates + reviewer replies).
-if ! gh api "/repos/$REPO/issues/$PR/comments" --paginate \
+# Same --paginate --slurp treatment: multi-page issue comments would otherwise
+# arrive as consecutive top-level arrays and break the downstream jq calls.
+if ! gh api "/repos/$REPO/issues/$PR/comments" --paginate --slurp \
      > "$WORK/failures.json" 2>"$WORK/failures.err"; then
   echo '[]' > "$WORK/failures.json"
 fi
