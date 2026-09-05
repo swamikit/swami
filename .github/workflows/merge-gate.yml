@@ -17,20 +17,27 @@ name: merge-gate
 on:
   # Every event that can change the answer. `edited` on pull_request catches
   # PR body edits (linked-issue references live there). pull_request_review
-  # catches deep-reviewer verdicts. pull_request_review_thread catches the
-  # UI "Resolve conversation" toggle Codex threads use. issue_comment catches
-  # follow-up links in a PR comment thread. pull_request_review_comment
-  # catches inline replies on a review comment.
+  # catches deep-reviewer verdicts. issue_comment catches follow-up links in a
+  # PR comment thread. pull_request_review_comment catches inline replies on a
+  # review comment. A resolved thread is rechecked with workflow_dispatch.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, edited]
   pull_request_review:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
-  pull_request_review_thread:
-    types: [resolved, unresolved]
   issue_comment:
     types: [created, edited, deleted]
+  # GitHub exposes `pull_request_review_thread` as a webhook event, but it is
+  # not an Actions workflow trigger. Listing it under `on:` prevents the whole
+  # workflow from registering (issue #81). Manual dispatch is the supported
+  # re-check path after resolving a review thread.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to recompute
+        required: true
+        type: number
   # NOTE: `check_run: [completed]` was intentionally REMOVED.
   #
   # Symptom: after adding that trigger together with a concurrency-group
@@ -54,8 +61,8 @@ on:
 # review.yml on this PR (quibble P2 on this PR flagged the asymmetry):
 #
 #   Actionable — pull_request, pull_request_review,
-#   pull_request_review_comment, and pull_request_review_thread. All
-#   of these change the merge-gate answer, so they share one group
+#   pull_request_review_comment, and workflow_dispatch. All of these change
+#   the merge-gate answer, so they share one group
 #   `merge-gate-<PR-or-no-pr>` and a newer run cancels the older one
 #   (correct staleness behavior).
 #
@@ -89,7 +96,7 @@ on:
 # to parse the YAML). See the block-comment on `on:` above for detail.
 concurrency:
   group: >-
-    merge-gate-${{ github.event.pull_request.number || github.event.issue.number || 'no-pr' }}${{
+    merge-gate-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr || 'no-pr' }}${{
       (github.event_name == 'issue_comment' && github.event.comment)
         && format('-ignorable-{0}', github.event.comment.id)
         || ''
@@ -132,12 +139,13 @@ jobs:
         run: |
           set -eu
           # pull_request / pull_request_review / pull_request_review_comment
-          # / pull_request_review_thread all carry pull_request.number.
+          # all carry pull_request.number.
           # issue_comment carries issue.number (guarded above to only fire
           # when issue.pull_request is set — i.e. the issue IS a PR).
           # (The check_run branch was removed with the check_run trigger;
           # see the `on:` block-comment for why.)
-          PR="${{ github.event.pull_request.number || github.event.issue.number }}"
+          # workflow_dispatch uses the explicit `pr` input.
+          PR="${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}"
           if [ -z "$PR" ]; then
             echo "::error::could not resolve PR number from event payload"
             exit 1
