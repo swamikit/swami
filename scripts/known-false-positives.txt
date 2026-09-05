@@ -1,0 +1,20 @@
+# Patterns that, when present in a finding's body, mark it a false positive.
+# One extended-regex pattern per line (grep -E). Blank lines and lines starting
+# with '#' are ignored. Match is anchored inside the finding body (any hit
+# skips the finding), so keep patterns specific enough not to over-eat.
+#
+# Rationale: the review corpus (Codex + Claude) sometimes flags model-id
+# strings or SDK argument shapes that were deliberately chosen. Recording the
+# strings here — instead of re-litigating them each audit — keeps the audit
+# idempotent and lets a reviewer append a line rather than patching the
+# script.
+#
+# When adding a pattern, cite the settled discussion in a comment above it so
+# a future reader knows why "obvious bug" is not, in fact, a bug.
+
+# ADR-0011: pinned to Opus 5 for reviewer runs; do not "correct" to opus-4-*.
+MODEL[[:space:]]*=[[:space:]]*"claude-opus-5"
+claude-opus-5
+
+# Adaptive thinking is the intended budget shape for the reviewer call.
+thinking=\{"type":[[:space:]]*"adaptive"\}
