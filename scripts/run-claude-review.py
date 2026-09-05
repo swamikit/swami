@@ -44,7 +44,21 @@ def load_context(repo_root: Path) -> str:
     return "\n\n".join(parts)
 
 
-def build_system(context: str) -> str:
+def build_system(context: str, truncated_bytes: int = 0) -> str:
+    truncation_note = ""
+    if truncated_bytes > 0:
+        # Belt: tell the model directly it cannot approve on a partial read. The
+        # code below is the suspenders — we override the verdict either way,
+        # but a well-behaved model should not put us in that position.
+        truncation_note = (
+            "\n\nIMPORTANT — DIFF TRUNCATED: The PR diff shown to you was truncated "
+            f"at {MAX_DIFF_BYTES} bytes ({truncated_bytes} bytes omitted). You have "
+            "NOT seen the whole change. Under ADR-0014 the Reviewer read IS the "
+            "merge gate — approving on a partial read is a false green. You MUST "
+            'return approve=false and include a blocking finding at file '
+            '".github/reviewer" line 1 explaining that the PR must be split or '
+            "reviewed manually. Do not approve.\n"
+        )
     return (
         "You are the Reviewer GA for the swami repository. Follow the Reviewer skill "
         "below. Findings are testable claims tied to a file and (where possible) a "
@@ -57,14 +71,24 @@ def build_system(context: str) -> str:
         ' "file": "path/from/repo/root", "line": <int or null>,'
         ' "claim": "<short claim>", "evidence": "<why — cite ADR/skill/beat>"}],'
         ' "approve": <bool — true only when no blocking findings>}\n'
-        "If the diff is empty or trivial, return findings=[] and approve=true.\n\n"
-        "===== REPO CONTEXT =====\n" + context
+        "If the diff is empty or trivial, return findings=[] and approve=true."
+        + truncation_note
+        + "\n\n===== REPO CONTEXT =====\n" + context
     )
 
 
-def call_claude(system: str, diff: str, sticky: str) -> dict:
+def call_claude(system: str, diff: str, sticky: str, truncated_bytes: int = 0) -> dict:
     client = anthropic.Anthropic()
     user = ["## PR diff\n\n```diff\n" + diff + "\n```"]
+    if truncated_bytes > 0:
+        user.append(
+            "## Diff was truncated\n\n"
+            f"The diff above was cut at {MAX_DIFF_BYTES} bytes; "
+            f"{truncated_bytes} bytes were omitted. You have not seen the whole "
+            "PR. Per the system prompt and ADR-0014 you must return "
+            'approve=false with a blocking finding at ".github/reviewer" line 1 '
+            "stating that the PR must be split or reviewed manually."
+        )
     if sticky.strip():
         user.append(
             "## Pixel-gate sticky (read-only context — do NOT propose edits to it)\n\n"
@@ -97,13 +121,22 @@ def _extract_json(text: str) -> dict:
     return json.loads(t[start : end + 1])
 
 
-def format_comment(review: dict, head_sha: str) -> str:
+def format_comment(review: dict, head_sha: str, truncated_bytes: int = 0) -> str:
     findings = review.get("findings") or []
     approve = bool(review.get("approve"))
     summary = (review.get("summary") or "").strip()
     lines = [MARKER, "", "## Claude review", ""]
     if head_sha:
         lines += [f"HEAD: `{head_sha}`", ""]
+    if truncated_bytes > 0:
+        # Human-visible banner so a reader of the PR comment sees the constraint
+        # without having to dig into the workflow logs.
+        lines += [
+            f"> ⚠ diff truncated at {MAX_DIFF_BYTES} bytes "
+            f"({truncated_bytes} bytes omitted) — full review requires "
+            "splitting the PR.",
+            "",
+        ]
     if summary:
         lines += [summary, ""]
     if not findings:
@@ -170,13 +203,19 @@ def post_or_update(repo: str, pr: str, body_path: Path) -> None:
         print("created new comment")
 
 
-def _cap_diff(diff: str, limit: int = MAX_DIFF_BYTES) -> str:
+def _cap_diff(diff: str, limit: int = MAX_DIFF_BYTES) -> tuple[str, int]:
+    """Return (capped_diff, omitted_bytes). omitted_bytes == 0 means no truncation.
+
+    Callers MUST treat omitted_bytes > 0 as a gate: the reviewer has read only
+    part of the change, so a downstream approve verdict is not honest. See
+    ADR-0014 and the enforcement in `main`.
+    """
     raw = diff.encode("utf-8", errors="replace")
     if len(raw) <= limit:
-        return diff
+        return diff, 0
     kept = raw[:limit].decode("utf-8", errors="replace")
     omitted = len(raw) - limit
-    return kept + f"\n\n[diff truncated — {omitted} bytes omitted]\n"
+    return kept + f"\n\n[diff truncated — {omitted} bytes omitted]\n", omitted
 
 
 def _post_failure_comment(repo: str, pr: str, head_sha: str, exc: BaseException) -> None:
@@ -211,20 +250,47 @@ def main() -> int:
 
     diff_path = Path(os.environ.get("PR_DIFF_FILE", "/tmp/pr.diff"))
     diff = diff_path.read_text() if diff_path.exists() else sh(["gh", "pr", "diff", pr])
-    diff = _cap_diff(diff)
+    diff, truncated_bytes = _cap_diff(diff)
 
     sticky_path = Path(os.environ.get("STICKY_FILE", "/tmp/sticky.md"))
     sticky = sticky_path.read_text() if sticky_path.exists() else ""
 
-    system = build_system(load_context(repo_root))
+    system = build_system(load_context(repo_root), truncated_bytes=truncated_bytes)
     try:
-        review = call_claude(system, diff, sticky)
+        review = call_claude(system, diff, sticky, truncated_bytes=truncated_bytes)
     except Exception as exc:  # noqa: BLE001
         print(f"claude review failed: {exc}", file=sys.stderr)
         _post_failure_comment(repo, pr, head_sha, exc)
         return 1
 
-    body = format_comment(review, head_sha)
+    # Suspenders: even with the prompt telling the model not to approve on a
+    # truncated diff, we enforce it in code. ADR-0014 makes the Reviewer read
+    # the merge gate — a partial-read approval would silently bypass it.
+    if truncated_bytes > 0 and bool(review.get("approve")):
+        print(
+            f"overriding approve=true → false: diff truncated at "
+            f"{MAX_DIFF_BYTES} bytes ({truncated_bytes} bytes omitted)",
+            file=sys.stderr,
+        )
+        review["approve"] = False
+        synthetic = {
+            "severity": "blocking",
+            "file": ".github/reviewer",
+            "line": 1,
+            "claim": (
+                f"diff truncated at {MAX_DIFF_BYTES} bytes "
+                f"({truncated_bytes} bytes omitted) — reviewer read partial; "
+                "split the PR or review manually"
+            ),
+            "evidence": (
+                "ADR-0014: Reviewer approval + no unresolved findings is the "
+                "merge gate. An approve verdict on a partially-read diff is a "
+                "false green. Enforced in scripts/run-claude-review.py::main."
+            ),
+        }
+        review["findings"] = [synthetic] + list(review.get("findings") or [])
+
+    body = format_comment(review, head_sha, truncated_bytes=truncated_bytes)
     out_path = Path("/tmp/claude-review-body.md")
     out_path.write_text(body)
     post_or_update(repo, pr, out_path)
