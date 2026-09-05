@@ -99,78 +99,128 @@ jobs:
         run: |
           set -euo pipefail
 
+          # ----- trusted reviewer identities -----------------------------
+          # Every reviewer/config signal below is filtered to a known bot
+          # login BEFORE we read it. Without this, any PR commenter could
+          # paste the marker string `<!-- claude-review -->`, the current
+          # SHA, and no P1 heading and this workflow would treat it as a
+          # clean review — turning the required `merge-gate` status green
+          # on a spoofed vote. Same risk for the Codex sticky, Codex P1
+          # badges, and the "ANTHROPIC_API_KEY is not set" disable signal.
+          # These logins are the accounts that actually post each signal
+          # from the corresponding GitHub Actions workflow / App and are
+          # not something a regular user can impersonate. If a signal ever
+          # starts coming from a different bot, update the login here (and
+          # note it in an ADR — this is a trust-boundary change).
+          CLAUDE_BOT_LOGIN="github-actions[bot]"
+          CODEX_BOT_LOGIN="chatgpt-codex-connector[bot]"
+
           # ----- reviewer sticky discovery -------------------------------
-          # Claude sticky: issue comment tagged with the marker
-          # `<!-- claude-review -->`. HEAD is on the header line as
-          # `HEAD: \`<sha>\``. P1 count is the N in `### P1 (N)`.
-          # Take the LATEST matching sticky — the reviewer updates in place
-          # but a race or a marker-lookup regression could leave two.
-          CLAUDE_BODY=$(jq -r '
-            [.[] | select(.body | contains("<!-- claude-review -->"))]
+          # Claude sticky: issue comment authored by the Claude review
+          # workflow (via GITHUB_TOKEN → `github-actions[bot]`) tagged
+          # with the marker `<!-- claude-review -->`. HEAD is on the
+          # header line as `HEAD: \`<sha>\``. P1 count is the N in
+          # `### P1 (N)`. Take the LATEST matching sticky — the reviewer
+          # updates in place but a race or a marker-lookup regression
+          # could leave two.
+          CLAUDE_BODY=$(jq -r --arg login "$CLAUDE_BOT_LOGIN" '
+            [.[] | select(.user.login == $login)
+                 | select(.body | contains("<!-- claude-review -->"))]
             | sort_by(.updated_at) | last | .body // ""
           ' /tmp/issue_comments.json)
 
+          # Parse the sticky. If it exists but either the HEAD line or the
+          # `### P1 (N)` heading is missing, treat it as UNPARSEABLE and
+          # fail the gate below — a regex miss here (format drift, a
+          # truncated body, a heading-style change) must never silently
+          # read as "0 P1s at HEAD".
           CLAUDE_HEAD=""
           CLAUDE_P1=0
           CLAUDE_PRESENT=false
+          CLAUDE_UNPARSEABLE=false
           if [ -n "$CLAUDE_BODY" ]; then
             CLAUDE_PRESENT=true
             CLAUDE_HEAD=$(printf '%s\n' "$CLAUDE_BODY" \
               | grep -oE 'HEAD: `[0-9a-f]{7,40}`' \
               | head -1 \
               | grep -oE '[0-9a-f]{7,40}' || true)
-            CLAUDE_P1=$(printf '%s\n' "$CLAUDE_BODY" \
+            CLAUDE_P1_RAW=$(printf '%s\n' "$CLAUDE_BODY" \
               | grep -oE '^### P1 \([0-9]+\)' \
               | head -1 \
-              | grep -oE '[0-9]+' || echo 0)
-            CLAUDE_P1=${CLAUDE_P1:-0}
+              | grep -oE '[0-9]+' || true)
+            if [ -z "$CLAUDE_HEAD" ] || [ -z "$CLAUDE_P1_RAW" ]; then
+              CLAUDE_UNPARSEABLE=true
+            else
+              CLAUDE_P1=$CLAUDE_P1_RAW
+            fi
           fi
 
           # Claude "disabled" signal: review.yml posts a plain comment
           # "Review GA is present but ANTHROPIC_API_KEY is not set in repo
           # secrets." when the secret is absent. Presence of that string on
           # the PR means Claude is intentionally off — gate falls back to
-          # Codex alone instead of hanging at pending forever.
+          # Codex alone instead of hanging at pending forever. Restricted
+          # to comments authored by `github-actions[bot]` so a human
+          # commenter (or a quote of this workflow) cannot type the string
+          # and permanently drop the Claude requirement.
           CLAUDE_DISABLED=false
-          if jq -r '.[].body' /tmp/issue_comments.json \
+          if jq -r --arg login "$CLAUDE_BOT_LOGIN" \
+              '.[] | select(.user.login == $login) | .body' \
+              /tmp/issue_comments.json \
               | grep -qF 'ANTHROPIC_API_KEY is not set in repo secrets'; then
             CLAUDE_DISABLED=true
           fi
 
-          # Codex sticky: issue comment containing the marker string
-          # `codex-pull-request-review-summary` with the reviewed SHA in
-          # backticks. Take the first backtick-wrapped SHA-looking token.
-          CODEX_BODY=$(jq -r '
-            [.[] | select(.body | contains("codex-pull-request-review-summary"))]
+          # Codex sticky: issue comment authored by the Codex bot
+          # containing the marker string `codex-pull-request-review-summary`
+          # with the reviewed SHA in backticks. Take the first
+          # backtick-wrapped SHA-looking token. As with Claude, if the SHA
+          # can't be extracted we mark the sticky UNPARSEABLE rather than
+          # treating an empty CODEX_HEAD as "not present".
+          CODEX_BODY=$(jq -r --arg login "$CODEX_BOT_LOGIN" '
+            [.[] | select(.user.login == $login)
+                 | select(.body | contains("codex-pull-request-review-summary"))]
             | sort_by(.updated_at) | last | .body // ""
           ' /tmp/issue_comments.json)
 
           CODEX_HEAD=""
           CODEX_PRESENT=false
+          CODEX_UNPARSEABLE=false
           if [ -n "$CODEX_BODY" ]; then
             CODEX_PRESENT=true
             CODEX_HEAD=$(printf '%s\n' "$CODEX_BODY" \
               | grep -oE '`[0-9a-f]{7,40}`' \
               | head -1 \
               | tr -d '`' || true)
+            if [ -z "$CODEX_HEAD" ]; then
+              CODEX_UNPARSEABLE=true
+            fi
           fi
 
-          # Codex P1s: line-level PR review comments containing the string
-          # `P1 Badge`, filtered to the CURRENT HEAD (a P1 badge attached to
-          # an older commit was already superseded by whatever the new push
-          # did — the reviewer will re-post if the issue survived).
-          CODEX_P1_COUNT=$(jq -r --arg sha "$HEAD_SHA" '
-            [.[] | select(.body | contains("P1 Badge")) | select(.commit_id == $sha)]
+          # Codex P1s: line-level PR review comments authored by the Codex
+          # bot containing the string `P1 Badge`, filtered to the CURRENT
+          # HEAD (a P1 badge attached to an older commit was already
+          # superseded by whatever the new push did — the reviewer will
+          # re-post if the issue survived). The author filter is what
+          # prevents a random commenter from replying "P1 Badge" on a
+          # thread and inflating the count (or, worse, replying with the
+          # phrase to make their own PR fail).
+          CODEX_P1_COUNT=$(jq -r --arg sha "$HEAD_SHA" --arg login "$CODEX_BOT_LOGIN" '
+            [.[] | select(.user.login == $login)
+                 | select(.body | contains("P1 Badge"))
+                 | select(.commit_id == $sha)]
             | length
           ' /tmp/review_comments.json)
           CODEX_P1_COUNT=${CODEX_P1_COUNT:-0}
-          CODEX_P1_LOC=$(jq -r --arg sha "$HEAD_SHA" '
-            first(.[] | select(.body | contains("P1 Badge")) | select(.commit_id == $sha)
-                  | "\(.path):\(.line // .original_line // "?")")
+          CODEX_P1_LOC=$(jq -r --arg sha "$HEAD_SHA" --arg login "$CODEX_BOT_LOGIN" '
+            first(.[] | select(.user.login == $login)
+                       | select(.body | contains("P1 Badge"))
+                       | select(.commit_id == $sha)
+                       | "\(.path):\(.line // .original_line // "?")")
             // ""
           ' /tmp/review_comments.json)
 
-          # ----- priority: mergeability > checks > freshness > P1 -------
+          # ----- priority: mergeability > unparseable > checks > freshness > P1 --
           STATE=""
           DESC=""
 
@@ -181,7 +231,21 @@ jobs:
             DESC="PR has merge conflicts"
           fi
 
-          # 2) Checks — the Claude review workflow itself. If Claude is
+          # 2) Unparseable sticky = format drift. A sticky we can't read
+          #    is not the same as "no findings" — the reviewer may have
+          #    logged P1s in a heading style we no longer recognise. Fail
+          #    the gate here so a wording change in either reviewer's
+          #    sticky can never silently turn `merge-gate` green.
+          if [ -z "$STATE" ] && [ "$CLAUDE_UNPARSEABLE" = "true" ]; then
+            STATE=failure
+            DESC="Claude sticky present but unparseable (HEAD line or '### P1 (N)' heading missing)"
+          fi
+          if [ -z "$STATE" ] && [ "$CODEX_UNPARSEABLE" = "true" ]; then
+            STATE=failure
+            DESC="Codex sticky present but unparseable (SHA in backticks missing)"
+          fi
+
+          # 3) Checks — the Claude review workflow itself. If Claude is
           #    enabled (no "not set" signal) but its sticky isn't up yet,
           #    we're still waiting for the reviewer to post. Codex we can't
           #    interrogate — its absence is treated as "not configured for
@@ -191,7 +255,7 @@ jobs:
             DESC="Waiting for Claude review to post"
           fi
 
-          # 3) Freshness. A reviewer at an older SHA means the current diff
+          # 4) Freshness. A reviewer at an older SHA means the current diff
           #    was never read — that's the whole reason this gate exists.
           if [ -z "$STATE" ] && [ "$CLAUDE_PRESENT" = "true" ] \
               && [ -n "$CLAUDE_HEAD" ] && [ "$CLAUDE_HEAD" != "$HEAD_SHA" ]; then
@@ -204,7 +268,7 @@ jobs:
             DESC="Codex stale (at ${CODEX_HEAD})"
           fi
 
-          # 4) P1s.
+          # 5) P1s.
           if [ -z "$STATE" ] && [ "$CLAUDE_P1" -gt 0 ]; then
             STATE=failure
             DESC="${CLAUDE_P1} P1 unresolved in Claude review"
