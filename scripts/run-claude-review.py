@@ -55,6 +55,15 @@ FAILURE_MARKER = "<!-- reviewer:claude-failure -->"
 # filter prior reviews for dismissal — we ONLY ever dismiss reviews authored
 # by the bot; human reviews are never touched.
 BOT_LOGIN = "quibble-review[bot]"
+# quibble is preferred; github-actions is our documented fallback when App
+# auth is unavailable. `_resolve_gh_env` falls back to GITHUB_TOKEN when the
+# App install is missing or JWT signing fails — reviews posted under that
+# token are authored by `github-actions[bot]`. If `find_prior_reviews` only
+# matched `quibble-review[bot]`, a fallback-authored CHANGES_REQUESTED would
+# never get dismissed and could keep blocking merge after App auth is
+# restored. Combined with the MARKER body check, matching either identity
+# keeps us scoped to reviews THIS script actually posted.
+SUPPORTED_BOT_IDENTITIES = ("quibble-review[bot]", "github-actions[bot]")
 MODEL = "claude-opus-5"
 MAX_TOKENS = 16000
 # Cap the diff we send to Claude. Origami-Patterns-scale PRs comfortably fit;
@@ -601,12 +610,21 @@ def find_prior_reviews(
 
     Two filters are combined — bot login is not enough:
 
-    - `user.login == BOT_LOGIN`: never touch a human review.
+    - `user.login` is in SUPPORTED_BOT_IDENTITIES: never touch a human
+      review. The set includes both the preferred App identity
+      (`quibble-review[bot]`) AND the documented fallback identity
+      (`github-actions[bot]`) that `_resolve_gh_env` produces when App auth
+      is unavailable. Without the fallback identity, a
+      CHANGES_REQUESTED review posted under GITHUB_TOKEN would never be
+      dismissed and could keep blocking merge forever after App auth is
+      restored.
     - `body contains MARKER`: the deep and fast reviewers BOTH post as
-      `quibble-review[bot]`, so login alone would let each reviewer dismiss
-      the other's reviews (last-to-post wins). The MARKER (`<!-- reviewer:claude
-      -->` here; `<!-- reviewer:fast -->` in the sibling script) is what
-      keeps each script scoped to its own history.
+      `quibble-review[bot]` (and both fall back to `github-actions[bot]`
+      the same way), so identity alone would let each reviewer dismiss
+      the other's reviews. The MARKER (`<!-- reviewer:claude -->` here;
+      `<!-- reviewer:fast -->` in the sibling script) is what keeps each
+      script scoped to its own history — and also keeps this filter from
+      touching any OTHER workflow's `github-actions[bot]` reviews.
 
     State filter: only APPROVED and CHANGES_REQUESTED are returned.
     COMMENTED reviews aren't dismiss-able (the dismissals endpoint 422s on
@@ -614,6 +632,11 @@ def find_prior_reviews(
     already outside the gate. Filtering here is cheaper than swallowing the
     422 in `dismiss_review`.
     """
+    # jq array of supported identities; select if .user.login is in it.
+    # `.user.login as $l` binds the login BEFORE the array pipeline —
+    # otherwise `index(.user.login)` runs against the array as `.` and
+    # errors with "Cannot index array with string 'user'".
+    identities_json = json.dumps(list(SUPPORTED_BOT_IDENTITIES))
     out = sh(
         [
             "gh",
@@ -622,7 +645,8 @@ def find_prior_reviews(
             f"repos/{repo}/pulls/{pr}/reviews",
             "--jq",
             (
-                f'.[] | select(.user.login == "{BOT_LOGIN}" '
+                f'.[] | select((.user.login as $l | {identities_json} '
+                f'| index($l)) '
                 f'and (.state == "APPROVED" or .state == "CHANGES_REQUESTED") '
                 f'and ((.body // "") | contains("{MARKER}"))) | .id'
             ),

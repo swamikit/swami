@@ -480,6 +480,13 @@ class FindPriorReviewsFilterTests(unittest.TestCase):
     on login alone lets each reviewer dismiss the other's reviews — the
     exact bug this test guards against. Also verifies the state filter that
     keeps COMMENTED reviews (not dismiss-able) out of the returned list.
+
+    Also guards the fallback-identity widening (Codex P1 round 3):
+    `_resolve_gh_env` falls back to `GITHUB_TOKEN` when App auth is
+    unavailable — reviews posted under that token are authored by
+    `github-actions[bot]`, not `quibble-review[bot]`. The filter must match
+    EITHER identity so a fallback-authored CHANGES_REQUESTED can be
+    dismissed after App auth is restored.
     """
 
     def test_jq_expression_includes_marker_and_state_filter(self) -> None:
@@ -501,11 +508,121 @@ class FindPriorReviewsFilterTests(unittest.TestCase):
         self.assertIn("--jq", captured["cmd"])
         jq_expr = captured["cmd"][captured["cmd"].index("--jq") + 1]
         self.assertIn(mod.MARKER, jq_expr)
-        self.assertIn(mod.BOT_LOGIN, jq_expr)
+        # Both supported identities (preferred + documented fallback) must
+        # appear in the jq expression — the fallback identity is the whole
+        # point of SUPPORTED_BOT_IDENTITIES.
+        for identity in mod.SUPPORTED_BOT_IDENTITIES:
+            self.assertIn(identity, jq_expr)
+        self.assertIn("quibble-review[bot]", jq_expr)
+        self.assertIn("github-actions[bot]", jq_expr)
         # State filter must exclude COMMENTED (the dismissals endpoint 422s
         # on it) and stick to the two gate-able states.
         self.assertIn("APPROVED", jq_expr)
         self.assertIn("CHANGES_REQUESTED", jq_expr)
+
+    def test_supported_bot_identities_constant_shape(self) -> None:
+        """The constant is a tuple with quibble preferred, github-actions fallback."""
+        self.assertIsInstance(mod.SUPPORTED_BOT_IDENTITIES, tuple)
+        self.assertEqual(
+            mod.SUPPORTED_BOT_IDENTITIES,
+            ("quibble-review[bot]", "github-actions[bot]"),
+        )
+
+    def test_fallback_authored_review_with_marker_is_returned(self) -> None:
+        """The fix: a `github-actions[bot]` review carrying our MARKER MUST
+        be returned by `find_prior_reviews` so `main()` can dismiss it.
+
+        Also guards the negatives:
+        - `github-actions[bot]` WITHOUT the marker (some OTHER workflow's
+          review) is NOT returned — the MARKER body check scopes us.
+        - `quibble-review[bot]` with a DIFFERENT marker (the fast
+          reviewer's `<!-- reviewer:fast -->`) is NOT returned.
+        - Human reviews are NEVER returned.
+
+        Runs `gh api --paginate ... --jq <expr>` end-to-end by mocking
+        subprocess.run to feed a fake `gh api` response through the REAL
+        jq binary (via a second subprocess). Skips if jq is unavailable.
+        """
+        import shutil
+        if shutil.which("jq") is None:
+            self.skipTest("jq not on PATH")
+
+        # Realistic mixed cast: a fallback-authored CHANGES_REQUESTED with
+        # OUR marker (must dismiss), a fallback-authored review from some
+        # unrelated workflow (must NOT dismiss), a fast-reviewer quibble
+        # review (different marker, must NOT dismiss), a COMMENTED review
+        # (wrong state, must NOT dismiss), and a human review.
+        fake_reviews = [
+            {  # id=1: fallback-authored, our marker, gate-able state → DISMISS
+                "id": 1,
+                "user": {"login": "github-actions[bot]"},
+                "state": "CHANGES_REQUESTED",
+                "body": f"{mod.MARKER}\n\n## Claude review\n### P1 (1)\n- bad",
+            },
+            {  # id=2: some OTHER github-actions workflow's review → skip
+                "id": 2,
+                "user": {"login": "github-actions[bot]"},
+                "state": "CHANGES_REQUESTED",
+                "body": "<!-- some-other-workflow --> Unrelated CI review",
+            },
+            {  # id=3: fast reviewer (quibble login, wrong marker) → skip
+                "id": 3,
+                "user": {"login": "quibble-review[bot]"},
+                "state": "CHANGES_REQUESTED",
+                "body": "<!-- reviewer:fast -->\n\n## Fast pre-pass review",
+            },
+            {  # id=4: quibble + our marker + gate-able state → DISMISS
+                "id": 4,
+                "user": {"login": "quibble-review[bot]"},
+                "state": "APPROVED",
+                "body": f"{mod.MARKER}\n\nlooks good",
+            },
+            {  # id=5: COMMENTED (wrong state) even w/ our marker → skip
+                "id": 5,
+                "user": {"login": "quibble-review[bot]"},
+                "state": "COMMENTED",
+                "body": f"{mod.MARKER}\n\ncommentary",
+            },
+            {  # id=6: human review, even with our marker copy-pasted → skip
+                "id": 6,
+                "user": {"login": "some-human"},
+                "state": "CHANGES_REQUESTED",
+                "body": f"{mod.MARKER}\n\nhuman said no",
+            },
+        ]
+
+        # Mock subprocess.run to intercept the gh api call, then run the
+        # REAL jq binary against the fake payload with the SAME --jq
+        # expression the script constructed. Whatever jq prints is what
+        # the script would have parsed from gh. `real_run` captures the
+        # real function BEFORE the patch so the test's own jq invocation
+        # isn't re-intercepted.
+        import subprocess as _subprocess
+        real_run = _subprocess.run
+
+        def _fake_run(cmd, **kw):
+            self.assertIn("--jq", cmd)
+            jq_expr = cmd[cmd.index("--jq") + 1]
+            # Feed the fake reviews array into real jq.
+            proc = real_run(
+                ["jq", "-r", jq_expr],
+                input=json.dumps(fake_reviews),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            r = mock.MagicMock()
+            r.stdout = proc.stdout
+            r.stderr = ""
+            r.returncode = 0
+            return r
+
+        with mock.patch("subprocess.run", side_effect=_fake_run):
+            ids = mod.find_prior_reviews("o/r", "5", env={})
+
+        # Sorted for stable comparison — order of ids from jq is input
+        # order, but this asserts the SET is right regardless.
+        self.assertEqual(sorted(ids), [1, 4])
 
 
 class GetDiffAnchorsIntegrationTests(unittest.TestCase):

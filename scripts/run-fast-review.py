@@ -82,6 +82,15 @@ FAILURE_MARKER = "<!-- reviewer:fast-failure -->"
 # App login the bot identifies as when it authors reviews. Filter for prior
 # reviews we can dismiss — never touch a human review.
 BOT_LOGIN = "quibble-review[bot]"
+# quibble is preferred; github-actions is our documented fallback when App
+# auth is unavailable. `_resolve_gh_env` falls back to GITHUB_TOKEN when the
+# App install is missing or JWT signing fails — reviews posted under that
+# token are authored by `github-actions[bot]`. If `find_prior_reviews` only
+# matched `quibble-review[bot]`, a fallback-authored CHANGES_REQUESTED would
+# never get dismissed and could keep blocking merge after App auth is
+# restored. Combined with the MARKER body check, matching either identity
+# keeps us scoped to reviews THIS script actually posted.
+SUPPORTED_BOT_IDENTITIES = ("quibble-review[bot]", "github-actions[bot]")
 PRIMARY = ("gemini", "gemini-2.0-flash-exp")
 FALLBACK = ("anthropic", "claude-opus-5")
 MAX_TOKENS = 8000
@@ -610,20 +619,34 @@ def find_prior_reviews(
 ) -> list[int]:
     """IDs of THIS reviewer's prior reviews on `pr`.
 
-    Two filters combined — bot login alone is not enough:
+    Two filters combined — bot identity alone is not enough:
 
-    - `user.login == BOT_LOGIN`: never touch human reviews.
+    - `user.login` is in SUPPORTED_BOT_IDENTITIES: never touch human
+      reviews. The set includes both the preferred App identity
+      (`quibble-review[bot]`) AND the documented fallback identity
+      (`github-actions[bot]`) that `_resolve_gh_env` produces when App
+      auth is unavailable. Without the fallback identity, a
+      CHANGES_REQUESTED review posted under GITHUB_TOKEN would never be
+      dismissed and could keep blocking merge forever after App auth is
+      restored.
     - `body contains MARKER` (`<!-- reviewer:fast -->` here): the fast
-      pre-pass and the deep reviewer BOTH post as `quibble-review[bot]`,
-      so login-only would let each dismiss the other's reviews (last-to-
-      post wins). MARKER is what keeps each script scoped to its own
-      history.
+      pre-pass and the deep reviewer BOTH post as `quibble-review[bot]`
+      (and both fall back to `github-actions[bot]` the same way), so
+      identity-only would let each dismiss the other's reviews. MARKER
+      keeps each script scoped to its own history — and also keeps this
+      filter from touching any OTHER workflow's `github-actions[bot]`
+      reviews.
 
     State filter: only APPROVED / CHANGES_REQUESTED — those are the only
     gate-able states, and the only ones the dismissals endpoint accepts
     (COMMENTED reviews 422 on dismiss). DISMISSED/PENDING are already
     outside the gate.
     """
+    # jq array of supported identities; select if .user.login is in it.
+    # `.user.login as $l` binds the login BEFORE the array pipeline —
+    # otherwise `index(.user.login)` runs against the array as `.` and
+    # errors with "Cannot index array with string 'user'".
+    identities_json = json.dumps(list(SUPPORTED_BOT_IDENTITIES))
     out = sh(
         [
             "gh",
@@ -632,7 +655,8 @@ def find_prior_reviews(
             f"repos/{repo}/pulls/{pr}/reviews",
             "--jq",
             (
-                f'.[] | select(.user.login == "{BOT_LOGIN}" '
+                f'.[] | select((.user.login as $l | {identities_json} '
+                f'| index($l)) '
                 f'and (.state == "APPROVED" or .state == "CHANGES_REQUESTED") '
                 f'and ((.body // "") | contains("{MARKER}"))) | .id'
             ),
