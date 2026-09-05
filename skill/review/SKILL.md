@@ -123,6 +123,34 @@ buckets. Say which is which.
   Review the code against it. If the evidence looks fabricated, that's the
   finding, not "I re-ran it and it passes".
 
+## When the diff exceeds the reviewer cap
+
+`scripts/run-claude-review.py` caps the diff it sends to Claude at
+`MAX_DIFF_BYTES` (200,000 bytes). Anything larger is truncated and the
+reviewer synthesizes a P1 finding that blocks the automated merge gate
+(ADR-0014 — the Reviewer read *is* the gate; approving on a partial diff
+is a false green). When you hit that cap, work through this ladder in
+order before overriding:
+
+1. **Split the PR.** Break it into smaller topic-scoped PRs that each fit
+   under the cap. This is the default and by far the safest option — a
+   review that reads the whole change is the whole point of the gate.
+2. **Re-run the reviewer against a filtered subset.** If the bulk is
+   generated code (Swift + IR for a translated pattern, snapshot fixtures,
+   vendored trees), a maintainer can re-run `run-claude-review.py`
+   locally with the generated paths stripped from the diff so the review
+   sees the hand-written surface. Note in the PR which paths were
+   filtered and why.
+3. **Manual merge with an explicit rebuttal.** For a one-pattern-one-PR
+   where the size is unavoidable and can't be filtered meaningfully,
+   treat the synthetic truncation P1 as a documented note: post a
+   rebuttal comment on the PR that (a) acknowledges the truncation, (b)
+   explains why splitting/filtering aren't viable here, and (c) points to
+   the human review that stood in for the automated one. Then merge
+   manually. This is the escape hatch, not the default — use it sparingly
+   and never for a change with meaningful hand-written logic still
+   unreviewed.
+
 ## Message-exchange context
 
 - 30-minute poll deadline for both sides. Event-driven fallback on timeout: if
