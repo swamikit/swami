@@ -255,7 +255,8 @@ def compute_event(review: dict) -> str:
 
 
 def format_review_body(
-    review: dict, head_sha: str, provider: str, truncated_bytes: int = 0
+    review: dict, head_sha: str, provider: str, truncated_bytes: int = 0,
+    unanchored_findings: list[dict] | None = None,
 ) -> str:
     """Build the summary body posted as the Review's top-level `body`.
 
@@ -298,6 +299,7 @@ def format_review_body(
         for sev in ("P1", "P2", "P3"):
             lines.append(f"### {sev} ({len(buckets[sev])})")
         lines += ["", "_Findings inline in Files changed._"]
+    lines += _format_unanchored_block(unanchored_findings or [])
     lines += [
         "",
         "_fast pre-pass — a deeper Claude Opus review runs after this._",
@@ -305,23 +307,151 @@ def format_review_body(
     return "\n".join(lines)
 
 
-def format_review_comments(review: dict) -> list[dict]:
-    """Per-finding inline comments for the Reviews API.
+def _severity_of(f: dict) -> str:
+    """Return P1/P2/P3 for a finding, folding legacy severity words in."""
+    raw = str(f.get("severity") or "").strip()
+    legacy = {"blocking": "P1", "nit": "P2", "nice-to-have": "P3"}
+    return raw.upper() if raw.upper() in {"P1", "P2", "P3"} else legacy.get(raw.lower(), "P3")
 
-    Each anchored to `path` + `line` on the RIGHT side of the diff. Findings
-    without a valid file+line are dropped from the inline set (still counted
-    in the summary via bucket headers) — one bad anchor would 422 the whole
-    review call.
+
+def _parse_hunk_right_lines(patch: str) -> set[int]:
+    """Return the set of RIGHT-side line numbers referenced in a unified patch.
+
+    Walks each hunk from its `@@ -a,b +c,d @@` header, incrementing the
+    RIGHT counter on context (` `) and added (`+`) lines and skipping
+    removed (`-`) lines. `\\ No newline at end of file` meta ignored.
+
+    A line is anchorable on RIGHT if it appears in a hunk as either a
+    context line or an added line — those are exactly the positions the
+    Reviews API accepts as `side: RIGHT` anchors.
     """
-    out: list[dict] = []
-    for f in review.get("findings") or []:
+    out: set[int] = set()
+    right = 0
+    in_hunk = False
+    for line in patch.splitlines():
+        if line.startswith("@@"):
+            try:
+                plus = line.split("+", 1)[1]
+                right = int(plus.split(",", 1)[0].split(" ", 1)[0])
+            except (IndexError, ValueError):
+                in_hunk = False
+                continue
+            in_hunk = True
+            continue
+        if not in_hunk:
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            out.add(right)
+            right += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            continue
+        elif line.startswith("\\"):
+            continue
+        else:
+            out.add(right)
+            right += 1
+    return out
+
+
+def get_diff_anchors(
+    repo: str, pr: str, env: dict[str, str] | None = None
+) -> dict[str, set[int]]:
+    """Return `{filename: {anchorable RIGHT line, ...}}` for this PR's diff.
+
+    The Reviews API is atomic on POST: one inline comment whose `path:line`
+    isn't in the diff 422s the WHOLE review, dropping the verdict. We
+    fetch the PR's files listing, parse each `patch`, and hand the result
+    to `partition_findings` so hallucinated `path:line` values from the
+    fast pre-pass model get routed to the body instead of dropping the
+    review.
+    """
+    out = sh(
+        [
+            "gh", "api", "--paginate",
+            f"repos/{repo}/pulls/{pr}/files",
+        ],
+        env=env,
+    )
+    text = out.strip()
+    if not text:
+        return {}
+    files: list[dict] = []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            files = parsed
+        elif isinstance(parsed, dict):
+            files = [parsed]
+    except json.JSONDecodeError:
+        for chunk in text.splitlines():
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            try:
+                p = json.loads(chunk)
+                if isinstance(p, list):
+                    files.extend(p)
+                elif isinstance(p, dict):
+                    files.append(p)
+            except json.JSONDecodeError:
+                continue
+    anchors: dict[str, set[int]] = {}
+    for f in files:
+        path = f.get("filename")
+        patch = f.get("patch")
+        if not path or not patch:
+            continue
+        anchors.setdefault(path, set()).update(_parse_hunk_right_lines(patch))
+    return anchors
+
+
+def partition_findings(
+    findings: list[dict], anchors: dict[str, set[int]]
+) -> tuple[list[dict], list[dict]]:
+    """Split findings into (anchorable, un-anchorable) using the diff anchors.
+
+    Anchorable = has `file` + integer `line` AND that `(file, line)` pair
+    appears as a valid RIGHT-side anchor in the PR diff. Everything else
+    (missing line, hallucinated path, line outside the hunk, or the
+    synthetic truncation P1 with `file: null`) routes to un-anchorable so
+    it can be appended to the review body.
+    """
+    inline: list[dict] = []
+    unanchored: list[dict] = []
+    for f in findings:
         path = f.get("file")
         line = f.get("line")
-        if not path or not line:
+        if not path or line is None:
+            unanchored.append(f)
             continue
-        raw = str(f.get("severity") or "").strip()
-        legacy = {"blocking": "P1", "nit": "P2", "nice-to-have": "P3"}
-        sev = raw.upper() if raw.upper() in {"P1", "P2", "P3"} else legacy.get(raw.lower(), "P3")
+        try:
+            line_int = int(line)
+        except (TypeError, ValueError):
+            unanchored.append(f)
+            continue
+        valid = anchors.get(str(path))
+        if not valid or line_int not in valid:
+            unanchored.append(f)
+            continue
+        inline.append({**f, "line": line_int})
+    return inline, unanchored
+
+
+def format_review_comments(inline_findings: list[dict]) -> list[dict]:
+    """Per-finding inline comments for the Reviews API.
+
+    Accepts findings already partitioned by `partition_findings` — every
+    entry is anchorable. Each becomes a `path`+`line` inline comment on
+    the RIGHT side of the diff carrying FINDING_MARKER for grep-ability.
+    """
+    out: list[dict] = []
+    for f in inline_findings:
+        path = f.get("file")
+        line = f.get("line")
+        if not path or line is None:
+            # Belt-and-suspenders: partition should have filtered these.
+            continue
+        sev = _severity_of(f)
         title = (f.get("title") or f.get("claim") or "").strip()
         reasoning = (f.get("reasoning") or f.get("evidence") or "").strip()
         suggestion = (f.get("suggestion") or "").strip()
@@ -342,26 +472,85 @@ def format_review_comments(review: dict) -> list[dict]:
     return out
 
 
+def _format_unanchored_block(unanchored: list[dict]) -> list[str]:
+    """Render un-anchorable findings as a `### Unanchored findings` section.
+
+    Without this section a finding the model tied to a file/line outside
+    the diff would vanish: `format_review_comments` drops it and the
+    summary only carries bucket counts. Keep the text on the PR.
+    """
+    if not unanchored:
+        return []
+    lines: list[str] = ["", "### Unanchored findings", ""]
+    lines.append(
+        "_These findings could not be anchored to a diff line — kept here "
+        "so nothing is dropped._"
+    )
+    lines.append("")
+    for f in unanchored:
+        sev = _severity_of(f)
+        title = (f.get("title") or f.get("claim") or "").strip() or "(no title)"
+        path = str(f.get("file") or "").strip()
+        line = f.get("line")
+        loc = ""
+        if path and line is not None:
+            loc = f" `{path}:{line}`"
+        elif path:
+            loc = f" `{path}`"
+        lines.append(f"- **[{sev}]{loc}** {title}")
+        reasoning = (f.get("reasoning") or f.get("evidence") or "").strip()
+        if reasoning:
+            lines.append(f"  - {reasoning}")
+        suggestion = (f.get("suggestion") or "").strip()
+        if suggestion:
+            lines.append(f"  - _suggestion:_ {suggestion}")
+    return lines
+
+
 def format_review(
-    review: dict, head_sha: str, provider: str, truncated_bytes: int = 0
+    review: dict, head_sha: str, provider: str, truncated_bytes: int = 0,
+    anchors: dict[str, set[int]] | None = None,
 ) -> dict:
-    """Full Reviews-API payload: `{body, event, comments}`."""
+    """Full Reviews-API payload: `{body, event, comments}`.
+
+    `anchors` = `{filename: {RIGHT-line, ...}}` from `get_diff_anchors`.
+    When absent (unit test path) defaults to `{}` — everything routes to
+    the body's `### Unanchored findings`, no inline comments. Safer than
+    trusting model-supplied `path:line` values against a diff we haven't
+    checked: one bad anchor 422s the whole POST.
+    """
+    anchors = anchors if anchors is not None else {}
+    all_findings = review.get("findings") or []
+    inline_findings, unanchored = partition_findings(all_findings, anchors)
     return {
         "body": format_review_body(
-            review, head_sha, provider, truncated_bytes=truncated_bytes
+            review, head_sha, provider,
+            truncated_bytes=truncated_bytes,
+            unanchored_findings=unanchored,
         ),
         "event": compute_event(review),
-        "comments": format_review_comments(review),
+        "comments": format_review_comments(inline_findings),
     }
 
 
 def find_prior_reviews(
     repo: str, pr: str, env: dict[str, str] | None = None
 ) -> list[int]:
-    """IDs of reviews on `pr` authored by the bot, excluding DISMISSED/PENDING.
+    """IDs of THIS reviewer's prior reviews on `pr`.
 
-    Only the bot's own reviews are returned — humans are never touched. This
-    is the whitelist for `dismiss_review`.
+    Two filters combined — bot login alone is not enough:
+
+    - `user.login == BOT_LOGIN`: never touch human reviews.
+    - `body contains MARKER` (`<!-- reviewer:fast -->` here): the fast
+      pre-pass and the deep reviewer BOTH post as `quibble-review[bot]`,
+      so login-only would let each dismiss the other's reviews (last-to-
+      post wins). MARKER is what keeps each script scoped to its own
+      history.
+
+    State filter: only APPROVED / CHANGES_REQUESTED — those are the only
+    gate-able states, and the only ones the dismissals endpoint accepts
+    (COMMENTED reviews 422 on dismiss). DISMISSED/PENDING are already
+    outside the gate.
     """
     out = sh(
         [
@@ -370,7 +559,11 @@ def find_prior_reviews(
             "--paginate",
             f"repos/{repo}/pulls/{pr}/reviews",
             "--jq",
-            f'.[] | select(.user.login == "{BOT_LOGIN}" and .state != "DISMISSED" and .state != "PENDING") | .id',
+            (
+                f'.[] | select(.user.login == "{BOT_LOGIN}" '
+                f'and (.state == "APPROVED" or .state == "CHANGES_REQUESTED") '
+                f'and ((.body // "") | contains("{MARKER}"))) | .id'
+            ),
         ],
         env=env,
     )
@@ -559,10 +752,16 @@ def main() -> int:
     # reviewer re-decide on the full diff.
     if omitted_bytes > 0 and bool(review.get("approve")):
         review["approve"] = False
+        # `file: null, line: null` deliberately — the truncation P1 is a
+        # review-meta finding, not tied to any file in the diff, so it
+        # MUST land in `### Unanchored findings` in the body, never as an
+        # inline comment. An earlier draft anchored to `.github/reviewer:1`,
+        # a path never in a real diff; the Reviews API 422'd the whole POST
+        # and dropped the REQUEST_CHANGES verdict along with it.
         synthetic = {
             "severity": "P1",
-            "file": ".github/reviewer",
-            "line": 1,
+            "file": None,
+            "line": None,
             "title": "Diff truncated — fast pre-pass cannot approve",
             "reasoning": (
                 f"The PR diff exceeded the {MAX_DIFF_BYTES}-byte fast-pass "
@@ -580,8 +779,21 @@ def main() -> int:
         existing = review.get("findings") or []
         review["findings"] = [synthetic] + list(existing)
 
+    # Fetch anchorable `(file, RIGHT-line)` pairs before formatting so
+    # hallucinated `path:line` values from the fast model get routed to
+    # the body's `### Unanchored findings` instead of 422'ing the POST.
+    # On fetch failure we log and continue with an empty anchor set —
+    # everything routes to unanchored, the POST still lands with body +
+    # event, no finding text lost.
+    try:
+        anchors = get_diff_anchors(repo, pr, env=gh_env)
+    except Exception as exc:  # noqa: BLE001
+        print(f"::warning::could not fetch diff anchors: {exc}", file=sys.stderr)
+        anchors = {}
+
     payload = format_review(
-        review, head_sha, provider, truncated_bytes=omitted_bytes
+        review, head_sha, provider,
+        truncated_bytes=omitted_bytes, anchors=anchors,
     )
 
     # Dismiss any prior bot-authored review BEFORE posting the new one — a

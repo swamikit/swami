@@ -127,7 +127,8 @@ class FormatReviewShapeTests(unittest.TestCase):
                 {"severity": "P2", "file": "b.py", "line": 4, "title": "meh"},
             ],
         }
-        body = mod.format_review(r, head_sha="abc123")["body"]
+        anchors = {"a.py": {3}, "b.py": {4}}
+        body = mod.format_review(r, head_sha="abc123", anchors=anchors)["body"]
         # Marker must be first line so merge-gate greps still match.
         self.assertTrue(body.startswith(mod.MARKER))
         # Count headers for all three severities are always emitted so
@@ -154,7 +155,8 @@ class FormatReviewShapeTests(unittest.TestCase):
                 }
             ],
         }
-        comments = mod.format_review(r, head_sha="abc123")["comments"]
+        anchors = {"scripts/x.py": {42}}
+        comments = mod.format_review(r, head_sha="abc123", anchors=anchors)["comments"]
         self.assertEqual(len(comments), 1)
         c = comments[0]
         # Reviews API line-anchored comment shape.
@@ -170,7 +172,8 @@ class FormatReviewShapeTests(unittest.TestCase):
     def test_finding_without_line_is_dropped_from_inline(self) -> None:
         # Un-anchorable findings must NOT ship inline — the API rejects the
         # whole review if any comment lacks a valid diff anchor. They still
-        # count in the body's severity buckets so nothing is silently lost.
+        # count in the body's severity buckets so nothing is silently lost,
+        # and now also get echoed in an `### Unanchored findings` section.
         r = {
             "approve": False,
             "findings": [
@@ -178,11 +181,48 @@ class FormatReviewShapeTests(unittest.TestCase):
                 {"severity": "P2", "file": "a.py", "line": 5, "title": "anchored"},
             ],
         }
-        p = mod.format_review(r, head_sha="abc123")
+        anchors = {"a.py": {5}}
+        p = mod.format_review(r, head_sha="abc123", anchors=anchors)
         self.assertEqual(len(p["comments"]), 1)
         self.assertEqual(p["comments"][0]["line"], 5)
         # Both still counted in the body's P2 bucket.
         self.assertIn("### P2 (2)", p["body"])
+        # The dropped one still shows up under Unanchored findings.
+        self.assertIn("### Unanchored findings", p["body"])
+        self.assertIn("no line", p["body"])
+
+    def test_hallucinated_file_routes_to_unanchored(self) -> None:
+        # Reviewers routinely cite a file that isn't in this PR's diff — the
+        # atomic POST would 422 the whole review. Validate against anchors
+        # and route bad references to the body instead of dropping the review.
+        r = {
+            "approve": False,
+            "findings": [
+                {
+                    "severity": "P1",
+                    "file": "does/not/exist.py",
+                    "line": 10,
+                    "title": "hallucinated",
+                    "reasoning": "model made this file up",
+                },
+                {
+                    "severity": "P2",
+                    "file": "real.py",
+                    "line": 999,  # file real but line outside any hunk
+                    "title": "line beyond hunk",
+                },
+            ],
+        }
+        anchors = {"real.py": {1, 2, 3}}
+        p = mod.format_review(r, head_sha="abc123", anchors=anchors)
+        # Neither anchors — both must route to the body.
+        self.assertEqual(p["comments"], [])
+        self.assertIn("### Unanchored findings", p["body"])
+        self.assertIn("hallucinated", p["body"])
+        self.assertIn("line beyond hunk", p["body"])
+        # Event still respects the P1 → REQUEST_CHANGES contract even when
+        # the P1 could not be anchored inline.
+        self.assertEqual(p["event"], "REQUEST_CHANGES")
 
 
 class FormatReviewTruncationTests(unittest.TestCase):
@@ -201,26 +241,107 @@ class FormatReviewTruncationTests(unittest.TestCase):
         self.assertIn("diff truncated at", body)
         self.assertIn("500 bytes omitted", body)
 
-    def test_synthetic_p1_forces_REQUEST_CHANGES(self) -> None:
-        # This is exactly the shape `main()` builds when a truncated diff
-        # arrives with approve=true: inject a synthetic P1 at .github/reviewer,
-        # flip approve to false. That combination must never emit APPROVE.
+    def test_synthetic_p1_forces_REQUEST_CHANGES_and_stays_in_body(self) -> None:
+        # `main()` builds the synthetic P1 with `file: null, line: null` so
+        # it MUST land in the body's `### Unanchored findings` section,
+        # never as an inline comment. Anchoring it against a fake path
+        # like `.github/reviewer:1` was the bug that 422'd every truncated-
+        # diff review — the whole POST failed atomically, dropping the
+        # REQUEST_CHANGES verdict along with it.
         review = {
             "approve": False,
             "findings": [
                 {
                     "severity": "P1",
-                    "file": ".github/reviewer",
-                    "line": 1,
+                    "file": None,
+                    "line": None,
                     "title": "Diff truncated — cannot approve",
+                    "reasoning": "reviewer saw a partial diff",
                 }
             ],
         }
         p = mod.format_review(review, head_sha="abc123", truncated_bytes=500)
         self.assertEqual(p["event"], "REQUEST_CHANGES")
-        # And the synthetic finding does anchor inline (it has a line).
-        self.assertEqual(len(p["comments"]), 1)
-        self.assertEqual(p["comments"][0]["path"], ".github/reviewer")
+        # Synthetic finding must NOT anchor inline — one bad anchor 422s
+        # the whole review.
+        self.assertEqual(p["comments"], [])
+        # Text still reaches the PR via the body section.
+        self.assertIn("### Unanchored findings", p["body"])
+        self.assertIn("Diff truncated", p["body"])
+
+
+class DiffAnchorParsingTests(unittest.TestCase):
+    """`_parse_hunk_right_lines` is the truth we validate anchors against."""
+
+    def test_basic_hunk_lines(self) -> None:
+        patch = (
+            "@@ -1,3 +1,4 @@\n"
+            " context1\n"
+            "+added1\n"
+            "+added2\n"
+            " context2\n"
+        )
+        # RIGHT lines: 1 (context1), 2 (added1), 3 (added2), 4 (context2).
+        self.assertEqual(mod._parse_hunk_right_lines(patch), {1, 2, 3, 4})
+
+    def test_removed_lines_are_not_on_right(self) -> None:
+        patch = (
+            "@@ -10,4 +12,3 @@\n"
+            " ctx\n"
+            "-removed1\n"
+            "-removed2\n"
+            "+added\n"
+        )
+        # Only ctx (12) and added (13) exist on RIGHT.
+        self.assertEqual(mod._parse_hunk_right_lines(patch), {12, 13})
+
+    def test_multiple_hunks(self) -> None:
+        patch = (
+            "@@ -1,1 +1,1 @@\n"
+            "+a\n"
+            "@@ -50,2 +60,3 @@\n"
+            " x\n"
+            "+y\n"
+            " z\n"
+        )
+        self.assertEqual(mod._parse_hunk_right_lines(patch), {1, 60, 61, 62})
+
+    def test_no_newline_meta_is_ignored(self) -> None:
+        patch = (
+            "@@ -1,1 +1,2 @@\n"
+            "+one\n"
+            "+two\n"
+            "\\ No newline at end of file\n"
+        )
+        self.assertEqual(mod._parse_hunk_right_lines(patch), {1, 2})
+
+
+class PartitionFindingsTests(unittest.TestCase):
+    """`partition_findings` gates the Reviews API POST — must be tight."""
+
+    def test_anchorable_goes_inline_others_go_body(self) -> None:
+        findings = [
+            {"severity": "P2", "file": "a.py", "line": 5, "title": "ok"},
+            {"severity": "P2", "file": "a.py", "line": 999, "title": "beyond"},
+            {"severity": "P2", "file": "nope.py", "line": 1, "title": "hallucinated"},
+            {"severity": "P2", "file": "a.py", "line": None, "title": "no line"},
+            {"severity": "P2", "file": None, "line": 5, "title": "no file"},
+        ]
+        anchors = {"a.py": {5, 6}}
+        inline, unanchored = mod.partition_findings(findings, anchors)
+        self.assertEqual([f["title"] for f in inline], ["ok"])
+        self.assertEqual(
+            [f["title"] for f in unanchored],
+            ["beyond", "hallucinated", "no line", "no file"],
+        )
+
+    def test_empty_anchors_routes_everything_to_body(self) -> None:
+        # get_diff_anchors failure path: better to lose inline placement
+        # than to lose the whole review to a bad anchor.
+        findings = [{"severity": "P1", "file": "a.py", "line": 5, "title": "x"}]
+        inline, unanchored = mod.partition_findings(findings, {})
+        self.assertEqual(inline, [])
+        self.assertEqual(len(unanchored), 1)
 
 
 class DismissThenPostSequenceTests(unittest.TestCase):
@@ -266,6 +387,16 @@ class DismissThenPostSequenceTests(unittest.TestCase):
         # post_review) so we can assert the whole sequence in one list.
         calls: list[tuple[str, list[str]]] = []
 
+        # Anchor for scripts/x.py line 10 must be present in the fake files
+        # payload — otherwise partition_findings routes it to the body and
+        # the "one inline comment" assertion below fails.
+        files_payload = json.dumps([
+            {
+                "filename": "scripts/x.py",
+                "patch": "@@ -8,3 +8,5 @@\n ctx8\n ctx9\n+added10\n+added11\n ctx12\n",
+            }
+        ])
+
         def _fake_subprocess_run(cmd, **kw):
             # Record the (tag, cmd) so we can pattern-match. `input` (JSON
             # payload) is captured off `kw` for the POST assertion.
@@ -277,6 +408,9 @@ class DismissThenPostSequenceTests(unittest.TestCase):
                 return self._run_returns(stdout="diff --git a/x b/x\n+1\n")
             if "/reviews/" in joined and "dismissals" in joined:
                 return self._run_returns()  # dismiss OK
+            if "/pulls/5/files" in joined:
+                # get_diff_anchors — return a fake files listing.
+                return self._run_returns(stdout=files_payload)
             if joined.endswith("/reviews") or "/pulls/5/reviews" in joined and "-X" in cmd and "POST" in cmd:
                 return self._run_returns(stdout='{"id": 999}')
             if "/pulls/5/reviews" in joined and "--jq" in cmd:
@@ -336,6 +470,79 @@ class DismissThenPostSequenceTests(unittest.TestCase):
         self.assertEqual(len(payload["comments"]), 1)
         self.assertEqual(payload["comments"][0]["path"], "scripts/x.py")
         self.assertEqual(payload["comments"][0]["line"], 10)
+
+
+class FindPriorReviewsFilterTests(unittest.TestCase):
+    """`find_prior_reviews` must filter by marker AND state, not just login.
+
+    The deep and fast reviewers both post as `quibble-review[bot]`. Filtering
+    on login alone lets each reviewer dismiss the other's reviews — the
+    exact bug this test guards against. Also verifies the state filter that
+    keeps COMMENTED reviews (not dismiss-able) out of the returned list.
+    """
+
+    def test_jq_expression_includes_marker_and_state_filter(self) -> None:
+        captured: dict[str, list[str]] = {"cmd": []}
+
+        def _fake_run(cmd, **kw):
+            captured["cmd"] = list(cmd)
+            r = mock.MagicMock()
+            r.stdout = ""
+            r.stderr = ""
+            r.returncode = 0
+            return r
+
+        with mock.patch("subprocess.run", side_effect=_fake_run):
+            mod.find_prior_reviews("o/r", "5", env={})
+
+        # The `--jq` value must reference the deep-reviewer MARKER so this
+        # script never dismisses the fast reviewer's reviews.
+        self.assertIn("--jq", captured["cmd"])
+        jq_expr = captured["cmd"][captured["cmd"].index("--jq") + 1]
+        self.assertIn(mod.MARKER, jq_expr)
+        self.assertIn(mod.BOT_LOGIN, jq_expr)
+        # State filter must exclude COMMENTED (the dismissals endpoint 422s
+        # on it) and stick to the two gate-able states.
+        self.assertIn("APPROVED", jq_expr)
+        self.assertIn("CHANGES_REQUESTED", jq_expr)
+
+
+class GetDiffAnchorsIntegrationTests(unittest.TestCase):
+    """`get_diff_anchors` shells out to `gh api /pulls/{N}/files`.
+
+    Mock the shell layer and check the returned mapping matches what
+    `_parse_hunk_right_lines` would produce for the fake `patch` field.
+    """
+
+    def test_parses_gh_files_output(self) -> None:
+        files_json = json.dumps([
+            {
+                "filename": "a.py",
+                "patch": "@@ -1,2 +1,3 @@\n one\n+two\n three\n",
+            },
+            {
+                "filename": "b.md",
+                "patch": "@@ -10,1 +10,2 @@\n x\n+y\n",
+            },
+            {
+                "filename": "vendored.bin",
+                # binary / no patch — must contribute no anchors.
+            },
+        ])
+
+        def _fake_run(cmd, **kw):
+            r = mock.MagicMock()
+            r.stdout = files_json
+            r.stderr = ""
+            r.returncode = 0
+            return r
+
+        with mock.patch("subprocess.run", side_effect=_fake_run):
+            anchors = mod.get_diff_anchors("o/r", "5", env={})
+
+        self.assertEqual(anchors["a.py"], {1, 2, 3})
+        self.assertEqual(anchors["b.md"], {10, 11})
+        self.assertNotIn("vendored.bin", anchors)
 
 
 if __name__ == "__main__":
