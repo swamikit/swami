@@ -31,16 +31,69 @@ on:
     types: [resolved, unresolved]
   issue_comment:
     types: [created, edited, deleted]
-  # Re-run when a required check finishes — otherwise a macOS `verify` run
-  # that lands after the last reviewer event leaves merge-gate pending
-  # forever (comments posted by GITHUB_TOKEN can't recursively trigger this).
-  check_run:
-    types: [completed]
+  # NOTE: `check_run: [completed]` was intentionally REMOVED.
+  #
+  # Symptom: after adding that trigger together with a concurrency-group
+  # expression that read `github.event.check_run.pull_requests[0].number`,
+  # every push to any branch produced a failed merge-gate run with
+  # `conclusion=failure, jobs=[]`, and the workflow's API `name` field
+  # regressed from `merge-gate` to the file path
+  # (`.github/workflows/merge-gate.yml`) — i.e. GitHub was NOT parsing/
+  # registering the YAML any more. Diagnosis: the expression evaluator
+  # trips on the `[0].number` index chain when `check_run` is undefined
+  # on non-check_run events, and the workflow fails registration before
+  # any job runs.
+  #
+  # Losing "auto re-run when verify finishes" is acceptable. If we want
+  # to restore that re-trigger, verify.yml (or any other workflow) can
+  # explicitly call:
+  #   gh workflow run merge-gate.yml --ref "$HEAD_REF"
+  # at the end of its run instead of relying on the check_run event.
 
-# One in-flight run per PR. `cancel-in-progress: true` — a burst of comments
-# on a PR doesn't queue N runs; only the latest one's status counts.
+# Partition triggers by "actionable" vs "ignorable" — same fix shape as
+# review.yml on this PR (quibble P2 on this PR flagged the asymmetry):
+#
+#   Actionable — pull_request, pull_request_review,
+#   pull_request_review_comment, and pull_request_review_thread. All
+#   of these change the merge-gate answer, so they share one group
+#   `merge-gate-<PR-or-no-pr>` and a newer run cancels the older one
+#   (correct staleness behavior).
+#
+#   Ignorable — issue_comment. The gate doesn't consume comment bodies
+#   (PR body edits arrive via pull_request:edited, not issue_comment),
+#   so these are essentially always ignorable for gate purposes. Each is
+#   given its own per-comment group `merge-gate-<PR>-ignorable-<comment-id>`
+#   so it (a) never touches the actionable group, and (b) still
+#   de-duplicates same-comment edit/delete churn among itself.
+#
+# Without this partition the same stomping class fixed on review.yml
+# applies here: another bot's PR comment fires issue_comment, enters
+# the same group, and cancels the in-flight actionable run before the
+# job-level `if:` can skip it (concurrency evaluates before `if:`).
+# A cancelled merge-gate run leaves a mergeable PR silently pending
+# until the next event re-triggers it.
+#
+# The `'no-pr'` fallback on the actionable group is belt-and-suspenders
+# defense: the job-level `if:` already filters no-PR cases (issue_comment
+# on regular issues), so this fallback isn't a diagnosed root cause — it
+# just keeps the group expression well-formed on every trigger. All
+# no-PR events share the one group, which is harmless because the guard
+# skips them immediately.
+#
+# NOTE: The `github.event.check_run.pull_requests[0].number` term was
+# intentionally REMOVED from this expression (paired with removing the
+# `check_run` trigger above). Its presence broke workflow registration —
+# GitHub's expression evaluator trips on the `[0].number` chain when
+# check_run is undefined on other events, and the workflow's API `name`
+# field regressed to the file path (a diagnostic that GitHub failed
+# to parse the YAML). See the block-comment on `on:` above for detail.
 concurrency:
-  group: 'merge-gate-${{ github.event.pull_request.number || github.event.issue.number || github.event.check_run.pull_requests[0].number }}'
+  group: >-
+    merge-gate-${{ github.event.pull_request.number || github.event.issue.number || 'no-pr' }}${{
+      (github.event_name == 'issue_comment' && github.event.comment)
+        && format('-ignorable-{0}', github.event.comment.id)
+        || ''
+    }}
   cancel-in-progress: true
 
 permissions:
@@ -59,11 +112,10 @@ jobs:
   gate:
     # Skip on issue_comment for non-PR issues (issue_comment fires on
     # regular Issues too — we only care about PR comment threads).
-    # Skip on check_run when the completed check has no PR (e.g. checks
-    # on direct pushes to main).
-    if: |
-      (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
-      && (github.event_name != 'check_run' || github.event.check_run.pull_requests[0].number != null)
+    # (The check_run guard was removed with the check_run trigger; see
+    # the `on:` block-comment for why.)
+    if: >-
+      github.event_name != 'issue_comment' || github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for scripts/ + .github/reviewers.yml)
@@ -83,9 +135,9 @@ jobs:
           # / pull_request_review_thread all carry pull_request.number.
           # issue_comment carries issue.number (guarded above to only fire
           # when issue.pull_request is set — i.e. the issue IS a PR).
-          # check_run: pull_requests[0].number (guarded above to only fire
-          # when the completed check belongs to a PR).
-          PR="${{ github.event.pull_request.number || github.event.issue.number || github.event.check_run.pull_requests[0].number }}"
+          # (The check_run branch was removed with the check_run trigger;
+          # see the `on:` block-comment for why.)
+          PR="${{ github.event.pull_request.number || github.event.issue.number }}"
           if [ -z "$PR" ]; then
             echo "::error::could not resolve PR number from event payload"
             exit 1
