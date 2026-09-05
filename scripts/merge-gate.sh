@@ -1021,81 +1021,34 @@ format_gate_comment() {
   }
 }
 
-gate_comment_ids_from_file() {
-  local flat="$1" order="${2:-oldest}" owner="${3:-}"
-  local filter='.[]
-    | select((.body // "") | startswith("<!-- merge-gate -->"))
-    | select($owner == "" or .user.login == $owner)'
-  if [[ "$order" == "newest" ]]; then
-    jq -r --arg owner "$owner" "[$filter] | reverse | .[].id" "$flat"
-  else
-    jq -r --arg owner "$owner" "$filter | .id" "$flat"
-  fi
-}
-
-find_gate_comment_ids() {
-  local pr="$1" order="${2:-oldest}" prefix="${3:-gate-comment-list}" owner="${4:-}"
-  local pages="$WORK/${prefix}-pages.json"
-  local flat="$WORK/${prefix}-flat.json"
-  local err="$WORK/${prefix}.err"
-  if ! gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
-       > "$pages" 2>"$err" \
-       || ! flatten_paginated_arrays "$pages" "$flat"; then
-    echo "::warning::merge-gate: could not list diagnostic comments ($(head -1 "$err" 2>/dev/null || true))" >&2
-    return 1
-  fi
-  gate_comment_ids_from_file "$flat" "$order" "$owner"
-}
-
-comment_author_login() {
-  local login=""
-  if [[ -n "${MERGE_GATE_COMMENT_AUTHOR:-}" ]]; then
-    printf '%s' "$MERGE_GATE_COMMENT_AUTHOR"
-    return 0
-  fi
-  login="$(gh api graphql -f query='{viewer{login}}' --jq '.data.viewer.login' 2>/dev/null || true)"
-  if [[ -n "$login" ]]; then
-    printf '%s' "$login"
-    return 0
-  fi
-  # GitHub's standard workflow token may not expose a GraphQL viewer on every
-  # event type. Its comment identity is nevertheless stable. A workflow using
-  # a custom App token must set MERGE_GATE_COMMENT_AUTHOR to that App's bot
-  # login if viewer lookup is unavailable.
-  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
-    printf 'github-actions[bot]'
-    return 0
-  fi
-  echo "::warning::merge-gate: could not resolve authenticated comment identity" >&2
-  return 1
-}
-
-gate_comment_action() {
-  if [[ "$1" == "success" ]]; then
-    echo clear
-  else
-    echo upsert
-  fi
-}
-
 upsert_gate_comment() {
   local pr="$1" state="$2" desc="$3" long="$4" sha="$5"
   local comment_file="$WORK/gate-comment.md"
   format_gate_comment "$state" "$desc" "$long" "$sha" > "$comment_file"
 
-  # Find prior gate comments created by GitHub Actions. A token may only edit
-  # comments created by its own identity; human comments that quote the marker
-  # must never become update targets.
+  # Find prior gate comments (any author — local maintainers and GitHub
+  # Actions may both run this script). A token may only edit comments created
+  # by its own identity, so try newest-to-oldest and create a new sticky if
+  # none are editable.
   # `--paginate --slurp` fetches ALL pages; flatten once, then reverse the
   # complete collection so edit attempts run newest-to-oldest across page
   # boundaries.
-  local existing_ids="" existing_id updated=0 patch_rc=0 patch_status="" owner=""
+  local existing_ids="" existing_id updated=0 patch_rc=0 patch_status=""
+  local comment_pages="$WORK/upsert-comment-pages.json"
+  local comments_flat="$WORK/upsert-comments.json"
+  local comments_err="$WORK/upsert-comments.err"
   local patch_err="$WORK/upsert-patch.err"
   local patch_response="$WORK/upsert-patch-response.txt"
-  if ! owner="$(comment_author_login)"; then
-    return 0
+  if gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
+       > "$comment_pages" 2>"$comments_err" \
+       && flatten_paginated_arrays "$comment_pages" "$comments_flat"; then
+    existing_ids="$(
+      jq -r '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | reverse | .[].id' \
+        "$comments_flat"
+    )"
+  else
+    echo "::warning::merge-gate: could not list prior comments; a duplicate sticky may be created ($(head -1 "$comments_err" 2>/dev/null || true))" >&2
   fi
-  existing_ids="$(find_gate_comment_ids "$pr" newest upsert-comment "$owner" || true)"
 
   : > "$patch_err"
   while IFS= read -r existing_id; do
@@ -1124,24 +1077,6 @@ upsert_gate_comment() {
     gh api "/repos/$REPO/issues/$pr/comments" -X POST \
       -F body=@"$comment_file" >/dev/null
   fi
-}
-
-clear_gate_comment() {
-  local pr="$1" id listing owner=""
-  # A green gate already has a first-class commit status in the Checks UI.
-  # Remove our diagnostic sticky so successful PRs do not accumulate bot prose.
-  if ! owner="$(comment_author_login)"; then
-    return 0
-  fi
-  if ! listing="$(find_gate_comment_ids "$pr" oldest clear-comment "$owner")"; then
-    return 0
-  fi
-  while IFS= read -r id; do
-    [[ -z "$id" ]] && continue
-    if ! gh api "/repos/$REPO/issues/comments/$id" -X DELETE >/dev/null 2>&1; then
-      echo "::warning::merge-gate: could not remove green diagnostic comment $id" >&2
-    fi
-  done <<<"$listing"
 }
 
 # ---------------------------------------------------------------------------
@@ -1562,30 +1497,6 @@ MARKDOWN
     failures=$((failures + 1))
   fi
 
-  if [[ "$(gate_comment_action success)" == "clear" \
-     && "$(gate_comment_action pending)" == "upsert" \
-     && "$(gate_comment_action failure)" == "upsert" ]]; then
-    printf '  PASS  9  green clears diagnostic; non-green upserts it\n'
-  else
-    printf '  FAIL  9  gate comment action routing\n'
-    failures=$((failures + 1))
-  fi
-
-  cat > "$WORK/gate-comments.json" <<'JSON'
-[
-  {"id": 1, "user": {"login": "github-actions[bot]"}, "body": "<!-- merge-gate -->\nowned"},
-  {"id": 2, "user": {"login": "sam"}, "body": "Quoting <!-- merge-gate --> for discussion"},
-  {"id": 3, "user": {"login": "sam"}, "body": "<!-- merge-gate -->\nhuman-authored"},
-  {"id": 4, "user": {"login": "github-actions[bot]"}, "body": "Quoting <!-- merge-gate --> in a bot note"}
-]
-JSON
-  if [[ "$(gate_comment_ids_from_file "$WORK/gate-comments.json" oldest 'github-actions[bot]')" == "1" ]]; then
-    printf '  PASS  10 upsert and cleanup select only owned marker-first comments\n'
-  else
-    printf '  FAIL  10 gate comment selection included an unsafe comment\n'
-    failures=$((failures + 1))
-  fi
-
   echo
   if [[ $failures -eq 0 ]]; then
     echo "merge-gate --self-test: OK (all cases passed)"
@@ -1692,11 +1603,7 @@ if [[ -n "$HEAD_SHA" ]]; then
 else
   echo "::warning::merge-gate: no HEAD_SHA — cannot POST commit status" >&2
 fi
-if [[ "$(gate_comment_action "$RESULT_STATE")" == "clear" ]]; then
-  clear_gate_comment "$PR"
-else
-  upsert_gate_comment "$PR" "$RESULT_STATE" "$RESULT_DESC" "$RESULT_LONG" "$HEAD_SHA"
-fi
+upsert_gate_comment "$PR" "$RESULT_STATE" "$RESULT_DESC" "$RESULT_LONG" "$HEAD_SHA"
 
 # Exit 0 always on the real path — CI decision is the posted status, not the
 # script's exit code. Fail-closed exits above (missing config, unfetchable PR)

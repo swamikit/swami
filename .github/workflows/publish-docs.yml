@@ -167,7 +167,7 @@ jobs:
           message: |
             DocC preview for this PR: ${{ steps.target.outputs.public_url }}
 
-            Rebuilds on every push. Cleaned up when the PR closes.
+            Rebuilds on every push. Cleaned up when the PR closes (TODO: cleanup job).
 
       - name: Sticky PR comment (empty archive)
         if: github.event_name == 'pull_request' && steps.guard.outputs.skip == 'true'
