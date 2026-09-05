@@ -1,5 +1,10 @@
 # --- Meta / third-party assets (kept private, never in this public repo) ---
-patterns/
+# Anchored to repo root so this only ignores a top-level `patterns/` scratch
+# dir (raw .origami sources dropped in for local testing). Unanchored, this
+# also matched `app/Swami/Patterns/` — which IS the deliverable and must be
+# committable — and blocked Builder's translate PR from staging its generated
+# `<PatternName>.swift` (#85, Builder run 33958828029).
+/patterns/
 *.origami
 *.origami.zip
 # generated catalog snapshots derived from the installed Origami Studio app
