@@ -210,37 +210,30 @@ parse_reviewers() {
   unset -f _flush
 }
 
-# Return the identities CSV for reviewer id, or "" if not found.
+# Return one field from the reviewer row. awk consumes the complete parser
+# output before exiting so `set -o pipefail` cannot turn an early-reader
+# SIGPIPE into a fatal configuration error.
+reviewer_field() {
+  local want="$1" cfg="$2" field="$3"
+  parse_reviewers "$cfg" | awk -F'\t' -v want="$want" -v field="$field" '
+    $1 == want && !found { print $field; found = 1 }
+    END { if (!found) exit 1 }
+  '
+}
+
+# Return the identities CSV for reviewer id, or fail if not found.
 reviewer_identities() {
-  local want="$1" cfg="$2"
-  parse_reviewers "$cfg" | while IFS=$'\t' read -r id ids marker fmarker style gates; do
-    if [[ "$id" == "$want" ]]; then
-      printf '%s' "$ids"
-      return 0
-    fi
-  done
+  reviewer_field "$1" "$2" 2
 }
 
 # Return the marker for reviewer id (or `null`).
 reviewer_marker() {
-  local want="$1" cfg="$2"
-  parse_reviewers "$cfg" | while IFS=$'\t' read -r id ids marker fmarker style gates; do
-    if [[ "$id" == "$want" ]]; then
-      printf '%s' "$marker"
-      return 0
-    fi
-  done
+  reviewer_field "$1" "$2" 3
 }
 
 # Return the failure marker for reviewer id (or `null`).
 reviewer_failure_marker() {
-  local want="$1" cfg="$2"
-  parse_reviewers "$cfg" | while IFS=$'\t' read -r id ids marker fmarker style gates; do
-    if [[ "$id" == "$want" ]]; then
-      printf '%s' "$fmarker"
-      return 0
-    fi
-  done
+  reviewer_field "$1" "$2" 4
 }
 
 # ---------------------------------------------------------------------------
@@ -1286,6 +1279,14 @@ YAML
     printf '  PASS  6c codex marker is null\n'
   else
     printf '  FAIL  6c codex marker: %q\n' "$codex_marker"
+    failures=$((failures + 1))
+  fi
+  local helper_values
+  helper_values="$(reviewer_identities claude "$cfg")|$(reviewer_marker claude "$cfg")|$(reviewer_failure_marker claude "$cfg")"
+  if [[ "$helper_values" == 'quibble-review[bot],github-actions[bot]|<!-- reviewer:claude -->|<!-- reviewer:claude-failure -->' ]]; then
+    printf '  PASS  6d reviewer helpers survive pipefail\n'
+  else
+    printf '  FAIL  6d reviewer helpers: %q\n' "$helper_values"
     failures=$((failures + 1))
   fi
 
