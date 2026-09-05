@@ -37,6 +37,13 @@ TYPE_LABELS = {
 }
 SEVERITY_LABELS = {"P1", "P2", "P3"}
 STATUS_VALUES = {"ready", "needs-info", "blocked", "duplicate"}
+# Labels this script may leave on an issue that represent mutually exclusive
+# status. Kept as a separate constant from STATUS_VALUES so `apply_labels` can
+# clear a prior status even when we only ever *add* three of the four (the
+# `needs-info` state is comment-only today, but if it lands on an issue by any
+# path it must still get cleared on a re-triage — same rule as the other
+# vocabularies).
+STATUS_LABELS = {"ready", "needs-info", "blocked", "duplicate"}
 
 
 def sh(cmd: list[str]) -> str:
@@ -213,13 +220,48 @@ def sanitize(decision: dict) -> dict:
     return out
 
 
+def current_labels(repo: str, issue: int) -> set[str]:
+    """Fetch labels currently on the issue via `gh issue view --json labels`.
+    Used to compute the remove-set before a re-triage — the event payload's
+    labels can be stale relative to earlier passes in the same session."""
+    try:
+        out = sh(["gh", "issue", "view", str(issue),
+                  "--repo", repo, "--json", "labels"])
+    except subprocess.CalledProcessError as exc:
+        sys.stderr.write(f"could not read labels on #{issue}: {exc.stderr}\n")
+        return set()
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        sys.stderr.write(f"labels JSON parse failed on #{issue}: {exc}\n")
+        return set()
+    return {
+        l.get("name") for l in (data.get("labels") or [])
+        if isinstance(l, dict) and l.get("name")
+    }
+
+
 def apply_labels(repo: str, issue: int, labels: list[str]) -> None:
-    """Add labels one at a time — `gh issue edit --add-label a,b` fails the
-    whole batch on the first missing label. Adding singly is idempotent and
-    survives a partial vocabulary in the target repo."""
-    for name in labels:
-        if not name:
-            continue
+    """Reconcile mutually-exclusive vocabularies (type / severity / status)
+    before adding the new selection. `gh issue edit --add-label` is add-only,
+    so on an `edited` re-triage a prior classification would stack next to the
+    new one — e.g. an issue re-triaged from `ready` to `blocked` would carry
+    both, and Builder GA (which gates on `ready`) would still pick it up. For
+    each vocabulary the script controls, remove any current members that
+    aren't in the new decision, then add the new labels one at a time
+    (`--add-label a,b` fails the whole batch on the first missing label; the
+    single-shot loop is idempotent and survives a partial vocabulary)."""
+    apply_set = {name for name in labels if name}
+    present = current_labels(repo, issue)
+    to_remove: set[str] = set()
+    for vocab in (TYPE_LABELS, SEVERITY_LABELS, STATUS_LABELS):
+        # Anything currently on the issue that belongs to this vocabulary but
+        # is not part of the new decision is a superseded label.
+        to_remove |= (present & vocab) - apply_set
+    for name in sorted(to_remove):
+        sh_ok(["gh", "issue", "edit", str(issue),
+               "--repo", repo, "--remove-label", name])
+    for name in apply_set:
         sh_ok(["gh", "issue", "edit", str(issue),
                "--repo", repo, "--add-label", name])
 
