@@ -24,7 +24,12 @@ name: merge-gate
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # `edited` is required so PR body changes recompute the gate: the P2/P3
+    # orphan step reads the PR `body` for follow-up issue links, so both
+    # adding one (should turn a failure green) and removing the only one
+    # (should turn a stale success red on unchanged HEAD) must trigger a
+    # new run. Without `edited`, the last non-body event's status sticks.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   pull_request_review_comment:
     types: [created, edited, deleted]
   issue_comment:
