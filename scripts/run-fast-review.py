@@ -199,18 +199,17 @@ def call_model(system: str, diff: str, truncated_bytes: int = 0) -> tuple[dict, 
     user_parts.append("## PR diff\n\n```diff\n" + diff + "\n```")
     user_content = "\n\n".join(user_parts)
 
-    result = chat_with_fallback(
+    # model_client's public contract is a two-tuple: (text, provider_used).
+    # Unpack it directly; treating the tuple like an object makes every
+    # successful response look empty and prevents this worker from ever
+    # reaching the Reviews API (issue #89).
+    text, provider = chat_with_fallback(
         primary=PRIMARY,
         fallback=FALLBACK,
         system=system,
         user=user_content,
         max_tokens=MAX_TOKENS,
     )
-
-    # Duck-type the response: model_client may return a dataclass, a dict, or
-    # something with attrs. We need `text` and `provider` out of it either way.
-    text = _get(result, "text")
-    provider = _get(result, "provider") or PRIMARY[0]
     if provider != PRIMARY[0]:
         # Surface fallback events in the workflow log so we can grep for them
         # and see how often the free tier is capping out.
@@ -221,13 +220,6 @@ def call_model(system: str, diff: str, truncated_bytes: int = 0) -> tuple[dict, 
     if not text:
         raise RuntimeError("empty text in model response")
     return _extract_json(text), provider
-
-
-def _get(obj: object, name: str):
-    """Pull a field off either an object with attrs or a dict, tolerantly."""
-    if isinstance(obj, dict):
-        return obj.get(name)
-    return getattr(obj, name, None)
 
 
 def _extract_json(text: str) -> dict:
