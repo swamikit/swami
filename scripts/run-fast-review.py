@@ -79,6 +79,15 @@ FINDING_MARKER = "<!-- reviewer:fast:finding -->"
 # Reviews API call fails. Merge-gate distinguishes "review failed" from
 # "review succeeded with no P1s".
 FAILURE_MARKER = "<!-- reviewer:fast-failure -->"
+# Sentinel `path` we tell the model to use when it wants to file a P1 that
+# isn't tied to a real file in the diff (currently only the truncation P1).
+# URL-scheme-style so it can't collide with any real repo path — an earlier
+# form (`.github/reviewer`) collided with the real file `.github/reviewers.yml`
+# once that was added, tripping `_assert_no_synthetic_paths_in_comments` and
+# blocking every review on PRs that touched it. Any comment carrying this
+# exact path is a routing bug; the assertion below catches that regression
+# before it reaches the Reviews API.
+SYNTHETIC_TRUNCATION_PATH = "quibble-review://truncation"
 # App login the bot identifies as when it authors reviews. Filter for prior
 # reviews we can dismiss — never touch a human review.
 BOT_LOGIN = "quibble-review[bot]"
@@ -132,8 +141,8 @@ def build_system(context: str, truncated_bytes: int = 0) -> str:
             "\nIMPORTANT — DIFF TRUNCATED: The diff below was truncated at "
             f"{MAX_DIFF_BYTES} bytes ({truncated_bytes} bytes omitted). You "
             "have NOT seen the whole PR. Return `approve=false` and add a P1 "
-            "finding at `.github/reviewer` line 1 noting the fast pre-pass "
-            "could not see the whole diff.\n"
+            f"finding at `{SYNTHETIC_TRUNCATION_PATH}` line 1 noting the fast "
+            "pre-pass could not see the whole diff.\n"
         )
     return (
         "You are the FAST PRE-PASS reviewer for the swami repository. A deeper "
@@ -184,8 +193,8 @@ def call_model(system: str, diff: str, truncated_bytes: int = 0) -> tuple[dict, 
             f"The diff below was truncated at {MAX_DIFF_BYTES} bytes "
             f"({truncated_bytes} bytes omitted). You have NOT seen the whole "
             "PR. Return `approve=false` with a P1 finding at "
-            "`.github/reviewer:1` explaining the fast pre-pass could not see "
-            "the whole diff."
+            f"`{SYNTHETIC_TRUNCATION_PATH}:1` explaining the fast pre-pass "
+            "could not see the whole diff."
         )
     user_parts.append("## PR diff\n\n```diff\n" + diff + "\n```")
     user_content = "\n\n".join(user_parts)
@@ -828,17 +837,22 @@ def fetch_current_head_sha(
 
 
 def _assert_no_synthetic_paths_in_comments(comments: list[dict]) -> None:
-    """Raise if any comment carries a `.github/reviewer:*` synthetic anchor.
+    """Raise if any comment carries the `SYNTHETIC_TRUNCATION_PATH` anchor.
 
     The truncation-guard P1 is built with `file=None, line=None` so it
     routes to the body's Unanchored section. If a future refactor ever
-    re-introduces the old `.github/reviewer:1` anchor, the atomic POST
+    re-anchors it to `SYNTHETIC_TRUNCATION_PATH:1`, the atomic POST
     would 422 (path never in a real diff) and drop the entire verdict.
     This guard catches that regression before it reaches the API.
+
+    Match is EXACT against the sentinel string, not a prefix — an earlier
+    `startswith(".github/reviewer")` check collided with the real file
+    `.github/reviewers.yml` once that landed, tripping the assertion on
+    every legitimate finding against that file.
     """
     for c in comments:
         path = str(c.get("path") or "")
-        if path.startswith(".github/reviewer"):
+        if path == SYNTHETIC_TRUNCATION_PATH:
             raise RuntimeError(
                 f"pre-POST safety check: synthetic path in comments — {path!r}. "
                 "A truncation-guard finding leaked past partition_findings; "
@@ -902,9 +916,12 @@ def main() -> int:
         # `file: null, line: null` deliberately — the truncation P1 is a
         # review-meta finding, not tied to any file in the diff, so it
         # MUST land in `### Unanchored findings` in the body, never as an
-        # inline comment. An earlier draft anchored to `.github/reviewer:1`,
-        # a path never in a real diff; the Reviews API 422'd the whole POST
-        # and dropped the REQUEST_CHANGES verdict along with it.
+        # inline comment. An earlier draft anchored it to a real-looking
+        # path like `.github/reviewer:1`, a path never in a real diff; the
+        # Reviews API 422'd the whole POST and dropped the REQUEST_CHANGES
+        # verdict along with it. `SYNTHETIC_TRUNCATION_PATH` above is the
+        # sentinel we tell the model to use; the assertion below catches
+        # any leak of that exact path into `comments`.
         synthetic = {
             "severity": "P1",
             "file": None,
@@ -952,8 +969,8 @@ def main() -> int:
     if reviewed_sha:
         payload["commit_id"] = reviewed_sha
 
-    # Pre-POST safety check: a synthetic `.github/reviewer:*` anchor would
-    # 422 the whole atomic review.
+    # Pre-POST safety check: a synthetic `SYNTHETIC_TRUNCATION_PATH` anchor
+    # would 422 the whole atomic review.
     _assert_no_synthetic_paths_in_comments(payload.get("comments") or [])
 
     # Codex P1 round 2: reject stale runs. If HEAD has advanced since the
