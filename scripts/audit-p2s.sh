@@ -376,7 +376,9 @@ collect_claude_review() {
   local review_line review_id review_body_b64
   if ! review_line="$(latest_quibble_review_line "$reviews_raw")"; then
     FAILED_FETCHES+=("claude:$pr:reviewer-config")
-    return 0
+    # The legacy sticky collector does not depend on reviewers.yml, so let the
+    # caller use it while retaining the visible partial-audit diagnostic.
+    return 1
   fi
   [[ -z "$review_line" ]] && return 1
 

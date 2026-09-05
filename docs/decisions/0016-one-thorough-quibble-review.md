@@ -33,10 +33,11 @@ consumed by merge-gate. Codex remains the separate external review.
 
 The Swami workflow uses Anthropic directly for this pass. If the credential is
 missing or the request fails, the workflow posts the existing failure marker,
-fails visibly, and merge-gate stays pending. It does not silently substitute
-another provider. Provider-neutral selection and fallback policy belong in
-Agent Factory, where they can be shared and tested without coupling Swami to a
-second presentation tier.
+fails visibly, and merge-gate blocks on the failed check and current-head
+failure marker. It does not silently substitute another provider.
+Provider-neutral selection and fallback policy belong in Agent Factory, where
+they can be shared and tested without coupling Swami to a second presentation
+tier.
 
 ## Consequences
 

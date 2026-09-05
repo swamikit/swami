@@ -207,6 +207,8 @@ jobs:
         run: python3 scripts/run-claude-review.py
 
       - name: Signal readiness (if secret not set)
+        # Forks intentionally take the skip step above; never turn their
+        # expected lack of base-repository secrets into a failed review run.
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY == ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -230,7 +232,7 @@ jobs:
 
           Set the repository Actions secret and retry the review."
           comment_id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq \
-            '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("<!-- reviewer:claude-failure -->")) | .id' \
+            '.[] | select(.user.login == "github-actions[bot]" or .user.login == "quibble-review[bot]") | select(.body | startswith("<!-- reviewer:claude-failure -->")) | .id' \
             | tail -1)
           if [ -n "$comment_id" ]; then
             gh api "repos/$REPO/issues/comments/$comment_id" -X PATCH -f body="$body" >/dev/null

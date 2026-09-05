@@ -42,6 +42,17 @@ def _load_module():
 mod = _load_module()
 
 
+class FailureMarkerContractTests(unittest.TestCase):
+    def test_missing_credential_workflow_uses_python_owned_marker(self) -> None:
+        workflow = (
+            Path(__file__).resolve().parent.parent
+            / ".github"
+            / "workflows"
+            / "review.yml"
+        ).read_text()
+        self.assertIn(mod.FAILURE_MARKER, workflow)
+
+
 class SummaryFallbackFormatContractTests(unittest.TestCase):
     def test_deep_inline_comment_format_survives_summary_only_fallback(self) -> None:
         # Cover the remaining deep reviewer's original P1 contract and the P2
