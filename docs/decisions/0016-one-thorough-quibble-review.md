@@ -44,7 +44,8 @@ second presentation tier.
 - Gemini/OpenRouter review dependencies and the local fallback client are
   removed from Swami.
 - The now-unused `GEMINI_API_KEY` and `OPENROUTER_API_KEY` repository secrets
-  should be revoked out-of-band; this code change does not mutate stored secrets.
+  should be revoked out-of-band; this code change does not mutate stored
+  secrets, so the work is tracked under `BACKLOG.md` Housekeeping.
 - A provider outage is visible and fail-closed rather than hidden by fallback.
 - Changing provider policy later requires a deliberate Agent Factory contract,
   not another Swami-only reviewer script.

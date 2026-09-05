@@ -338,7 +338,11 @@ latest_quibble_review_line() {
   local contract identities marker
   contract="$(quibble_review_contract)"
   IFS=$'\t' read -r identities marker <<<"$contract" || true
-  [[ -n "${identities:-}" && -n "${marker:-}" ]] || return 1
+  if [[ -z "${identities:-}" || -z "${marker:-}" ]]; then
+    printf 'audit-p2s: could not parse claude reviewer contract from %s\n' \
+      "$REVIEWERS_CONFIG" >&2
+    return 2
+  fi
   jq -r --arg identities "$identities" --arg marker "$marker" '
     ($identities | split(",")) as $allowed
     |
@@ -370,7 +374,10 @@ collect_claude_review() {
   # Pick the newest bot review whose body carries the reviewer:claude marker.
   # `.[]` iterates in server order (oldest→newest); take the last with |last.
   local review_line review_id review_body_b64
-  review_line="$(latest_quibble_review_line "$reviews_raw")"
+  if ! review_line="$(latest_quibble_review_line "$reviews_raw")"; then
+    FAILED_FETCHES+=("claude:$pr:reviewer-config")
+    return 0
+  fi
   [[ -z "$review_line" ]] && return 1
 
   IFS=$'\t' read -r review_id review_body_b64 <<<"$review_line" || true
@@ -752,6 +759,25 @@ JSON
     printf '  PASS  F  legacy sticky findings ignore heading/status prose\n'
   else
     printf '  FAIL  F  legacy sticky finding was not collected\n'
+    failures=$((failures + 1))
+  fi
+
+  # ---- Case G: malformed reviewer config is visible and fail-closed -------
+  printf 'reviewers:\n  - id: claude\n    identities: []\n' \
+    > "$WORK/reviewers-invalid.yml"
+  local contract_status=0
+  if REVIEWERS_CONFIG="$WORK/reviewers-invalid.yml" \
+      latest_quibble_review_line "$WORK/review-contract.json" \
+      > /dev/null 2> "$WORK/reviewer-contract.err"; then
+    contract_status=0
+  else
+    contract_status=$?
+  fi
+  if [[ "$contract_status" -ne 0 ]] && \
+      grep -q 'could not parse claude reviewer contract' "$WORK/reviewer-contract.err"; then
+    printf '  PASS  G  malformed reviewer config is visible and fail-closed\n'
+  else
+    printf '  FAIL  G  malformed reviewer config was silent or successful\n'
     failures=$((failures + 1))
   fi
 

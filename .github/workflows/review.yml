@@ -211,10 +211,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.context.outputs.pr }}
+          REPO: ${{ github.repository }}
           HEAD_SHA: ${{ steps.context.outputs.head_sha || github.event.pull_request.head.sha }}
         run: |
-          body=$(printf '%s\n\n## Quibble Review Summary\n\nHEAD: `%s`\n\n_reviewer failed — no findings this run._\n\n`MissingCredential: ANTHROPIC_API_KEY is not set`\n\nSet the repository Actions secret and retry the review.' \
-            '<!-- reviewer:claude-failure -->' "$HEAD_SHA")
-          gh pr comment "$PR" --body "$body"
+          body='<!-- reviewer:claude-failure -->
+
+          ## Quibble Review Summary'
+          if [ -n "${HEAD_SHA:-}" ]; then
+            body="$body
+
+          HEAD: \`$HEAD_SHA\`"
+          fi
+          body="$body
+
+          _reviewer failed — no findings this run._
+
+          \`MissingCredential: ANTHROPIC_API_KEY is not set\`
+
+          Set the repository Actions secret and retry the review."
+          comment_id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq \
+            '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("<!-- reviewer:claude-failure -->")) | .id' \
+            | tail -1)
+          if [ -n "$comment_id" ]; then
+            gh api "repos/$REPO/issues/comments/$comment_id" -X PATCH -f body="$body" >/dev/null
+          else
+            gh pr comment "$PR" --body "$body"
+          fi
           echo "::error::ANTHROPIC_API_KEY is not set; posted Quibble failure marker"
           exit 1
