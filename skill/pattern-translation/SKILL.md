@@ -91,10 +91,12 @@ For each patch node, decide in this order:
 1. **Check the mapping model table** in `AGENTS.md` / `CLAUDE.md` (`## The
    mapping model`). If the node's category is covered there, use that as the
    SwiftUI target.
-2. **Helper exists?** If `app/Swami/` ships a public helper with the same name
-   as the patch (`interaction(...)`, `drag(...)`, `sampleAndHold(...)`, …), use
-   it. Port-list matching is a per-helper check when the parser starts decoding
-   ports; until then, follow the helper's documented signature.
+2. **Helper exists?** If `app/Swami/` HEAD ships a public helper with the same
+   name as the patch (today: `interaction(...)`, `drag(...)` — check the module
+   for the current list), use it. Port-list matching is a per-helper check when
+   the parser starts decoding ports; until then, follow the helper's documented
+   signature. Only call helpers that are public in `app/Swami/` right now — do
+   not invent one by name.
 3. **Native SwiftUI covers it?** Per ADR-0009, map to the most idiomatic native
    construct. Math to operators, logic to `&&`/`||`, tap-with-position to
    `SpatialTapGesture`, scroll to `ScrollView`, loops to `ForEach`, most `Layer.*`
@@ -147,10 +149,26 @@ interpolation`.
 
 Origami's `Transition` patch **interpolates a value between two endpoints as a
 progress fraction moves 0 to 1**. It is a value expression, not the SwiftUI
-`.transition()` view modifier. Emit it as a computed expression in the body
-(e.g. `startValue.interpolated(to: endValue, by: progress)` or a plain
-`lerp(...)`), never as `.transition(...)`. This is the most common
-misreading; do not repeat it.
+`.transition()` view modifier — never emit it as `.transition(...)`. This is
+the most common misreading; do not repeat it.
+
+There is no `interpolated(to:by:)` method on Swift numerics, no stdlib `lerp`,
+and no `app/Swami/` helper for this today. Emit the interpolation as a plain
+arithmetic expression using the endpoints and progress the graph gives you:
+
+```swift
+// t in 0…1; A and B are the endpoints from the Transition patch's input ports.
+let value = A + (B - A) * t
+```
+
+For a non-linear curve, apply the curve to `t` first (e.g. `let e = ease(t)`)
+and use `A + (B - A) * e`. If the endpoints are compound values (points,
+sizes, colors), interpolate each component with the same formula.
+
+If this pattern recurs enough to justify a helper (per ADR-0009 point 3), the
+follow-up is a separate `app/Swami/Transition.swift` PR — tracked in #53. Do
+not invent a helper call in the emitted pattern. Until such a helper is public
+in `app/Swami/`, keep the interpolation inline as shown above.
 
 ### 7. Emit compilable Swift with a DocC sample-code header
 
