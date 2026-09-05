@@ -10,7 +10,24 @@ import json, os, subprocess, sys
 from pathlib import Path
 import anthropic
 
-MARKER = "<!-- claude-review -->"
+# Bootstrap sys.path so `gh_app_auth` resolves whether invoked as
+# `python3 scripts/run-claude-review.py` (scripts/ on sys.path[0]) or
+# `python3 -m scripts.run_claude_review` from the repo root. Mirrors the
+# sibling run-fast-review.py bootstrap.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+# Import the App-auth helper via its script directory too — the module lives
+# at scripts/gh_app_auth.py.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gh_app_auth import AppAuthError, get_installation_token  # noqa: E402
+
+# New marker (refactor A: agent-agnostic naming). LEGACY_MARKERS still get
+# recognized on comment lookup so a mid-flight rename doesn't leave orphan
+# stickies on open PRs — the sticky flips to the new marker on next update.
+MARKER = "<!-- reviewer:claude -->"
+LEGACY_MARKERS = ("<!-- claude-review -->",)
 MODEL = "claude-opus-5"
 MAX_TOKENS = 16000
 # Cap the diff we send to Claude. Origami-Patterns-scale PRs comfortably fit;
@@ -28,8 +45,8 @@ CONTEXT_PATHS = (
 )
 
 
-def sh(cmd: list[str]) -> str:
-    r = subprocess.run(cmd, check=True, capture_output=True, text=True)
+def sh(cmd: list[str], *, env: dict[str, str] | None = None) -> str:
+    r = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
     return r.stdout
 
 
@@ -192,17 +209,22 @@ def format_comment(review: dict, head_sha: str, truncated_bytes: int = 0) -> str
     return "\n".join(lines)
 
 
-def find_existing_comment(repo: str, pr: str) -> str | None:
+def find_existing_comment(repo: str, pr: str, env: dict[str, str] | None = None) -> str | None:
     # Let gh do the filtering: `--paginate` walks every page and `--jq` runs on
     # each page's array, so we get back a plain newline-separated list of ids
     # (one per matching comment) instead of the concatenated-JSON-arrays blob
     # that `json.loads` chokes on once the PR has more than one page of
-    # comments.
+    # comments. Also match LEGACY_MARKERS so a mid-rename sticky
+    # (`<!-- claude-review -->`) is updated in place rather than orphaned.
+    markers = (MARKER, *LEGACY_MARKERS)
+    contains_clause = " or ".join(
+        f'(.body | contains("{m}"))' for m in markers
+    )
     out = sh([
         "gh", "api", "--paginate",
         f"repos/{repo}/issues/{pr}/comments",
-        "--jq", f'.[] | select(.body | contains("{MARKER}")) | .id',
-    ])
+        "--jq", f'.[] | select({contains_clause}) | .id',
+    ], env=env)
     for line in out.splitlines():
         line = line.strip()
         if line:
@@ -210,17 +232,17 @@ def find_existing_comment(repo: str, pr: str) -> str | None:
     return None
 
 
-def post_or_update(repo: str, pr: str, body_path: Path) -> None:
-    existing = find_existing_comment(repo, pr)
+def post_or_update(repo: str, pr: str, body_path: Path, env: dict[str, str] | None = None) -> None:
+    existing = find_existing_comment(repo, pr, env=env)
     if existing:
         sh([
             "gh", "api", "--method", "PATCH",
             f"repos/{repo}/issues/comments/{existing}",
             "-F", f"body=@{body_path}",
-        ])
+        ], env=env)
         print(f"updated comment {existing}")
     else:
-        sh(["gh", "pr", "comment", pr, "--body-file", str(body_path)])
+        sh(["gh", "pr", "comment", pr, "--body-file", str(body_path)], env=env)
         print("created new comment")
 
 
@@ -246,7 +268,13 @@ def _cap_diff(diff: str, limit: int = MAX_DIFF_BYTES) -> tuple[str, int]:
     return kept + f"\n\n[diff truncated — {omitted} bytes omitted]\n", omitted
 
 
-def _post_failure_comment(repo: str, pr: str, head_sha: str, exc: BaseException) -> None:
+def _post_failure_comment(
+    repo: str,
+    pr: str,
+    head_sha: str,
+    exc: BaseException,
+    env: dict[str, str] | None = None,
+) -> None:
     """Best-effort: post a small marker-tagged comment so the PR sees the failure
     instead of a silent workflow-status miss. Never raises — a broken poster
     should not compound the original error."""
@@ -265,19 +293,48 @@ def _post_failure_comment(repo: str, pr: str, head_sha: str, exc: BaseException)
     try:
         out_path = Path("/tmp/claude-review-body.md")
         out_path.write_text(body)
-        post_or_update(repo, pr, out_path)
+        post_or_update(repo, pr, out_path, env=env)
     except Exception as post_exc:  # noqa: BLE001
         print(f"could not post failure comment: {post_exc}", file=sys.stderr)
 
 
+def _resolve_gh_env(repo: str) -> dict[str, str]:
+    """Return the env to pass into every `gh` subprocess.
+
+    Prefers the `quibble-review` App installation token so review comments post
+    as `quibble-review[bot]`. Falls back to `GITHUB_TOKEN` when App auth is
+    unavailable (missing secrets in local dev, or the App is not yet installed
+    on a fork) so the script stays runnable — a fallback logs a `::warning`
+    that CI surfaces on the run page.
+    """
+    env = os.environ.copy()
+    try:
+        env["GH_TOKEN"] = get_installation_token(repo)
+    except AppAuthError as exc:
+        print(
+            "::warning::quibble-review App auth unavailable; falling back to "
+            f"GITHUB_TOKEN ({exc})",
+            file=sys.stderr,
+        )
+        fallback = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if fallback:
+            env["GH_TOKEN"] = fallback
+    return env
+
+
 def main() -> int:
-    repo = os.environ["GITHUB_REPOSITORY"]
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not repo:
+        print("::error::GITHUB_REPOSITORY not set — required for App auth", file=sys.stderr)
+        return 1
     pr = os.environ["PR_NUMBER"]
     head_sha = os.environ.get("HEAD_SHA", "")
     repo_root = Path(os.environ.get("GITHUB_WORKSPACE", ".")).resolve()
 
+    gh_env = _resolve_gh_env(repo)
+
     diff_path = Path(os.environ.get("PR_DIFF_FILE", "/tmp/pr.diff"))
-    diff = diff_path.read_text() if diff_path.exists() else sh(["gh", "pr", "diff", pr])
+    diff = diff_path.read_text() if diff_path.exists() else sh(["gh", "pr", "diff", pr], env=gh_env)
     diff, omitted_bytes = _cap_diff(diff)
 
     sticky_path = Path(os.environ.get("STICKY_FILE", "/tmp/sticky.md"))
@@ -288,7 +345,7 @@ def main() -> int:
         review = call_claude(system, diff, sticky, truncated_bytes=omitted_bytes)
     except Exception as exc:  # noqa: BLE001
         print(f"claude review failed: {exc}", file=sys.stderr)
-        _post_failure_comment(repo, pr, head_sha, exc)
+        _post_failure_comment(repo, pr, head_sha, exc, env=gh_env)
         return 1
 
     # Suspenders: even with the prompt telling the model not to approve a
@@ -329,7 +386,7 @@ def main() -> int:
     body = format_comment(review, head_sha, truncated_bytes=omitted_bytes)
     out_path = Path("/tmp/claude-review-body.md")
     out_path.write_text(body)
-    post_or_update(repo, pr, out_path)
+    post_or_update(repo, pr, out_path, env=gh_env)
     n = len(review.get("findings") or [])
     print(f"posted review with {n} finding(s); approve={bool(review.get('approve'))}")
     return 0

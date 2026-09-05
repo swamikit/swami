@@ -57,7 +57,15 @@ except ModuleNotFoundError as exc:
     )
     sys.exit(2)
 
-MARKER = "<!-- fast-review -->"
+# App-auth helper — same swap the deep reviewer does. Falls back to
+# GITHUB_TOKEN when App auth is unavailable so local runs stay usable.
+from scripts.gh_app_auth import AppAuthError, get_installation_token  # noqa: E402
+
+# New marker (refactor A: agent-agnostic naming). LEGACY_MARKERS still get
+# recognized on comment lookup so a mid-rename sticky is updated in place
+# rather than orphaned.
+MARKER = "<!-- reviewer:fast -->"
+LEGACY_MARKERS = ("<!-- fast-review -->",)
 PRIMARY = ("gemini", "gemini-2.0-flash-exp")
 FALLBACK = ("anthropic", "claude-opus-5")
 MAX_TOKENS = 8000
@@ -76,8 +84,8 @@ CONTEXT_PATHS = (
 )
 
 
-def sh(cmd: list[str]) -> str:
-    r = subprocess.run(cmd, check=True, capture_output=True, text=True)
+def sh(cmd: list[str], *, env: dict[str, str] | None = None) -> str:
+    r = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
     return r.stdout
 
 
@@ -262,16 +270,21 @@ def format_comment(
     return "\n".join(lines)
 
 
-def find_existing_comment(repo: str, pr: str) -> str | None:
+def find_existing_comment(repo: str, pr: str, env: dict[str, str] | None = None) -> str | None:
     # Same pagination trick as the deep reviewer — let gh do the filtering so a
-    # PR with more than one page of comments still parses. This looks for the
-    # fast-review marker specifically, so we never clobber the deep-review
-    # sticky (or vice versa).
+    # PR with more than one page of comments still parses. Looks for the new
+    # marker AND LEGACY_MARKERS so a mid-rename sticky is updated in place
+    # rather than orphaned; still bounded to fast-review stickies so the
+    # deep-review sticky (`reviewer:claude` / `claude-review`) is untouched.
+    markers = (MARKER, *LEGACY_MARKERS)
+    contains_clause = " or ".join(
+        f'(.body | contains("{m}"))' for m in markers
+    )
     out = sh([
         "gh", "api", "--paginate",
         f"repos/{repo}/issues/{pr}/comments",
-        "--jq", f'.[] | select(.body | contains("{MARKER}")) | .id',
-    ])
+        "--jq", f'.[] | select({contains_clause}) | .id',
+    ], env=env)
     for line in out.splitlines():
         line = line.strip()
         if line:
@@ -279,17 +292,17 @@ def find_existing_comment(repo: str, pr: str) -> str | None:
     return None
 
 
-def post_or_update(repo: str, pr: str, body_path: Path) -> None:
-    existing = find_existing_comment(repo, pr)
+def post_or_update(repo: str, pr: str, body_path: Path, env: dict[str, str] | None = None) -> None:
+    existing = find_existing_comment(repo, pr, env=env)
     if existing:
         sh([
             "gh", "api", "--method", "PATCH",
             f"repos/{repo}/issues/comments/{existing}",
             "-F", f"body=@{body_path}",
-        ])
+        ], env=env)
         print(f"updated fast-review comment {existing}")
     else:
-        sh(["gh", "pr", "comment", pr, "--body-file", str(body_path)])
+        sh(["gh", "pr", "comment", pr, "--body-file", str(body_path)], env=env)
         print("created new fast-review comment")
 
 
@@ -309,7 +322,11 @@ def _cap_diff(diff: str, limit: int = MAX_DIFF_BYTES) -> tuple[str, int]:
 
 
 def _post_failure_comment(
-    repo: str, pr: str, head_sha: str, exc: BaseException
+    repo: str,
+    pr: str,
+    head_sha: str,
+    exc: BaseException,
+    env: dict[str, str] | None = None,
 ) -> None:
     """Best-effort: post a small marker-tagged failure comment so the PR sees
     the failure instead of a silent workflow-status miss. Never raises."""
@@ -329,19 +346,47 @@ def _post_failure_comment(
     try:
         out_path = Path("/tmp/fast-review-body.md")
         out_path.write_text(body)
-        post_or_update(repo, pr, out_path)
+        post_or_update(repo, pr, out_path, env=env)
     except Exception as post_exc:  # noqa: BLE001
         print(f"could not post failure comment: {post_exc}", file=sys.stderr)
 
 
+def _resolve_gh_env(repo: str) -> dict[str, str]:
+    """Return the env to pass into every `gh` subprocess.
+
+    Prefers the `quibble-review` App installation token (posts as
+    `quibble-review[bot]`); falls back to GITHUB_TOKEN when App auth is
+    unavailable so local dev / uninstalled forks still work. Fallback logs a
+    `::warning` for CI-side visibility.
+    """
+    env = os.environ.copy()
+    try:
+        env["GH_TOKEN"] = get_installation_token(repo)
+    except AppAuthError as exc:
+        print(
+            "::warning::quibble-review App auth unavailable; falling back to "
+            f"GITHUB_TOKEN ({exc})",
+            file=sys.stderr,
+        )
+        fallback = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if fallback:
+            env["GH_TOKEN"] = fallback
+    return env
+
+
 def main() -> int:
-    repo = os.environ["GITHUB_REPOSITORY"]
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not repo:
+        print("::error::GITHUB_REPOSITORY not set — required for App auth", file=sys.stderr)
+        return 1
     pr = os.environ["PR_NUMBER"]
     head_sha = os.environ.get("HEAD_SHA", "")
     repo_root = Path(os.environ.get("GITHUB_WORKSPACE", ".")).resolve()
 
+    gh_env = _resolve_gh_env(repo)
+
     diff_path = Path(os.environ.get("PR_DIFF_FILE", "/tmp/pr.diff"))
-    diff = diff_path.read_text() if diff_path.exists() else sh(["gh", "pr", "diff", pr])
+    diff = diff_path.read_text() if diff_path.exists() else sh(["gh", "pr", "diff", pr], env=gh_env)
     diff, omitted_bytes = _cap_diff(diff)
 
     system = build_system(load_context(repo_root), truncated_bytes=omitted_bytes)
@@ -349,7 +394,7 @@ def main() -> int:
         review, provider = call_model(system, diff, truncated_bytes=omitted_bytes)
     except Exception as exc:  # noqa: BLE001
         print(f"fast review failed: {exc}", file=sys.stderr)
-        _post_failure_comment(repo, pr, head_sha, exc)
+        _post_failure_comment(repo, pr, head_sha, exc, env=gh_env)
         return 1
 
     # Suspenders: never approve a truncated diff, even if the model tried to.
@@ -383,7 +428,7 @@ def main() -> int:
     body = format_comment(review, head_sha, provider, truncated_bytes=omitted_bytes)
     out_path = Path("/tmp/fast-review-body.md")
     out_path.write_text(body)
-    post_or_update(repo, pr, out_path)
+    post_or_update(repo, pr, out_path, env=gh_env)
     n = len(review.get("findings") or [])
     print(
         f"posted fast review with {n} finding(s); "

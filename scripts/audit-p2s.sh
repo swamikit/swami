@@ -265,10 +265,12 @@ collect_codex() {
   done
 }
 
-# Claude review sticky: one <!-- claude-review --> comment per PR. Findings
-# live under `### P2 (N)` and `### P3 (N)` headers as
-# `- **`path:line` — [P2] title**` bullets, with reasoning/suggestion on
-# indented sublines.
+# Claude review sticky: one comment per PR, tagged with either the current
+# `<!-- reviewer:claude -->` marker or the legacy `<!-- claude-review -->`
+# marker (kept recognized so audits over open PRs cross the reviewer-identity
+# refactor without losing history). Findings live under `### P2 (N)` and
+# `### P3 (N)` headers as `- **`path:line` — [P2] title**` bullets, with
+# reasoning/suggestion on indented sublines.
 collect_claude() {
   local pr="$1"
   local raw="$WORK/claude-$pr.json"
@@ -288,7 +290,10 @@ collect_claude() {
   sticky_line="$(
     jq -r '
       .[]
-      | select(.body | contains("<!-- claude-review -->"))
+      | select(
+          (.body | contains("<!-- reviewer:claude -->"))
+          or (.body | contains("<!-- claude-review -->"))
+        )
       | [(.id|tostring), .html_url, (.body|@base64)] | @tsv
     ' "$raw" 2>/dev/null | { head -1 || true; }
   )"
