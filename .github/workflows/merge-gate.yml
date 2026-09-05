@@ -39,8 +39,19 @@ on:
 
 # One in-flight run per PR. `cancel-in-progress: true` — a burst of comments
 # on a PR doesn't queue N runs; only the latest one's status counts.
+#
+# The `'no-pr'` fallback matters for `check_run: [completed]`: checks that
+# ran on a direct push to main have no associated PR, so pull_request.number,
+# issue.number, AND check_run.pull_requests[0].number all resolve to null,
+# leaving the group as `merge-gate-` — an empty suffix GitHub can reject at
+# workflow parse before the job-level `if:` guard runs (that guard already
+# skips no-PR events at job level; this fallback just keeps parse healthy so
+# the job actually reaches the guard). All no-PR events share the one group,
+# which is harmless because the guard skips them immediately. Test PR #79's
+# merge-gate runs were all `event=push` with `conclusion=failure`/`jobs=[]`
+# — the same failure shape a rejected concurrency evaluation produces.
 concurrency:
-  group: 'merge-gate-${{ github.event.pull_request.number || github.event.issue.number || github.event.check_run.pull_requests[0].number }}'
+  group: "merge-gate-${{ github.event.pull_request.number || github.event.issue.number || github.event.check_run.pull_requests[0].number || 'no-pr' }}"
   cancel-in-progress: true
 
 permissions:

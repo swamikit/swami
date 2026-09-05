@@ -34,11 +34,24 @@ permissions:
 # so a race that beats the concurrency gate still doesn't ship a stale
 # verdict.
 #
+# Group second segment is the "instance" — HEAD SHA on pull_request
+# events, otherwise the event name. Without the instance suffix, an
+# issue_comment trigger fired by another bot's PR comment (e.g. Codex
+# posting its review summary) enters the SAME group as the in-flight
+# `pull_request:opened` review and, with cancel-in-progress, kills the
+# running quibble review BEFORE the job-level `if:` gate on the new run
+# can skip it (concurrency evaluates before `if:`). Test PR #79 hit this
+# — Codex posted a comment ~6s into the pull_request run, the comment
+# fired issue_comment, and the quibble review was cancelled mid-flight.
+# Separating trigger shapes into distinct groups keeps cancel-in-progress
+# useful (still cancels same-HEAD-same-event redundant runs) without
+# letting unrelated issue_comment triggers stomp the pull_request run.
+#
 # `inputs.pr_number` covers the workflow_dispatch shape (Builder GA's
 # ready-path handoff — pull_request / issue_comment payloads are empty
 # on that trigger).
 concurrency:
-  group: 'review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}'
+  group: "review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}-${{ github.event.pull_request.head.sha || github.event_name }}"
   cancel-in-progress: true
 
 jobs:
