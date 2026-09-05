@@ -142,9 +142,12 @@ file to this repo.
 - **Build the Xcode project** (`app/Swami.xcodeproj`) — macOS only.
 - **Run the iOS simulator, screenshot, pixel-verify** — that's the macOS
   runner's job (driven by a Cowork/local agent via XcodeBuildMCP).
-- **Read the installed Origami Studio app's Patches folder** — that's on
-  Samuel's Mac. Use the origami.design docs mirror (private repo) as the
-  fallback reference.
+- Note on the installed Origami Studio Patches folder: ADR-0013 (Path B)
+  puts Origami Studio ON the macOS runner via the Sparkle appcast install
+  job, so `/Applications/Origami Studio.app/Contents/Resources/Patches/`
+  is readable by CI when the runner needs it. Local Origami access on
+  Samuel's Mac remains useful for interactive debugging, but it isn't a
+  hard blocker for cloud work.
 
 ### What "done" means
 
