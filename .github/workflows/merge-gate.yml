@@ -124,8 +124,12 @@ jobs:
     # regular Issues too — we only care about PR comment threads).
     # (The check_run guard was removed with the check_run trigger; see
     # the `on:` block-comment for why.)
+    # workflow_dispatch is admitted explicitly because it is the recovery path
+    # when resolving a thread does not emit an Actions-supported event.
     if: >-
-      github.event_name != 'issue_comment' || github.event.issue.pull_request != null
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name != 'issue_comment' ||
+      github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for scripts/ + .github/reviewers.yml)

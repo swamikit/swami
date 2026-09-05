@@ -714,13 +714,23 @@ compute_gate() {
 # same shape.
 flatten_paginated_arrays() {
   local input="$1" output="$2"
-  jq '
-    if type != "array" or any(.[]; type != "array") then
-      error("expected gh --paginate --slurp page arrays")
-    else
-      add // []
-    end
-  ' "$input" > "$output"
+  if jq -e '
+      type == "array" and
+      (length == 0 or all(.[]; type == "array") or all(.[]; type == "object"))
+    ' "$input" >/dev/null 2>&1; then
+    jq '
+      if length == 0 then []
+      elif all(.[]; type == "array") then add // []
+      else .
+      end
+    ' "$input" > "$output"
+  else
+    # Shape drift must not abort before the required commit status can be
+    # posted. An empty collection keeps the later freshness/check rules
+    # fail-closed while leaving a diagnostic in the run log.
+    echo "::warning::merge-gate: unexpected paginated response shape in $input; using an empty collection" >&2
+    echo '[]' > "$output"
+  fi
 }
 
 # Collect deep reviewer's findings (P2/P3 only — P1 is rule 4's job) from the
@@ -958,24 +968,28 @@ upsert_gate_comment() {
   # `--paginate --slurp` fetches ALL pages; flatten once, then reverse the
   # complete collection so edit attempts run newest-to-oldest across page
   # boundaries.
-  local existing_ids="" existing_id updated=0 patch_rc=0
+  local existing_ids="" existing_id updated=0 patch_rc=0 patch_status=""
   local comment_pages="$WORK/upsert-comment-pages.json"
   local comments_flat="$WORK/upsert-comments.json"
+  local comments_err="$WORK/upsert-comments.err"
   local patch_err="$WORK/upsert-patch.err"
+  local patch_response="$WORK/upsert-patch-response.txt"
   if gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
-       > "$comment_pages" 2>/dev/null \
-       && flatten_paginated_arrays "$comment_pages" "$comments_flat" 2>/dev/null; then
+       > "$comment_pages" 2>"$comments_err" \
+       && flatten_paginated_arrays "$comment_pages" "$comments_flat"; then
     existing_ids="$(
       jq -r '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | reverse | .[].id' \
         "$comments_flat"
     )"
+  else
+    echo "::warning::merge-gate: could not list prior comments; a duplicate sticky may be created ($(head -1 "$comments_err" 2>/dev/null || true))" >&2
   fi
 
   : > "$patch_err"
   while IFS= read -r existing_id; do
     [[ -z "$existing_id" ]] && continue
-    if gh api "/repos/$REPO/issues/comments/$existing_id" -X PATCH \
-         -F body=@"$comment_file" >/dev/null 2>"$patch_err"; then
+    if gh api "/repos/$REPO/issues/comments/$existing_id" -X PATCH --include \
+         -F body=@"$comment_file" >"$patch_response" 2>"$patch_err"; then
       updated=1
       break
     else
@@ -983,8 +997,9 @@ upsert_gate_comment() {
       # A comment owned by another identity is expected to reject edits.
       # Network/server/rate-limit failures are not identity mismatches and
       # must stay loud instead of degrading into duplicate-comment spam.
-      if ! grep -Eq 'Resource not accessible|Not Found' "$patch_err"; then
-        echo "::error::merge-gate: sticky PATCH failed — $(head -1 "$patch_err")" >&2
+      patch_status="$(awk '/^HTTP\// { code=$2 } END { print code }' "$patch_response")"
+      if [[ "$patch_status" != "403" && "$patch_status" != "404" ]]; then
+        echo "::error::merge-gate: sticky PATCH failed (HTTP ${patch_status:-unknown}) — $(head -1 "$patch_err")" >&2
         return "$patch_rc"
       fi
     fi
@@ -1337,6 +1352,26 @@ JSON
     printf '  PASS  7  paginated page arrays flatten into one collection\n'
   else
     printf '  FAIL  7  paginated arrays: got %s\n' "$(jq -c . "$WORK/flat.json")"
+    failures=$((failures + 1))
+  fi
+
+  cat > "$WORK/pages.json" <<'JSON'
+[{"id":1},{"id":2}]
+JSON
+  flatten_paginated_arrays "$WORK/pages.json" "$WORK/flat.json"
+  if [[ "$(jq -c . "$WORK/flat.json")" == '[{"id":1},{"id":2}]' ]]; then
+    printf '  PASS  7b already-flat arrays remain unchanged\n'
+  else
+    printf '  FAIL  7b already-flat arrays: got %s\n' "$(jq -c . "$WORK/flat.json")"
+    failures=$((failures + 1))
+  fi
+
+  printf '{"message":"unexpected"}\n' > "$WORK/pages.json"
+  flatten_paginated_arrays "$WORK/pages.json" "$WORK/flat.json"
+  if [[ "$(jq -c . "$WORK/flat.json")" == '[]' ]]; then
+    printf '  PASS  7c unexpected payload degrades without aborting\n'
+  else
+    printf '  FAIL  7c unexpected payload: got %s\n' "$(jq -c . "$WORK/flat.json")"
     failures=$((failures + 1))
   fi
 

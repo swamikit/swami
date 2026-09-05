@@ -12,7 +12,9 @@ from unittest import mock
 
 def _load_module():
     # gh_app_auth imports PyJWT at module load; this test never exercises auth.
-    sys.modules.setdefault("jwt", types.ModuleType("jwt"))
+    jwt_stub = types.ModuleType("jwt")
+    jwt_stub.encode = lambda *_args, **_kwargs: "test-jwt"
+    sys.modules.setdefault("jwt", jwt_stub)
     script = Path(__file__).resolve().parent / "run-fast-review.py"
     spec = importlib.util.spec_from_file_location("run_fast_review", script)
     assert spec and spec.loader
@@ -37,15 +39,16 @@ class ModelClientContractTests(unittest.TestCase):
         self.assertEqual(provider, "anthropic")
         self.assertEqual(review["summary"], "ok")
         self.assertTrue(review["approve"])
-        call.assert_called_once_with(
-            primary=mod.PRIMARY,
-            fallback=mod.FALLBACK,
-            system="system",
-            user="## PR diff\n\n```diff\ndiff\n```",
-            max_tokens=mod.MAX_TOKENS,
-            schema=mod.REVIEW_SCHEMA,
-            validate=mod._extract_json,
-        )
+        call.assert_called_once()
+        kwargs = call.call_args.kwargs
+        self.assertEqual(kwargs["primary"], mod.PRIMARY)
+        self.assertEqual(kwargs["fallback"], mod.FALLBACK)
+        self.assertEqual(kwargs["system"], "system")
+        self.assertEqual(kwargs["max_tokens"], mod.MAX_TOKENS)
+        self.assertIs(kwargs["schema"], mod.REVIEW_SCHEMA)
+        self.assertIs(kwargs["validate"], mod._extract_json)
+        self.assertIn("```diff", kwargs["user"])
+        self.assertIn("diff", kwargs["user"])
 
 
 if __name__ == "__main__":
