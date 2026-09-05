@@ -39,4 +39,8 @@ jobs:
             exit 0
           fi
           git commit -m "docs: remove preview for PR #${PR}"
+          # The shared gh-pages concurrency group serializes known workflow
+          # writers. Rebase as a final guard against a manual or unknown push.
+          git fetch origin gh-pages
+          git rebase origin/gh-pages
           git push origin gh-pages

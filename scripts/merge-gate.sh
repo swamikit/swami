@@ -1021,6 +1021,32 @@ format_gate_comment() {
   }
 }
 
+find_gate_comment_ids() {
+  local pr="$1" order="${2:-oldest}" prefix="${3:-gate-comment-list}"
+  local pages="$WORK/${prefix}-pages.json"
+  local flat="$WORK/${prefix}-flat.json"
+  local err="$WORK/${prefix}.err"
+  if ! gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
+       > "$pages" 2>"$err" \
+       || ! flatten_paginated_arrays "$pages" "$flat"; then
+    echo "::warning::merge-gate: could not list diagnostic comments ($(head -1 "$err" 2>/dev/null || true))" >&2
+    return 1
+  fi
+  if [[ "$order" == "newest" ]]; then
+    jq -r '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | reverse | .[].id' "$flat"
+  else
+    jq -r '.[] | select((.body // "") | contains("<!-- merge-gate -->")) | .id' "$flat"
+  fi
+}
+
+gate_comment_action() {
+  if [[ "$1" == "success" ]]; then
+    echo clear
+  else
+    echo upsert
+  fi
+}
+
 upsert_gate_comment() {
   local pr="$1" state="$2" desc="$3" long="$4" sha="$5"
   local comment_file="$WORK/gate-comment.md"
@@ -1034,21 +1060,9 @@ upsert_gate_comment() {
   # complete collection so edit attempts run newest-to-oldest across page
   # boundaries.
   local existing_ids="" existing_id updated=0 patch_rc=0 patch_status=""
-  local comment_pages="$WORK/upsert-comment-pages.json"
-  local comments_flat="$WORK/upsert-comments.json"
-  local comments_err="$WORK/upsert-comments.err"
   local patch_err="$WORK/upsert-patch.err"
   local patch_response="$WORK/upsert-patch-response.txt"
-  if gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
-       > "$comment_pages" 2>"$comments_err" \
-       && flatten_paginated_arrays "$comment_pages" "$comments_flat"; then
-    existing_ids="$(
-      jq -r '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | reverse | .[].id' \
-        "$comments_flat"
-    )"
-  else
-    echo "::warning::merge-gate: could not list prior comments; a duplicate sticky may be created ($(head -1 "$comments_err" 2>/dev/null || true))" >&2
-  fi
+  existing_ids="$(find_gate_comment_ids "$pr" newest upsert-comment || true)"
 
   : > "$patch_err"
   while IFS= read -r existing_id; do
@@ -1083,12 +1097,7 @@ clear_gate_comment() {
   local pr="$1" id listing
   # A green gate already has a first-class commit status in the Checks UI.
   # Remove our diagnostic sticky so successful PRs do not accumulate bot prose.
-  if ! listing="$(
-    gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
-      --jq '.[][] | select(.user.login == "github-actions[bot]") | select((.body // "") | contains("<!-- merge-gate -->")) | .id' \
-      2>/dev/null
-  )"; then
-    echo "::warning::merge-gate: could not list diagnostic comments for cleanup" >&2
+  if ! listing="$(find_gate_comment_ids "$pr" oldest clear-comment)"; then
     return 0
   fi
   while IFS= read -r id; do
@@ -1517,6 +1526,15 @@ MARKDOWN
     failures=$((failures + 1))
   fi
 
+  if [[ "$(gate_comment_action success)" == "clear" \
+     && "$(gate_comment_action pending)" == "upsert" \
+     && "$(gate_comment_action failure)" == "upsert" ]]; then
+    printf '  PASS  9  green clears diagnostic; non-green upserts it\n'
+  else
+    printf '  FAIL  9  gate comment action routing\n'
+    failures=$((failures + 1))
+  fi
+
   echo
   if [[ $failures -eq 0 ]]; then
     echo "merge-gate --self-test: OK (all cases passed)"
@@ -1623,7 +1641,7 @@ if [[ -n "$HEAD_SHA" ]]; then
 else
   echo "::warning::merge-gate: no HEAD_SHA — cannot POST commit status" >&2
 fi
-if [[ "$RESULT_STATE" == "success" ]]; then
+if [[ "$(gate_comment_action "$RESULT_STATE")" == "clear" ]]; then
   clear_gate_comment "$PR"
 else
   upsert_gate_comment "$PR" "$RESULT_STATE" "$RESULT_DESC" "$RESULT_LONG" "$HEAD_SHA"

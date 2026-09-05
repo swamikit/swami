@@ -279,8 +279,7 @@ def format_review_body(
         "<details><summary>What Quibble checked</summary>",
         "",
         "Current-head diff and submitted evidence, using `AGENTS.md`, "
-        "[`skill/review/SKILL.md`](../blob/main/skill/review/SKILL.md), and "
-        "relevant records under `docs/decisions/`.",
+        "`skill/review/SKILL.md`, and relevant records under `docs/decisions/`.",
         "",
         "</details>",
     ]

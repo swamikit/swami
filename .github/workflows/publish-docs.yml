@@ -13,6 +13,9 @@ name: publish-docs
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
+    # protect-main requires merge-gate, not this workflow. Keep the expensive
+    # macOS DocC build off unrelated PRs while still exercising every local
+    # input consumed below: the app/project and this workflow definition.
     paths:
       - 'app/Swami/**'
       - 'app/Swami.xcodeproj/**'
