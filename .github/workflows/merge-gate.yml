@@ -33,7 +33,9 @@ on:
   # not an Actions workflow trigger. Listing it under `on:` prevents the whole
   # workflow from registering (issue #81). Manual dispatch is the supported
   # re-check path after resolving a review thread when a PR comment is not
-  # desirable.
+  # desirable. Both recheck paths become available only after this file is
+  # registered on the default branch; repairing a de-registered required gate
+  # needs one admin merge first.
   workflow_dispatch:
     inputs:
       pr:
@@ -98,7 +100,7 @@ on:
 # to parse the YAML). See the block-comment on `on:` above for detail.
 concurrency:
   group: >-
-    merge-gate-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr || 'no-pr' }}${{
+    merge-gate-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr || github.event.inputs.pr || 'no-pr' }}${{
       (github.event_name == 'issue_comment' && github.event.comment)
         && format('-isolated-{0}', github.event.comment.id)
         || ''
@@ -111,7 +113,8 @@ permissions:
   pull-requests: write  # reads PR + reviews and posts/patches the sticky
                         # <!-- merge-gate --> PR comment. Although PR comments
                         # use the issues-comments REST path, GitHub authorizes
-                        # them with pull-requests: write.
+                        # them with pull-requests: write. Live proof under this
+                        # exact scope: PR #88 run 33974901494 patched the sticky.
   issues: read          # reads linked-issue state/body for orphan checking
   statuses: write       # posts the `merge-gate` commit status
 
@@ -145,7 +148,7 @@ jobs:
           # (The check_run branch was removed with the check_run trigger;
           # see the `on:` block-comment for why.)
           # workflow_dispatch uses the explicit `pr` input.
-          PR="${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}"
+          PR="${{ github.event.pull_request.number || github.event.issue.number || inputs.pr || github.event.inputs.pr }}"
           if [ -z "$PR" ]; then
             echo "::error::could not resolve PR number from event payload"
             exit 1

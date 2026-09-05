@@ -544,6 +544,33 @@ rule_p1_count() {
   return 1
 }
 
+# Extract issue numbers from text without touching the network. This is shared
+# by the gate rule and the issue-detail cache so their notion of a link cannot
+# drift. Optional patterns deliberately yield an empty successful result.
+extract_issue_numbers() {
+  local scan="$1" repo_re body_refs url_refs
+  if [[ -n "${REPO:-}" ]]; then
+    repo_re="$(printf '%s' "$REPO" | sed 's/[.[\*^$/]/\\&/g')"
+  else
+    repo_re="[^/]+/[^/]+"
+  fi
+  body_refs="$(
+    { printf '%s\n' "$scan" \
+        | grep -Eio '(resolves|fixes|closes|tracks|see|per|→|->)[[:space:]]*#[0-9]+' \
+        | grep -Eo '#[0-9]+' \
+        | grep -Eo '[0-9]+' \
+        | sort -u; } || true
+  )"
+  url_refs="$(
+    { printf '%s\n' "$scan" \
+        | grep -Eio "https://github\\.com/${repo_re}/issues/[0-9]+" \
+        | grep -Eo '/issues/[0-9]+' \
+        | grep -Eo '[0-9]+' \
+        | sort -u; } || true
+  )"
+  printf '%s\n%s\n' "$body_refs" "$url_refs" | sort -u | grep -E '^[0-9]+$' || true
+}
+
 # --- Rule 5: P2/P3 orphans ---
 # Every P2/P3 finding must be either:
 #   (a) addressed — no longer present in the reviewer's HEAD read (reviewers
@@ -574,37 +601,8 @@ rule_p2p3_orphans() {
   fi
   local scan="$body"$'\n'"$comments"
 
-  # Extract candidate issue numbers.  Sources:
-  #   - `resolves|fixes|closes|tracks|see|per|→|-> #123`
-  #   - `https://github.com/OWNER/REPO/issues/123`
-  # (issues/N is what we care about — PR URLs use /pull/, so we don't
-  # collapse PRs into "linked".)
-  local repo_re
-  if [[ -n "${REPO:-}" ]]; then
-    # Escape any regex-metachars in owner/name (unlikely but cheap).
-    repo_re="$(printf '%s' "$REPO" | sed 's/[.[\*^$/]/\\&/g')"
-  else
-    repo_re="[^/]+/[^/]+"
-  fi
-
-  local body_refs url_refs
-  body_refs="$(
-    { printf '%s\n' "$scan" \
-        | grep -Eio '(resolves|fixes|closes|tracks|see|per|→|->)[[:space:]]*#[0-9]+' \
-        | grep -Eo '#[0-9]+' \
-        | grep -Eo '[0-9]+' \
-        | sort -u; } || true
-  )"
-  url_refs="$(
-    { printf '%s\n' "$scan" \
-        | grep -Eio "https://github\\.com/${repo_re}/issues/[0-9]+" \
-        | grep -Eo '/issues/[0-9]+' \
-        | grep -Eo '[0-9]+' \
-        | sort -u; } || true
-  )"
-
   local candidates
-  candidates="$(printf '%s\n%s\n' "$body_refs" "$url_refs" | sort -u | grep -E '^[0-9]+$' || true)"
+  candidates="$(extract_issue_numbers "$scan")"
 
   # For each finding, decide handled vs orphan.
   local orphans_file="$WORK/orphans.txt"
@@ -893,23 +891,8 @@ cache_linked_issues() {
     comments="$(jq -r '[.[].body // ""] | join("\n\n---\n\n")' "$WORK/pr_comments.json")"
   fi
   local scan="$body"$'\n'"$comments"
-  local repo_re
-  if [[ -n "$REPO" ]]; then
-    repo_re="$(printf '%s' "$REPO" | sed 's/[.[\*^$/]/\\&/g')"
-  else
-    repo_re="[^/]+/[^/]+"
-  fi
   local nums
-  nums="$(
-    {
-      printf '%s\n' "$scan" \
-        | grep -Eio '(resolves|fixes|closes|tracks|see|per|→|->)[[:space:]]*#[0-9]+' \
-        | grep -Eo '#[0-9]+' | grep -Eo '[0-9]+'
-      printf '%s\n' "$scan" \
-        | grep -Eio "https://github\\.com/${repo_re}/issues/[0-9]+" \
-        | grep -Eo '/issues/[0-9]+' | grep -Eo '[0-9]+'
-    } 2>/dev/null | sort -u || true
-  )"
+  nums="$(extract_issue_numbers "$scan")"
   local n
   for n in $nums; do
     [[ "$n" == "$pr" ]] && continue  # skip self-ref
@@ -975,26 +958,42 @@ upsert_gate_comment() {
   # without --slurp, --jq runs independently per page and `last` never
   # crosses page boundaries, so a sticky on page 1 with more comments on
   # page 2 would be dropped in favor of an empty page-2 result.
-  local existing_ids="" existing_id updated=0
+  local existing_ids="" existing_id updated=0 patch_rc=0
   local comment_pages="$WORK/upsert-comment-pages.json"
+  local comments_flat="$WORK/upsert-comments.json"
+  local patch_err="$WORK/upsert-patch.err"
   if gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
        > "$comment_pages" 2>/dev/null; then
+    flatten_paginated_arrays "$comment_pages" "$comments_flat"
     existing_ids="$(
-      jq -r 'add // [] | [.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | reverse | .[].id' \
-        "$comment_pages"
+      jq -r '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | reverse | .[].id' \
+        "$comments_flat"
     )"
   fi
 
+  : > "$patch_err"
   while IFS= read -r existing_id; do
     [[ -z "$existing_id" ]] && continue
     if gh api "/repos/$REPO/issues/comments/$existing_id" -X PATCH \
-         -F body=@"$comment_file" >/dev/null 2>/dev/null; then
+         -F body=@"$comment_file" >/dev/null 2>"$patch_err"; then
       updated=1
       break
+    else
+      patch_rc=$?
+      # A comment owned by another identity is expected to reject edits.
+      # Network/server/rate-limit failures are not identity mismatches and
+      # must stay loud instead of degrading into duplicate-comment spam.
+      if ! grep -Eq 'HTTP (403|404)' "$patch_err"; then
+        echo "::error::merge-gate: sticky PATCH failed — $(head -1 "$patch_err")" >&2
+        return "$patch_rc"
+      fi
     fi
   done <<<"$existing_ids"
 
   if [[ "$updated" -eq 0 ]]; then
+    if [[ -n "$existing_ids" ]]; then
+      echo "::warning::merge-gate: no prior sticky was editable; creating one for this token ($(head -1 "$patch_err"))" >&2
+    fi
     gh api "/repos/$REPO/issues/$pr/comments" -X POST \
       -F body=@"$comment_file" >/dev/null
   fi
@@ -1320,6 +1319,12 @@ YAML
     printf '  FAIL  6d reviewer helpers: %q\n' "$helper_values"
     failures=$((failures + 1))
   fi
+  if reviewer_marker unknown-reviewer "$cfg" >/dev/null 2>&1; then
+    printf '  FAIL  6e unknown reviewer should return non-zero\n'
+    failures=$((failures + 1))
+  else
+    printf '  PASS  6e unknown reviewer returns non-zero\n'
+  fi
 
   # ---- Case 7: gh --paginate --slurp response normalization ---------------
   cat > "$WORK/pages.json" <<'JSON'
@@ -1333,13 +1338,13 @@ JSON
     failures=$((failures + 1))
   fi
 
-  # ---- Case 8: optional link patterns do not trip pipefail ----------------
-  printf 'Closes #%s. No absolute issue URL.\n' "$PR" > "$WORK/pr_body.txt"
-  echo '[]' > "$WORK/pr_comments.json"
-  if cache_linked_issues "$PR"; then
-    printf '  PASS  8  missing optional link pattern survives pipefail\n'
+  # ---- Case 8: pure link extraction stays hermetic under pipefail ---------
+  local extracted
+  extracted="$(extract_issue_numbers "Closes #$PR. No absolute issue URL.")"
+  if [[ "$extracted" == "$PR" ]]; then
+    printf '  PASS  8  pure link extraction survives missing optional pattern\n'
   else
-    printf '  FAIL  8  optional link scan returned non-zero\n'
+    printf '  FAIL  8  pure link extraction returned %q\n' "$extracted"
     failures=$((failures + 1))
   fi
 
@@ -1420,8 +1425,10 @@ if ! gh api "/repos/$REPO/issues/$PR/comments" --paginate --slurp \
 else
   flatten_paginated_arrays "$failure_pages" "$WORK/failures.json"
 fi
-# Filter comments EXCLUDING reviewer bot identities (avoid a reviewer bot
-# "linking" to its own sibling issue counting as a followup).
+# Filter the already-normalized failures.json into pr_comments.json, EXCLUDING
+# reviewer bot identities (avoid a reviewer bot "linking" to its own sibling
+# issue counting as a followup). pr_comments.json is therefore flat too; it is
+# not another raw --slurp consumer.
 all_ids_csv="$(parse_reviewers "$REVIEWERS_CONFIG" | awk -F'\t' '{print $2}' | tr ',' '\n' | sort -u | tr '\n' ',')"
 all_ids_json="$(printf '%s' "${all_ids_csv%,}" | jq -Rc 'split(",")')"
 jq --argjson ids "$all_ids_json" \
