@@ -31,7 +31,7 @@
 #   REVIEWERS_CONFIG — override path to reviewers.yml (default:
 #                      $repo_root/.github/reviewers.yml).
 #
-# Dependencies: bash 3.2+, gh, jq. Optional: yq (nicer YAML parsing; falls
+# Dependencies: bash 3.2+, Python 3, gh, jq. Optional: yq (nicer YAML parsing; falls
 # back to a small grep-based parser so a runner without yq still works).
 #
 # Not implemented here (deliberate):
@@ -674,7 +674,11 @@ rule_p2p3_orphans() {
 
     if [[ "$handled" -eq 0 ]]; then
       orphan_count=$((orphan_count + 1))
-      printf '%s:%s\n' "$path" "$lineno" >> "$orphans_file"
+      if [[ -n "$lineno" && "$lineno" != "0" ]]; then
+        printf '%s:%s\n' "$path" "$lineno" >> "$orphans_file"
+      else
+        printf '%s\n' "$path" >> "$orphans_file"
+      fi
     fi
   done < "$WORK/findings.jsonl"
 
@@ -738,12 +742,54 @@ flatten_paginated_arrays() {
 # consolidated gate we walk the inline comments — refactor B moved per-finding
 # detail there. The unanchored findings appended to the review body are
 # captured too.
+extract_review_body_findings() {
+  local body_file="$1" pr="$2" review_id="$3" reviewer="${4:-claude}"
+  jq -cn --rawfile body "$body_file" --arg pr "$pr" --arg review_id "$review_id" --arg reviewer "$reviewer" '
+    def split_location($loc):
+      if ($loc // "") == "" then {path: "", line: null}
+      else
+        (($loc | capture("^(?<path>.*):(?<line>[0-9]+)$")) //
+          {path: $loc, line: null})
+      end;
+    def section_after($heading):
+      (("\n" + $body) | split("\n" + $heading + "\n")) as $parts
+      | if ($parts | length) > 1
+        then ($parts[-1] | split("\n### ")[0])
+        else ""
+        end;
+    (section_after("### Unanchored findings")) as $unanchored
+    | (section_after("### Inline findings (summary-only fallback)")) as $fallback
+    |
+    [
+      ($unanchored
+        | scan("(?:^|\\n)- \\*\\*\\[P([123])\\](?: `([^`]+)`)?\\*\\* ([^\\n]+)")
+        | {n: .[0], loc: .[1], title: .[2]}),
+      ($fallback
+        | scan("(?:^|\\n)#### `([^`]+)`\\n\\n\\[P([123])\\][[:space:]]+([^\\n]+)")
+        | {loc: .[0], n: .[1], title: .[2]})
+    ]
+    | unique_by([.n, .loc, .title])[]
+    | (split_location(.loc)) as $where
+    | {
+        pr: $pr,
+        reviewer: $reviewer,
+        severity: ("P" + .n),
+        path: $where.path,
+        line: (if $where.line == null then null else ($where.line | tonumber) end),
+        title: (.title | gsub("^[[:space:]]+|[[:space:]]+$"; "")),
+        comment_id: ("review-body-" + $review_id),
+        comment_url: ""
+      }
+  '
+}
+
 collect_deep_findings() {
   local pr="$1"
   local reviews_json="$WORK/reviews.json"
   local out="$WORK/deep-findings.jsonl"
   : > "$out"
-  local review_id
+  local review_id review_body_file="$WORK/deep-review-body.md"
+  local comments_fetch_failed=0
   review_id="$(
     jq -r --argjson ids "$DEEP_IDENTITIES_JSON" --arg m "$DEEP_MARKER" '
       [ .[]
@@ -757,13 +803,19 @@ collect_deep_findings() {
     ' "$reviews_json"
   )"
   [[ -z "$review_id" ]] && return 0
+  jq -r --argjson id "$review_id" '
+    [.[] | select(.id == $id)] | last | .body // ""
+  ' "$reviews_json" > "$review_body_file"
   local comments_json="$WORK/deep-review-comments.json"
   local comments_pages="$WORK/deep-review-comment-pages.json"
   if ! gh api "/repos/$REPO/pulls/$pr/reviews/$review_id/comments" --paginate --slurp \
        > "$comments_pages" 2>"$WORK/deep-review-comments.err"; then
-    return 0
+    comments_fetch_failed=1
+    echo "::warning::merge-gate: could not fetch inline comments for review $review_id; falling back to review-body findings ($(head -1 "$WORK/deep-review-comments.err" 2>/dev/null || true))" >&2
+    echo '[]' > "$comments_json"
+  else
+    flatten_paginated_arrays "$comments_pages" "$comments_json"
   fi
-  flatten_paginated_arrays "$comments_pages" "$comments_json"
   jq -c '
     .[]
     | . as $c
@@ -780,6 +832,19 @@ collect_deep_findings() {
         comment_url: ($c.html_url // "")
       }
   ' "$comments_json" >> "$out"
+  extract_review_body_findings "$review_body_file" "$pr" "$review_id" "claude" >> "$out"
+  if [[ "$comments_fetch_failed" -eq 1 ]]; then
+    jq -cn --arg pr "$pr" --arg review_id "$review_id" '{
+      pr: $pr,
+      reviewer: "claude",
+      severity: "P2",
+      path: "quibble-review://inline-fetch",
+      line: null,
+      title: "Could not fetch inline findings for the deep review",
+      comment_id: ("review-body-" + $review_id),
+      comment_url: ""
+    }' >> "$out"
+  fi
 }
 
 # Collect Codex line-badge findings visible at HEAD_SHA. We use GraphQL
@@ -1273,6 +1338,31 @@ JSON
   compute_gate
   assert_state "5e linked but unverifiable → orphan" failure "orphan P2/P3s"
 
+  # ---- Case 5f: file-only finding is not handled by another line ----------
+  reset_work
+  cat > "$WORK/pr.json" <<'JSON'
+{ "mergeable": "MERGEABLE", "headSha": "abc123",
+  "statusCheckRollup": [{"name":"verify","conclusion":"SUCCESS"}] }
+JSON
+  cat > "$WORK/reviews.json" <<'JSON'
+[{
+  "id": 1,
+  "state": "APPROVED",
+  "commit_id": "abc123",
+  "user": {"login": "quibble-review[bot]"},
+  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+}]
+JSON
+  cat > "$WORK/findings.jsonl" <<'JSONL'
+{"pr":"999","reviewer":"claude","severity":"P2","path":"scripts/foo.sh","line":null,"title":"file-level concern","comment_id":"c1","comment_url":""}
+JSONL
+  printf 'PR body: Tracks #125.\n' > "$WORK/pr_body.txt"
+  cat > "$WORK/linked_issues/125.json" <<'JSON'
+{"number":125,"state":"OPEN","stateReason":null,"body":"Only references scripts/foo.sh:42, not PR 999."}
+JSON
+  compute_gate
+  assert_state "5f another line does not handle file-only finding" failure "orphan P2/P3s"
+
   # ---- Case 6: config parser round-trip ------------------------------------
   local cfg="$WORK/reviewers.yml"
   cat > "$cfg" <<'YAML'
@@ -1372,6 +1462,36 @@ JSON
     printf '  PASS  7c unexpected payload degrades without aborting\n'
   else
     printf '  FAIL  7c unexpected payload: got %s\n' "$(jq -c . "$WORK/flat.json")"
+    failures=$((failures + 1))
+  fi
+
+  cat > "$WORK/review-body.md" <<'MARKDOWN'
+Quoted examples outside either machine-readable section:
+- **[P2] `scripts/phantom.py:99`** Do not collect this
+#### `scripts/phantom-fallback.py:98`
+
+[P1] Do not collect this either
+
+### Unanchored findings
+
+- **[P2] `scripts/unanchored.py:12`** Preserve unanchored detail
+
+- **[P1] `scripts/unanchored-blocker.py`** Preserve line-less unanchored blocker
+MARKDOWN
+  python3 "$SCRIPT_DIR/review_posting.py" --self-test-fixture \
+    >> "$WORK/review-body.md"
+  extract_review_body_findings "$WORK/review-body.md" "999" "77" "claude" \
+    > "$WORK/body-findings.jsonl"
+  if [[ "$(wc -l < "$WORK/body-findings.jsonl" | tr -d ' ')" == "4" ]] \
+     && jq -e -s '
+       any(.[]; .severity == "P2" and .path == "scripts/unanchored.py" and .line == 12) and
+       any(.[]; .severity == "P1" and .path == "scripts/unanchored-blocker.py" and .line == null) and
+       any(.[]; .severity == "P3" and .path == "scripts/fallback.py" and .line == 34) and
+       any(.[]; .severity == "P1" and .path == "scripts/blocking.py" and .line == 56)
+     ' "$WORK/body-findings.jsonl" >/dev/null; then
+    printf '  PASS  7d review-body and 422-fallback findings remain gate-visible\n'
+  else
+    printf '  FAIL  7d review-body findings were not preserved\n'
     failures=$((failures + 1))
   fi
 

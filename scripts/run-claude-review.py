@@ -25,18 +25,14 @@ import json, os, subprocess, sys
 from pathlib import Path
 import anthropic
 
-# Bootstrap sys.path so `gh_app_auth` resolves whether invoked as
-# `python3 scripts/run-claude-review.py` (scripts/ on sys.path[0]) or
-# `python3 -m scripts.run_claude_review` from the repo root. Mirrors the
-# sibling run-fast-review.py bootstrap.
+# Bootstrap the repository root before package-qualified sibling imports.
+# This supports direct execution (`python3 scripts/run-claude-review.py`)
+# and importlib/module execution without creating two module identities.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-# Import the App-auth helper via its script directory too — the module lives
-# at scripts/gh_app_auth.py.
-if str(Path(__file__).resolve().parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-from gh_app_auth import AppAuthError, get_installation_token  # noqa: E402
+from scripts.gh_app_auth import AppAuthError, get_installation_token  # noqa: E402
+from scripts.review_posting import post_review as _post_review  # noqa: E402
 
 # New marker (refactor A: agent-agnostic naming). LEGACY_MARKERS still get
 # recognized on comment lookup so a mid-flight rename doesn't leave orphan
@@ -719,29 +715,7 @@ def post_review(
     One call creates the Review timeline entry AND all its inline comments.
     Returns the parsed API response so the caller can log the new review id.
     """
-    body_json = json.dumps(payload)
-    result = subprocess.run(
-        [
-            "gh",
-            "api",
-            f"repos/{repo}/pulls/{pr}/reviews",
-            "-X",
-            "POST",
-            "--input",
-            "-",
-        ],
-        input=body_json,
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"POST /pulls/{pr}/reviews failed (rc={result.returncode}): "
-            f"{result.stderr.strip() or result.stdout.strip()}"
-        )
-    return json.loads(result.stdout) if result.stdout.strip() else {}
+    return _post_review(repo, pr, payload, env=env, reviewer="claude")
 
 
 def _cap_diff(diff: str, limit: int = MAX_DIFF_BYTES) -> tuple[str, int]:

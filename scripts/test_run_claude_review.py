@@ -21,6 +21,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from scripts import review_posting
+
 
 def _load_module():
     """Import scripts/run-claude-review.py under the name `run_claude_review`.
@@ -38,6 +40,45 @@ def _load_module():
 
 
 mod = _load_module()
+
+
+class SummaryFallbackFormatContractTests(unittest.TestCase):
+    def test_deep_inline_comment_format_survives_summary_only_fallback(self) -> None:
+        comments = mod.format_review_comments(
+            [{
+                "severity": "P1",
+                "file": "x.py",
+                "line": 4,
+                "_side": "RIGHT",
+                "title": "deep formatter title",
+                "reasoning": "evidence",
+                "suggestion": "fix it",
+            }]
+        )
+        degraded = review_posting._summary_only({"body": "summary", "comments": comments})
+        self.assertIn("#### `x.py:4`\n\n[P1] deep formatter title", degraded["body"])
+
+    def test_deep_unanchored_formatter_matches_gate_contract(self) -> None:
+        payload = mod.format_review(
+            {
+                "approve": False,
+                "summary": "summary",
+                "findings": [{
+                    "severity": "P2",
+                    "file": "outside.py",
+                    "line": 9,
+                    "title": "unanchored formatter title",
+                    "reasoning": "evidence",
+                    "suggestion": "fix it",
+                }],
+            },
+            head_sha="abc123",
+            anchors={},
+        )
+        self.assertIn(
+            "- **[P2] `outside.py:9`** unanchored formatter title",
+            payload["body"],
+        )
 
 
 class CapDiffTests(unittest.TestCase):
