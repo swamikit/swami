@@ -19,6 +19,15 @@ jobs:
         && github.event.issue.pull_request != null
         && contains(github.event.comment.body, '@claude review'))
     runs-on: ubuntu-latest
+    # Job-level env: expose all review-model secrets to every step and to `if:`
+    # expressions (`env.ANTHROPIC_API_KEY != ''`). ANTHROPIC drives Claude Opus
+    # (full review + fast-review fallback). GEMINI drives the fast-review pre-pass.
+    # OPENROUTER is reserved for future model_client backends. All three may be
+    # unset — steps gate on the specific keys they need.
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,20 +86,41 @@ jobs:
       # comment (<!-- claude-review -->) and NEVER edits verify.yml's pixel-gate
       # sticky. Subsequent runs update the same claude-review comment in place,
       # so this doesn't pile up new comments across pushes (Codex P2).
-      - name: Install anthropic SDK
+      - name: Install review SDKs
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
+        # Pin every SDK: an unpinned `pip install` silently follows future major
+        # bumps and can move the surface out from under run-claude-review.py
+        # (streaming/thinking), run-fast-review.py, or scripts/model_client.py.
+        # Bump these pins deliberately when we've verified the new major behaves.
+        #   anthropic -> Claude Opus (full review + fast-review Opus fallback)
+        #   google-generativeai -> Gemini (fast-review primary)
+        #   openai -> OpenRouter-compatible client used by model_client
+        run: python3 -m pip install --quiet 'anthropic==1.4.0' 'google-generativeai==0.8.3' 'openai==1.51.0'
+
+      # Fast-review pre-pass. Posts a lightweight review comment (~15s) before
+      # the full Claude Opus review lands (~60s). Gated on ANTHROPIC_API_KEY
+      # because model_client.chat_with_fallback falls back to Opus when
+      # GEMINI_API_KEY is unset. `continue-on-error: true` so a Gemini
+      # rate-limit / transient failure never blocks the full review that
+      # follows.
+      - name: Run fast-review (Gemini)
+        if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
+        continue-on-error: true
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        # Pin the SDK: an unpinned `pip install anthropic` silently follows any
-        # future major bump and can move the surface out from under the
-        # streaming/thinking call in run-claude-review.py. Bump this pin
-        # deliberately when we've verified the new major behaves.
-        run: python3 -m pip install --quiet 'anthropic==1.4.0'
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.context.outputs.pr }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_DIFF_FILE: /tmp/pr.diff
+          STICKY_FILE: /tmp/sticky.md
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::notice::GEMINI_API_KEY not set; fast-review falling back to Opus"
+          fi
+          python3 scripts/run-fast-review.py
 
       - name: Run Claude review
         if: steps.fork.outputs.is_fork != 'true' && env.ANTHROPIC_API_KEY != ''
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.context.outputs.pr }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
