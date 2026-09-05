@@ -242,6 +242,14 @@ jobs:
                   gsub(/^ +| +$/, "", id)
                   gsub(/^ +| +$/, "", name)
                   if (id == "" || name == "") next
+                  # Skip xcodebuild placeholder entries (e.g. "Any iOS Simulator
+                  # Device"). Their id starts with `dvtdevice-` and, when no sim
+                  # matches the target dims, they tie with real sims at 0 0 0
+                  # and can win the sort — xcodebuild then errors with
+                  # "Unable to find a device matching the provided destination
+                  # specifier" (exit 70). Seen on PR #28 run 33931390819 and
+                  # PR #29 run 33931392044.
+                  if (index(id, "dvtdevice-") == 1) next
 
                   # Dims match against Origami PNG (primary key). "x" (both empty)
                   # means we have no target — every sim scores 0 and tier decides.

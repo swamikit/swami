@@ -7,17 +7,19 @@ Three things live here:
 2. **First-party skills** written for this repo's Build↔Review loop.
 3. **Adopted skills** vendored from external repos when their shape fits our loop.
 
-## The swami skill (not built yet)
+## The swami translator skill
 
-A skill that reads the IR plus the Origami and SwiftUI docs and the mapping rules,
-and emits idiomatic SwiftUI for the user's selection. Codify the mapping table and
-hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
+The IR → SwiftUI translator lives at **`pattern-translation/`** (community-portable)
+plus **`docc-authoring/`** (Swami DocC house style). Together they cover the
+"judgment" half of the project: how one Origami pattern lands as one compilable
+Swift file with its DocC page. Principles the pair codifies:
 
 - Map to SwiftUI's **state graph**, not to free functions (the dataflow thesis).
-- Scope output to the selection; use the whole-file IR as context (ADR 0002).
-- **Flag, don't fake** the hard cases (continuous springs, custom JS patches, cyclic
-  dataflow, absolute layout).
-- Use `examples/` as worked-examples that steer translation.
+- Scope output to one pattern; use the whole-file IR as context (ADR 0002).
+- **Flag, don't fake** the hard cases (continuous springs, custom JS patches,
+  cyclic dataflow, absolute layout).
+- Native-first per ADR-0009; helpers only for recurring mismatches, one helper
+  per patch per ADR-0010.
 
 ## First-party skills
 
@@ -33,6 +35,18 @@ hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
   runner-level failure appends an entry. Companion issue template lives at
   `.github/ISSUE_TEMPLATE/infra-blocker.md`.
 
+- **`observing/`.** The cross-PR pattern observer (`observing/SKILL.md`). How any
+  agent watches for recurring shapes across many PRs (repeated Codex findings,
+  missing helpers, verify-flake signatures, prose drift) and files a `type:meta`
+  issue with evidence proposing a system-level fix. N=3+ threshold, one meta-issue
+  per pass. This is how the system files its own tasks.
+- **`triage/`.** The Triage GA's playbook (`triage/SKILL.md`). G-doc-style
+  issue lifecycle: read before writing, update before creating, consolidate the
+  overlap, split the pile-ups, close on evidence. Loaded by any GA whose trigger
+  is an `issues` event, and by any agent turning a feedback dump (chat log,
+  meeting notes, review batch) into tracked issues. Prevents the "AI floods the
+  tracker with duplicates" failure mode we hit before.
+
 ## Adopted skills
 
 - **`unslop/`** — cuts AI tells from anything a human will read. Vendored from
@@ -44,8 +58,11 @@ hard-cases from `CLAUDE.md` (`NEXT_STEPS.md` step 5). Principles:
 - **`workflow/`** — swami house rules: Beats, branch naming, PR templates,
   review flow, evidence expectations. Load before opening any PR against
   `swamikit/swami`.
-- **`pattern-translation/`** *(stub)* — mapping-table judgment for translating
-  one Origami pattern into idiomatic SwiftUI. Not written yet.
+- **`pattern-translation/`** — how to translate one Origami pattern into
+  idiomatic SwiftUI. Reads the IR, maps patches to SwiftUI (native-first per
+  ADR-0009), emits a compilable `.swift` file. Community-portable — no
+  swamikit/swami-specific PR flow; pair with `workflow/` when opening a PR
+  here.
 - **`docc-authoring/`** *(stub)* — how a translated pattern gets documented in
   DocC (article, tutorial, code listing, screenshot). Not written yet.
 - **`review/`** *(stub)* — how the Reviewer GA runs its checks (visual,
