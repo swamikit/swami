@@ -1,7 +1,7 @@
 name: cleanup-docs-preview
 
-# Keep cleanup independent from publish-docs path filtering. A PR may publish
-# a preview and later revert every DocC-related change before it closes.
+# Keep cleanup independent from publishing so closing a PR cannot strand its
+# preview when a publish run fails or is cancelled.
 on:
   pull_request:
     types: [closed]
@@ -25,7 +25,6 @@ jobs:
       - name: Checkout published site
         uses: actions/checkout@v4
         with:
-          ref: gh-pages
           fetch-depth: 0
       - name: Remove closed pull request preview
         env:
@@ -34,6 +33,12 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
+            echo "gh-pages does not exist; no preview to remove"
+            exit 0
+          fi
+          git fetch origin gh-pages
+          git checkout -B gh-pages origin/gh-pages
           git rm -r --ignore-unmatch "pr-${PR}"
           if git diff --cached --quiet; then
             echo "no preview to remove"
@@ -44,7 +49,11 @@ jobs:
           # writers. Rebase as a final guard against a manual or unknown push.
           for attempt in 1 2 3; do
             git fetch origin gh-pages
-            git rebase origin/gh-pages
+            if ! git rebase origin/gh-pages; then
+              git rebase --abort || true
+              echo "::error::preview cleanup conflicts with the current gh-pages branch"
+              exit 1
+            fi
             if git push origin gh-pages; then
               exit 0
             fi

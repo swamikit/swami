@@ -13,13 +13,6 @@ name: publish-docs
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    # protect-main requires merge-gate, not this workflow. Keep the expensive
-    # macOS DocC build off unrelated PRs while still exercising every local
-    # input consumed below: the app/project and this workflow definition.
-    paths:
-      - 'app/Swami/**'
-      - 'app/Swami.xcodeproj/**'
-      - '.github/workflows/publish-docs.yml'
   push:
     branches: [main]
     # Merges that only touch pattern sources feed post-merge.yml, which
@@ -175,7 +168,7 @@ jobs:
           message: |
             DocC preview for this PR: ${{ steps.target.outputs.public_url }}
 
-            Rebuilds on every push. Cleaned up when the PR closes (TODO: cleanup job).
+            Rebuilds on every push. Cleaned up when the PR closes.
 
       - name: Sticky PR comment (empty archive)
         if: github.event_name == 'pull_request' && steps.guard.outputs.skip == 'true'

@@ -1060,17 +1060,16 @@ upsert_gate_comment() {
   local comment_file="$WORK/gate-comment.md"
   format_gate_comment "$state" "$desc" "$long" "$sha" > "$comment_file"
 
-  # Find prior gate comments (any author — local maintainers and GitHub
-  # Actions may both run this script). A token may only edit comments created
-  # by its own identity, so try newest-to-oldest and create a new sticky if
-  # none are editable.
+  # Find prior gate comments created by GitHub Actions. A token may only edit
+  # comments created by its own identity; human comments that quote the marker
+  # must never become update targets.
   # `--paginate --slurp` fetches ALL pages; flatten once, then reverse the
   # complete collection so edit attempts run newest-to-oldest across page
   # boundaries.
   local existing_ids="" existing_id updated=0 patch_rc=0 patch_status=""
   local patch_err="$WORK/upsert-patch.err"
   local patch_response="$WORK/upsert-patch-response.txt"
-  existing_ids="$(find_gate_comment_ids "$pr" newest upsert-comment || true)"
+  existing_ids="$(find_gate_comment_ids "$pr" newest upsert-comment actions || true)"
 
   : > "$patch_err"
   while IFS= read -r existing_id; do
@@ -1551,9 +1550,9 @@ MARKDOWN
 ]
 JSON
   if [[ "$(gate_comment_ids_from_file "$WORK/gate-comments.json" oldest actions)" == "1" ]]; then
-    printf '  PASS  10 green cleanup selects only owned marker-first comments\n'
+    printf '  PASS  10 upsert and cleanup select only owned marker-first comments\n'
   else
-    printf '  FAIL  10 green cleanup selected an unsafe comment\n'
+    printf '  FAIL  10 gate comment selection included an unsafe comment\n'
     failures=$((failures + 1))
   fi
 
