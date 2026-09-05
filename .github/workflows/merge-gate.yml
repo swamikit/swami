@@ -1,0 +1,268 @@
+# Posts a single commit status context — `merge-gate` — computed from the
+# reviewer stickies (Codex sticky + Claude sticky) and Codex P1 line-level
+# comments. Same rule as scripts/safe-merge.sh, but enforced at the GitHub
+# level so it catches every merge path (CLI, UI, API) once branch protection
+# marks `merge-gate` as a required check. Branch-protection wiring is a
+# SEPARATE settings-level step — this workflow does not touch it.
+#
+# Non-goals: this workflow does NOT gate on the pixel-gate or any other
+# verify.yml check (those are their own required checks) and does NOT enforce
+# the P2/P3 3-pass rule (that's a human judgment call). It ONLY covers
+# reviewer freshness + P1 count.
+name: merge-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  issue_comment:
+    types: [created, edited, deleted]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  statuses: write
+
+# Rapid comment bursts (e.g. reviewer editing a sticky) would otherwise queue
+# a redundant run per event. Cancel in-progress runs so only the latest wins;
+# the status posted by that latest run is what stays on the commit.
+concurrency:
+  group: merge-gate-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    # issue_comment fires on issues too; scope to PR comments only. The other
+    # events (pull_request, pull_request_review_comment) always carry a PR.
+    if: |
+      github.event_name == 'pull_request' ||
+      github.event_name == 'pull_request_review_comment' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve PR number
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # pull_request / pull_request_review_comment carry .pull_request;
+          # issue_comment carries .issue. Fall back through both.
+          PR_NUM=$(jq -r '.pull_request.number // .issue.number // empty' "$GITHUB_EVENT_PATH")
+          if [ -z "$PR_NUM" ]; then
+            echo "could not resolve PR number from event payload" >&2
+            exit 1
+          fi
+          echo "num=$PR_NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch PR + reviewer signals
+        id: fetch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUM: ${{ steps.pr.outputs.num }}
+        run: |
+          set -euo pipefail
+          # Authoritative HEAD sha from the PR itself — event payloads on
+          # issue_comment don't carry pull_request.head.sha, and even on
+          # pull_request events the payload can lag behind a fresh push if
+          # this run was queued mid-burst. Always ask the API.
+          gh pr view "$PR_NUM" \
+            --json headRefOid,mergeable,state,isDraft \
+            > /tmp/pr.json
+          HEAD_SHA=$(jq -r '.headRefOid' /tmp/pr.json)
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "mergeable=$(jq -r '.mergeable' /tmp/pr.json)" >> "$GITHUB_OUTPUT"
+          echo "state=$(jq -r '.state' /tmp/pr.json)" >> "$GITHUB_OUTPUT"
+          echo "draft=$(jq -r '.isDraft' /tmp/pr.json)" >> "$GITHUB_OUTPUT"
+
+          # Issue comments carry the stickies (Codex summary + Claude review
+          # + the review.yml "ANTHROPIC_API_KEY is not set" signal).
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/issues/${PR_NUM}/comments" \
+            > /tmp/issue_comments.json
+
+          # PR review comments (line-level) carry Codex P1 Badges.
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUM}/comments" \
+            > /tmp/review_comments.json
+
+      - name: Compute gate
+        id: gate
+        env:
+          HEAD_SHA: ${{ steps.fetch.outputs.head_sha }}
+          MERGEABLE: ${{ steps.fetch.outputs.mergeable }}
+          PR_STATE: ${{ steps.fetch.outputs.state }}
+        run: |
+          set -euo pipefail
+
+          # ----- reviewer sticky discovery -------------------------------
+          # Claude sticky: issue comment tagged with the marker
+          # `<!-- claude-review -->`. HEAD is on the header line as
+          # `HEAD: \`<sha>\``. P1 count is the N in `### P1 (N)`.
+          # Take the LATEST matching sticky — the reviewer updates in place
+          # but a race or a marker-lookup regression could leave two.
+          CLAUDE_BODY=$(jq -r '
+            [.[] | select(.body | contains("<!-- claude-review -->"))]
+            | sort_by(.updated_at) | last | .body // ""
+          ' /tmp/issue_comments.json)
+
+          CLAUDE_HEAD=""
+          CLAUDE_P1=0
+          CLAUDE_PRESENT=false
+          if [ -n "$CLAUDE_BODY" ]; then
+            CLAUDE_PRESENT=true
+            CLAUDE_HEAD=$(printf '%s\n' "$CLAUDE_BODY" \
+              | grep -oE 'HEAD: `[0-9a-f]{7,40}`' \
+              | head -1 \
+              | grep -oE '[0-9a-f]{7,40}' || true)
+            CLAUDE_P1=$(printf '%s\n' "$CLAUDE_BODY" \
+              | grep -oE '^### P1 \([0-9]+\)' \
+              | head -1 \
+              | grep -oE '[0-9]+' || echo 0)
+            CLAUDE_P1=${CLAUDE_P1:-0}
+          fi
+
+          # Claude "disabled" signal: review.yml posts a plain comment
+          # "Review GA is present but ANTHROPIC_API_KEY is not set in repo
+          # secrets." when the secret is absent. Presence of that string on
+          # the PR means Claude is intentionally off — gate falls back to
+          # Codex alone instead of hanging at pending forever.
+          CLAUDE_DISABLED=false
+          if jq -r '.[].body' /tmp/issue_comments.json \
+              | grep -qF 'ANTHROPIC_API_KEY is not set in repo secrets'; then
+            CLAUDE_DISABLED=true
+          fi
+
+          # Codex sticky: issue comment containing the marker string
+          # `codex-pull-request-review-summary` with the reviewed SHA in
+          # backticks. Take the first backtick-wrapped SHA-looking token.
+          CODEX_BODY=$(jq -r '
+            [.[] | select(.body | contains("codex-pull-request-review-summary"))]
+            | sort_by(.updated_at) | last | .body // ""
+          ' /tmp/issue_comments.json)
+
+          CODEX_HEAD=""
+          CODEX_PRESENT=false
+          if [ -n "$CODEX_BODY" ]; then
+            CODEX_PRESENT=true
+            CODEX_HEAD=$(printf '%s\n' "$CODEX_BODY" \
+              | grep -oE '`[0-9a-f]{7,40}`' \
+              | head -1 \
+              | tr -d '`' || true)
+          fi
+
+          # Codex P1s: line-level PR review comments containing the string
+          # `P1 Badge`, filtered to the CURRENT HEAD (a P1 badge attached to
+          # an older commit was already superseded by whatever the new push
+          # did — the reviewer will re-post if the issue survived).
+          CODEX_P1_COUNT=$(jq -r --arg sha "$HEAD_SHA" '
+            [.[] | select(.body | contains("P1 Badge")) | select(.commit_id == $sha)]
+            | length
+          ' /tmp/review_comments.json)
+          CODEX_P1_COUNT=${CODEX_P1_COUNT:-0}
+          CODEX_P1_LOC=$(jq -r --arg sha "$HEAD_SHA" '
+            first(.[] | select(.body | contains("P1 Badge")) | select(.commit_id == $sha)
+                  | "\(.path):\(.line // .original_line // "?")")
+            // ""
+          ' /tmp/review_comments.json)
+
+          # ----- priority: mergeability > checks > freshness > P1 -------
+          STATE=""
+          DESC=""
+
+          # 1) Mergeability. CONFLICTING is the only definitive block; other
+          #    values (UNKNOWN, MERGEABLE) mean "keep going".
+          if [ "$MERGEABLE" = "CONFLICTING" ]; then
+            STATE=failure
+            DESC="PR has merge conflicts"
+          fi
+
+          # 2) Checks — the Claude review workflow itself. If Claude is
+          #    enabled (no "not set" signal) but its sticky isn't up yet,
+          #    we're still waiting for the reviewer to post. Codex we can't
+          #    interrogate — its absence is treated as "not configured for
+          #    this repo" per the spec, not as pending.
+          if [ -z "$STATE" ] && [ "$CLAUDE_DISABLED" = "false" ] && [ "$CLAUDE_PRESENT" = "false" ]; then
+            STATE=pending
+            DESC="Waiting for Claude review to post"
+          fi
+
+          # 3) Freshness. A reviewer at an older SHA means the current diff
+          #    was never read — that's the whole reason this gate exists.
+          if [ -z "$STATE" ] && [ "$CLAUDE_PRESENT" = "true" ] \
+              && [ -n "$CLAUDE_HEAD" ] && [ "$CLAUDE_HEAD" != "$HEAD_SHA" ]; then
+            STATE=failure
+            DESC="Claude stale (at ${CLAUDE_HEAD})"
+          fi
+          if [ -z "$STATE" ] && [ "$CODEX_PRESENT" = "true" ] \
+              && [ -n "$CODEX_HEAD" ] && [ "$CODEX_HEAD" != "$HEAD_SHA" ]; then
+            STATE=failure
+            DESC="Codex stale (at ${CODEX_HEAD})"
+          fi
+
+          # 4) P1s.
+          if [ -z "$STATE" ] && [ "$CLAUDE_P1" -gt 0 ]; then
+            STATE=failure
+            DESC="${CLAUDE_P1} P1 unresolved in Claude review"
+          fi
+          if [ -z "$STATE" ] && [ "$CODEX_P1_COUNT" -gt 0 ]; then
+            STATE=failure
+            if [ -n "$CODEX_P1_LOC" ]; then
+              DESC="${CODEX_P1_COUNT} P1 unresolved on ${CODEX_P1_LOC}"
+            else
+              DESC="${CODEX_P1_COUNT} P1 unresolved in Codex review"
+            fi
+          fi
+
+          # Success. Describe whichever reviewer(s) actually voted so a
+          # reader can tell "Codex+Claude clean" apart from "Codex only,
+          # Claude off".
+          if [ -z "$STATE" ]; then
+            STATE=success
+            if [ "$CLAUDE_PRESENT" = "true" ] && [ "$CODEX_PRESENT" = "true" ]; then
+              DESC="Codex+Claude at HEAD, 0 P1s"
+            elif [ "$CLAUDE_PRESENT" = "true" ]; then
+              DESC="Claude at HEAD, 0 P1s (Codex not configured)"
+            elif [ "$CODEX_PRESENT" = "true" ]; then
+              if [ "$CLAUDE_DISABLED" = "true" ]; then
+                DESC="Codex at HEAD, 0 P1s (Claude disabled — no secret)"
+              else
+                DESC="Codex at HEAD, 0 P1s (Claude not configured)"
+              fi
+            else
+              # No reviewer signal at all AND Claude is disabled — nothing
+              # to gate on. Keep this a success rather than a permanent
+              # pending; a repo with neither reviewer wired is opting out.
+              DESC="No reviewers configured for this repo"
+            fi
+          fi
+
+          # GitHub commit-status descriptions are capped at 140 chars.
+          DESC=${DESC:0:140}
+
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "description=$DESC" >> "$GITHUB_OUTPUT"
+          echo "gate: state=$STATE desc=$DESC head=$HEAD_SHA claude_head=$CLAUDE_HEAD codex_head=$CODEX_HEAD claude_p1=$CLAUDE_P1 codex_p1=$CODEX_P1_COUNT"
+
+      - name: Post commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.fetch.outputs.head_sha }}
+          STATE: ${{ steps.gate.outputs.state }}
+          DESCRIPTION: ${{ steps.gate.outputs.description }}
+          # Link back to this run so a reader who clicks the status lands on
+          # the log that computed it — the "why" instead of a blank page.
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f "state=${STATE}" \
+            -f "context=merge-gate" \
+            -f "description=${DESCRIPTION}" \
+            -f "target_url=${TARGET_URL}"
