@@ -28,6 +28,9 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
+# --- Test corpus fetched at runtime from origami.design (ADR-0013 Path B) ---
+tool/src/parser/.cache/
+
 # --- Swift Package build state ---
 tool/harness/.build/
 tool/harness/.swiftpm/
