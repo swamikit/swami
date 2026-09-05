@@ -5,6 +5,8 @@
 - Relates to: PRs [#70](https://github.com/swamikit/swami/pull/70),
   [#71](https://github.com/swamikit/swami/pull/71), and
   [#72](https://github.com/swamikit/swami/pull/72)
+- Supersedes: workflow-level secondary-review tier introduced in PRs #70-#72
+  (no prior ADR)
 
 ## Context
 

@@ -45,7 +45,7 @@ mod = _load_module()
 class SummaryFallbackFormatContractTests(unittest.TestCase):
     def test_deep_inline_comment_format_survives_summary_only_fallback(self) -> None:
         # Cover the remaining deep reviewer's original P1 contract and the P2
-        # case previously exercised only by the deleted fast-review test.
+        # case previously exercised only by the deleted secondary-review test.
         for severity in ("P1", "P2"):
             with self.subTest(severity=severity):
                 comments = mod.format_review_comments(
@@ -529,10 +529,10 @@ class DismissThenPostSequenceTests(unittest.TestCase):
 class FindPriorReviewsFilterTests(unittest.TestCase):
     """`find_prior_reviews` must filter by marker AND state, not just login.
 
-    The deep and fast reviewers both post as `quibble-review[bot]`. Filtering
-    on login alone lets each reviewer dismiss the other's reviews — the
-    exact bug this test guards against. Also verifies the state filter that
-    keeps COMMENTED reviews (not dismiss-able) out of the returned list.
+    Historically, both Quibble passes posted as `quibble-review[bot]`.
+    Filtering on login alone let one pass dismiss the other's reviews — the
+    exact bug this marker test guards against. It also verifies the state
+    filter that keeps COMMENTED reviews (not dismiss-able) out of the list.
 
     Also guards the fallback-identity widening (Codex P1 round 3):
     `_resolve_gh_env` falls back to `GITHUB_TOKEN` when App auth is
@@ -556,8 +556,8 @@ class FindPriorReviewsFilterTests(unittest.TestCase):
         with mock.patch("subprocess.run", side_effect=_fake_run):
             mod.find_prior_reviews("o/r", "5", env={})
 
-        # The `--jq` value must reference the deep-reviewer MARKER so this
-        # script never dismisses the fast reviewer's reviews.
+        # The `--jq` value must reference this reviewer's marker so the script
+        # never dismisses another marker-scoped review sharing its identity.
         self.assertIn("--jq", captured["cmd"])
         jq_expr = captured["cmd"][captured["cmd"].index("--jq") + 1]
         self.assertIn(mod.MARKER, jq_expr)

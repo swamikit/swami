@@ -684,6 +684,27 @@ JSON
     failures=$((failures + 1))
   fi
 
+  # ---- Case F: legacy sticky parser ignores the display heading -----------
+  cat > "$WORK/sticky-contract.json" <<'JSON'
+[
+  {
+    "id": 10,
+    "html_url": "https://example.test/sticky",
+    "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P2 (1)\n- **`scripts/sticky.sh:12` — [P2] Sticky finding survives heading rename**\n"
+  }
+]
+JSON
+  : > "$FINDINGS"
+  gh() { cat "$WORK/sticky-contract.json"; }
+  collect_claude_sticky 999
+  unset -f gh
+  if jq -e 'select(.path == "scripts/sticky.sh" and (.line|tostring) == "12" and .severity == "P2")' "$FINDINGS" >/dev/null; then
+    printf '  PASS  F  legacy sticky findings ignore heading/status prose\n'
+  else
+    printf '  FAIL  F  legacy sticky finding was not collected\n'
+    failures=$((failures + 1))
+  fi
+
   echo
   if [[ $failures -eq 0 ]]; then
     echo "audit-p2s --self-test: OK (all cases passed)"
