@@ -20,10 +20,10 @@ agent — the cloud loop does not write there.
   Momentum/rubber-band CONSTANTS are placeholders (iOS-standard), not Origami's real defaults
   (see parser TODO). Drive: fling → momentum decay matches Origami feel; over-drag past bounds →
   rubber-band resists then settles; release at rest → clamps; velocity reset on fresh touch.
-- **Interaction_Drag (examples/Interaction_Drag.draft.swift)** — STRUCTURAL DRAFT only. Geometry,
-  colors, bounds, layer count NOT read from the graph (parser tail heuristic over-includes the
-  embedded Drag component on this 534 KB file). Must: (a) generalize the parser to isolate the real
-  placed graph, (b) re-generate from true values, (c) drive-verify.
+- **Interaction_Drag (examples/Interaction_Drag.draft.swift).** STRUCTURAL DRAFT only. The parser
+  now isolates the real 24-node / 19-edge placed graph and decodes instance values, but catalog
+  defaults and parent/child layer membership still block faithful SwiftUI emission. Must:
+  (a) decode those remaining facts, (b) generate from the semantic IR, (c) drive-verify.
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
 - **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches
@@ -33,9 +33,8 @@ agent — the cloud loop does not write there.
 - **PATTERNS growth**: current single entry `touch:Interaction_Touch`. Add one line per
   translated pattern (`<slug>:<origami-filename-stem>`) as the corpus grows; the ContentView
   switch in `app/SwamiHost/ContentView.swift` gets a matching case.
-- **Parser generalization** — biggest live blocker. Currently only Touch-sized files parse
-  cleanly (placed-vs-library fixed tail offset). Interaction_Drag over-includes the embedded
-  Drag component. Until this generalizes, we can't feed the loop pattern N+1.
+- **Parser generalization.** Placed-vs-library separation is structural for zipped documents.
+  The next live blockers are catalog default values and layer hierarchy.
 
 ## Follow-up ADRs on the same runner substrate (ADR-0013 enables)
 - **Parser verification via Origami Inspector** — osascript can read AX attributes of
@@ -66,14 +65,11 @@ agent — the cloud loop does not write there.
   as "you forgot how to number files."
 
 ## Parser TODOs blocking faithful output
-- **Placed-vs-library generalization** (core challenge): fixed tail offset (360000) is tuned to the
-  Touch example; on Interaction_Drag (534 KB) it captures Drag's component internals as false
-  "placed" nodes. Need a structural way to find the document's placed graph (root reference), not a
-  byte offset. Blocks trustworthy translation of any pattern embedding composite patches.
-- **Input-port default-value decoding**: DragSettings port defaults (Momentum/Rubber Band Friction,
-  Clip) are NOT reachable by naive vtable field-offset walking (returns zeros / canvas coords).
-  Values are a typed value-union stored indirectly — needs real union tag→payload decoding. Blocks
-  faithful momentum constants in drag().
+- **Catalog default-value decoding**: instance overrides now decode (including Drag Settings
+  Momentum = true and Momentum Friction = 4), but inputs without overrides inherit values from the
+  embedded patch catalog. Resolve that link rather than treating absent overrides as zero.
+- **Layer hierarchy decoding**: node and edge membership is exact, but parent/child layer placement
+  is not represented yet. Codegen stops instead of guessing a SwiftUI stack.
 
 ## Infra self-healing loop (V4 prerequisites)
 - **`.github/ISSUE_TEMPLATE/infra-blocker.md`** (landed in PR #24) — structured evidence template for when a Builder or Review GA hits a runner-level failure (Origami install broken, sim boot fails, ImageMagick not available, etc.). Template auto-applies `label: infra-blocker` so downstream queries are label-based.

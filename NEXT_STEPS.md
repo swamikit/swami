@@ -20,17 +20,20 @@ the interactive modal. Surfaced the real hard cases (continuous velocity spring,
 edge-swipe gating, wireless links, groups). This validated the mapping table against a
 real file.
 
-## ✅ 3. FlatBuffers parser (`src/parser/`) — first cut working
+## ✅ 3. FlatBuffers parser (`tool/src/parser/`), structural graph working
 
-`src/parser/origami_graph.py` reads the **wiring** by strict reflection (no schema, no
-deps): 356 nodes / 395 edges on the example, all name-resolved. ADR 0004;
-`examples/TouchOrigamiExample.graph.json` is the parsed output.
+`tool/src/parser/origami_graph.py` follows root field 4 into the current document and
+reads its declared child-node, port, and connection vectors by strict reflection (no
+schema, no dependencies). The public Drag pattern yields 24 unique placed nodes and 19
+identifier-resolved edges; boolean, number, point, and four-component instance values
+are decoded without flattening the embedded component library.
 
 Remaining refinements (not blockers):
 - Canonical **port names** for builtin patches (some ports name-by-tag).
 - **Group/component nesting** → hierarchical, not flat.
 - Collapse **wireless** broadcaster/receiver into direct edges by name.
-- Filter comment/annotation/library artifacts from the node count.
+- Decode catalog defaults for inputs without an instance override.
+- Recover parent/child layer membership for SwiftUI body emission.
 - **Validate** against Origami's v221 `.origami → JSON` export if that's confirmed
   in-app (would be the ground-truth oracle).
 

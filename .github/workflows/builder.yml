@@ -22,15 +22,14 @@ name: builder
 #      consumer" failure mode: Triage decides the issue is actionable →
 #      Builder picks it up.
 #
-# V1: parser + codegen are placeholders — they may not yet handle a given pattern.
-# Ship the skeleton so it's wired end-to-end; upgrade the translate step (Claude
-# API call, richer codegen) once the parser generalizes past Touch.
+# Translation is evidence-gated. Parser or codegen gaps stop the run and leave IR /
+# translation-plan artifacts for diagnosis; Builder never turns a failed translation
+# into a placeholder PR.
 #
 # Guardrails:
 #  - Forks never get to run (no secret access, no push rights).
-#  - Missing ANTHROPIC_API_KEY skips the API-driven translate step (parser+codegen
-#    still run; the PR still opens, marked as skeleton). The `ready` job hard-
-#    requires the key — without Claude it has no way to plan the change.
+#  - The deterministic translate path has no model-provider dependency. The general
+#    `ready` path uses the configured model client separately.
 #  - macos-15 chosen to match verify.yml's runner so a follow-on interactive
 #    verify (Origami-installed) can reuse the same environment; codegen itself
 #    doesn't need macOS, so a later cost-cut may split parser+codegen back to
@@ -142,31 +141,10 @@ jobs:
             exit 1
           fi
 
-      - name: Guard — ANTHROPIC_API_KEY presence
-        id: guard
-        env:
-          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          # Placeholder for the Claude-driven translate pass. V1 doesn't call the
-          # API yet — the parser+codegen skeleton runs regardless. When the API
-          # call lands, downstream steps read has_key to decide whether to enrich
-          # the IR / codegen or ship the deterministic skeleton alone.
-          if [ -n "${KEY:-}" ]; then
-            echo "has_key=true"  >> "$GITHUB_OUTPUT"
-          else
-            echo "has_key=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::ANTHROPIC_API_KEY not present — Claude-assisted translate step will be skipped (deterministic skeleton only)."
-          fi
-
       - name: Parse (.origami → IR)
         id: parse
         env:
           STEM: ${{ steps.pattern.outputs.stem }}
-        # continue-on-error: parser is still Touch-shaped (CLAUDE.md TODO: generalize
-        # port-default decoding). Failing here shouldn't abort the PR — we still want
-        # the branch + PR opened so the tracker sees the attempt and a human can pick
-        # it up. Later, once the parser handles arbitrary graphs, flip this to hard-fail.
-        continue-on-error: true
         run: |
           # origami_graph.py takes <input.origami> <dest.json> and writes JSON to the
           # dest path (not stdout — CLI contract, see tool/src/parser/origami_graph.py).
@@ -187,44 +165,18 @@ jobs:
         id: codegen
         env:
           STEM: ${{ steps.pattern.outputs.stem }}
-        continue-on-error: true
         run: |
-          # swiftgen.py takes <ir.json> <dest.swift> and writes to the dest path
-          # (Codex P1 L139 — same contract as the parser).
-          #
-          # When parser produced no usable IR, emit a public fallback view so it's
-          # visible from SwamiHost (ContentView.swift lives in the SwamiHost target;
-          # generated files live in the Swami framework target — internal symbols
-          # aren't reachable across modules). `public struct` + `public init` +
-          # `public var body` is what makes `${STEM}View()` compile from the host
-          # (Codex P1 L164).
+          # swiftgen.py takes <ir.json> <dest.swift>. Unsupported semantic IR exits
+          # nonzero and writes out/<stem>.ir.plan.json for the artifact upload below.
           set -eu
           mkdir -p app/Swami/Patterns
-          if [ -s "out/${STEM}.ir.json" ]; then
-            python3 tool/src/codegen/swiftgen.py \
-              "out/${STEM}.ir.json" \
-              "app/Swami/Patterns/${STEM}.swift"
-          else
-            cat > "app/Swami/Patterns/${STEM}.swift" <<SWIFT
-          // TODO(builder): parser+codegen did not yet handle ${STEM}.
-          // Skeleton PR only — regenerate once the parser generalizes past Touch.
-          import SwiftUI
-          import Swami
-
-          public struct ${STEM}View: View {
-              public init() {}
-              public var body: some View { Text("${STEM} — not yet translated") }
-          }
-          SWIFT
-          fi
+          python3 tool/src/codegen/swiftgen.py \
+            "out/${STEM}.ir.json" \
+            "app/Swami/Patterns/${STEM}.swift"
 
       - name: Pre-gate — tree-sitter Swift syntax
-        # Hard-fail if the generated (or fallback) Swift has ERROR / MISSING nodes.
-        # `continue-on-error` on parse+codegen keeps a bad-parse run alive so the
-        # PR still opens with a skeleton — but a *syntactically invalid* Swift file
-        # must never be pushed. That's the whole point of the pre-gate (Codex P1
-        # L153; CLAUDE.md: cloud-side syntax pre-gate). No `continue-on-error`
-        # here on purpose.
+        # Hard-fail if generated Swift has ERROR / MISSING nodes. Parser, codegen,
+        # and syntax are all required before Builder may create a translation PR.
         env:
           STEM: ${{ steps.pattern.outputs.stem }}
         run: |
@@ -342,7 +294,7 @@ jobs:
             exit 0
           fi
 
-          git commit -m "translate: ${STEM} (builder skeleton)"
+          git commit -m "translate: ${STEM}"
           git push --set-upstream origin "$BRANCH"
           echo "committed=true" >> "$GITHUB_OUTPUT"
 
@@ -356,13 +308,12 @@ jobs:
           BRANCH:   ${{ steps.pattern.outputs.branch }}
           SRC_URL:  ${{ steps.fetch.outputs.src_url }}
           ISSUE:    ${{ github.event.issue.number }}
-          HAS_KEY:  ${{ steps.guard.outputs.has_key }}
         run: |
           set -eu
           TEMPLATE=".github/PULL_REQUEST_TEMPLATE/pattern.md"
           BODY=$(mktemp)
 
-          # Pre-fill the pattern.md template. Verify evidence link is a
+          # Fill the pattern PR shape. Verify evidence is a
           # placeholder — verify.yml's sticky comment will replace it once
           # pixel-gate runs on this PR.
           {
@@ -373,7 +324,7 @@ jobs:
             echo "## Pattern"
             echo "- **Name:** ${STEM}"
             echo "- **\`.origami\` source URL:** ${SRC_URL}"
-            echo "- **Primary Origami patch(es):** _TBD — Builder skeleton; fill in after codegen upgrades._"
+            echo "- **Primary Origami patch(es):** _Read from the generated source and IR artifact._"
             echo "- **Helpers touched (new / existing):** \`app/Swami/Patterns/${STEM}.swift\` (new), \`app/SwamiHost/ContentView.swift\`, \`.github/workflows/verify.yml\`"
             echo
             echo "## Structural check"
@@ -394,7 +345,7 @@ jobs:
             fi
             echo "- Slug: \`${SLUG}\`"
             echo "- Runner: \`macos-15\`"
-            echo "- Claude-assisted translate: \`${HAS_KEY}\` (V1 placeholder — parser+codegen only)"
+            echo "- Translate path: deterministic parser + codegen (model-provider independent)"
           } > "$BODY"
 
           # Suppress the pattern.md template auto-inject so our filled body isn't

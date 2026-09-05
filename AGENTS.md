@@ -49,9 +49,10 @@ oracle — means, not a deliverable.
   core parsing challenge.** Root field 14 (EdgeSwipe, Velocity,
   StickyBoundaries, …) is the LIBRARY, not the placed graph — do not mistake
   it for the document (a prior session did, and generated the wrong app).
-- Placed nodes cluster in the file **tail region (~373k–401k)** for the Touch
-  example. ~25 placed nodes / ~44 edges is the real graph (vs 356/395
-  library-inclusive).
+- Root field 4 points to the current document component. That component's field 9
+  is the exact placed-node vector and field 10 is its exact connection vector. The
+  public Drag pattern currently decodes to 24 unique placed nodes / 19 edges; the
+  embedded library is intentionally excluded.
 - Design tokens follow Origami's ColorKit/TypeKit model: a color is
   `{name, hex, alpha}` plus `colorUsages` (semantic roles); type styles
   likewise. Preserve these names in the IR (ADR-0007).

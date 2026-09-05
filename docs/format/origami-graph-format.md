@@ -2,7 +2,7 @@
 
 Reference for `src/parser`. Findings are from `examples/Touch Origami Example.origami`
 (Origami Studio version **208.0 (837960526)**). Confirms ADR 0001; the decoded layout
-below is implemented in `src/parser/origami_graph.py` (ADR 0004).
+below is implemented in `tool/src/parser/origami_graph.py` (ADR 0004).
 
 ## Container
 
@@ -50,11 +50,15 @@ in-bounds table size rejects the false positives. With that cap the walk finishe
 
 Field indices are vtable slots (stable within this version).
 
-**Document / component container** (also an `ios.Screen` node at the root):
+**Document root and component container**:
+- root `[4]` uoffset → current document component (do not confuse this with the
+  embedded component/library vector in root `[14]`)
+- document component `[4]` name, `[9]` child-node vector, `[10]` connection vector
+
+**Placed node** (including `ios.Screen`):
 - `[2]` type string (`ios.Screen`), `[4]` name
 - `[5]` vector → the screen's own ports
-- `[9]` vector<table> → **child node list** (patches in this component)
-- `[10]` vector<table> → **connection list** (edges) for this component
+- `[6]` vector → output ports
 - `[8]`, `[13]` metadata tables
 
 **Node table**:
@@ -76,20 +80,22 @@ Field indices are vtable slots (stable within this version).
 **Connection table** (the wiring):
 - `[0]` src node id, `[1]` src port id, `[2]` dst node id, `[3]` dst port id
 
-To recover edges globally we harvest every node (any table with a dotted type string +
-id), index all port ids, then collect every table shaped `[nodeId, portId, nodeId,
-portId]`. On the example this yields **356 nodes / 395 edges, all name-resolved**.
+The parser walks root `[4]` → component `[9]` for placed nodes and component `[10]`
+for edges, then indexes each node's `[5]`/`[6]` port vectors. On the current public
+Interaction Drag corpus this yields **24 unique placed nodes / 19 edges**, with every
+edge's node and port identifiers resolved. This avoids the duplicate node/metadata
+records produced by the old type-string owner scan.
 
 ## Still gated / TODO for the parser
 
-- **Port names for builtin patches** (~10% show blank): needs a per-patch-type port
+- **Port names for builtin patches** (some are blank): needs a per-patch-type port
   catalog to name ports referenced by tag rather than inline string.
 - **Group/component nesting** (`builtin.group.input`/`output`): currently harvested
   flat; the IR should represent the hierarchy.
 - **Wireless broadcaster/receiver**: represented as ordinary nodes; not yet collapsed
   into direct name-resolved edges.
-- **Node-count validation**: 356 nodes includes comments/annotations and possibly
-  library artifacts — validate against Origami's own view (see Alternatives).
+- **Nested component implementations**: placed composite nodes remain semantic units;
+  their library implementation is intentionally not flattened into the placed graph.
 
 ## Alternatives / cross-check
 

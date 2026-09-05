@@ -12,7 +12,81 @@ CURVE = {"quadratic": "easeInOut", "linear": "linear"}
 
 def load(p): return json.loads(pathlib.Path(p).read_text())
 
-def gen(ir):
+class CodegenBlocked(ValueError):
+    """The IR is structurally valid but lacks facts required for faithful SwiftUI."""
+
+
+def categorize(node_type):
+    if node_type == "builtin.comment": return "annotation"
+    if node_type == "ios.Screen" or node_type.startswith("builtin.layer."):
+        if node_type == "builtin.layer.interaction": return "interaction"
+        if node_type == "builtin.layer.binding": return "binding"
+        return "layer"
+    if node_type.startswith("origami.Drag"): return "interaction"
+    if node_type.startswith(("builtin.logic.", "builtin.compare.", "builtin.math.")):
+        return "value"
+    if node_type in ("builtin.getPoint", "builtin.multiplexer"):
+        return "value"
+    if node_type == "builtin.pulse": return "state"
+    return "unsupported"
+
+
+def analyze(ir):
+    """Build a deterministic translation plan from the general graph IR."""
+    if ir.get("schema_version") != 1 or "placed_nodes" not in ir or "edges" not in ir:
+        raise ValueError("not semantic graph IR schema_version 1")
+    categories = {}
+    for node in ir["placed_nodes"]:
+        category = categorize(node["type"])
+        categories.setdefault(category, []).append({
+            "id": node["id"], "type": node["type"], "name": node.get("name")
+        })
+
+    connected_inputs = {
+        (edge["destination"]["node_id"], edge["destination"]["port_id"])
+        for edge in ir["edges"]
+    }
+    missing_defaults = []
+    for node in ir["placed_nodes"]:
+        for port in node.get("inputs", []):
+            key = (node["id"], port["id"])
+            if key not in connected_inputs and port.get("has_default") and "value" not in port:
+                missing_defaults.append({
+                    "node_id": node["id"], "node": node.get("name") or node["type"],
+                    "port_id": port["id"], "port": port.get("name"),
+                })
+
+    blockers = []
+    if ir.get("unresolved_edge_count"):
+        blockers.append({"kind": "unresolved_edges", "count": ir["unresolved_edge_count"]})
+    if missing_defaults:
+        blockers.append({
+            "kind": "port_defaults", "count": len(missing_defaults),
+            "message": "decode instance/catalog defaults or verify them in Origami Inspector",
+            "ports": missing_defaults,
+        })
+    if categories.get("layer") and not ir.get("layer_tree"):
+        blockers.append({
+            "kind": "layer_hierarchy", "count": len(categories["layer"]),
+            "message": "decode parent/child layer membership before emitting the SwiftUI body",
+        })
+    if categories.get("unsupported"):
+        blockers.append({
+            "kind": "unsupported_nodes", "count": len(categories["unsupported"]),
+            "nodes": categories["unsupported"],
+        })
+    return {
+        "schema_version": 1,
+        "source": ir.get("file"),
+        "node_count": len(ir["placed_nodes"]),
+        "edge_count": len(ir["edges"]),
+        "categories": categories,
+        "blockers": blockers,
+        "ready": not blockers,
+    }
+
+
+def gen_touch_legacy(ir):
     G = ir["group"]; F = ir["frame_defaults"]; O = ir["oval_defaults"]; AN = ir["animation"]
     A = ir["artboard"]; rows = ir["rows"]
     anim = f'Animation.{CURVE.get(AN["curve"],"easeInOut")}(duration: {AN["duration"]})'
@@ -117,8 +191,31 @@ def gen(ir):
     add("#Preview { TouchOrigamiExampleView() }")
     return "\n".join(L)+"\n"
 
+
+def gen(ir):
+    """Generate SwiftUI for a supported IR, or stop with explicit fidelity blockers."""
+    if "group" in ir and "frame_defaults" in ir:
+        return gen_touch_legacy(ir)
+    plan = analyze(ir)
+    if plan["blockers"]:
+        summary = ", ".join(f"{item['kind']}={item['count']}" for item in plan["blockers"])
+        raise CodegenBlocked(
+            "semantic graph parsed, but faithful SwiftUI emission is blocked: " + summary
+        )
+    raise CodegenBlocked("semantic graph has no registered SwiftUI emitter")
+
 if __name__ == "__main__":
     ir = load(sys.argv[1] if len(sys.argv)>1 else "examples/TouchOrigamiExample.ir.json")
     out = sys.argv[2] if len(sys.argv)>2 else "examples/TouchOrigamiExample.generated.swift"
-    pathlib.Path(out).write_text(gen(ir))
-    print("wrote", out)
+    if "--plan" in sys.argv:
+        pathlib.Path(out).write_text(json.dumps(analyze(ir), indent=2) + "\n")
+        print("wrote translation plan", out)
+    else:
+        try:
+            swift = gen(ir)
+        except CodegenBlocked as error:
+            plan_path = pathlib.Path(sys.argv[1]).with_suffix(".plan.json")
+            plan_path.write_text(json.dumps(analyze(ir), indent=2) + "\n")
+            raise SystemExit(f"codegen blocked: {error}; plan: {plan_path}")
+        pathlib.Path(out).write_text(swift)
+        print("wrote", out)

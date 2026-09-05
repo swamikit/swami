@@ -9,11 +9,11 @@ Translate [Origami Studio](https://origami.design) prototypes into idiomatic **S
                                      (deterministic)              (mapping rules)
 ```
 
-- **parser** (`src/parser`) — decode the `.origami` graph, separating the *placed*
+- **parser** (`tool/src/parser`) decodes the `.origami` graph, separating the *placed*
   patches/layers from the embedded component *library* (the hard part). Deterministic.
-- **IR** (`src/ir`) — a **semantic-rich** dataflow graph: nodes, edges, and semantics
+- **IR**, currently emitted by `tool/src/parser`, is a **semantic-rich** dataflow graph: nodes, edges, and semantics
   (named colors, type styles, component identity) — not just resolved values. See ADR-0007.
-- **codegen** (`src/codegen`) — lowers the IR onto SwiftUI's reactive state graph.
+- **codegen** (`tool/src/codegen`) lowers the IR onto SwiftUI's reactive state graph.
 
 ## Verification
 
@@ -28,6 +28,7 @@ on each side — and SSIM-diff the pair with ImageMagick's `compare`.
 
 ## Status
 
-First worked example verified: `examples/TouchOrigamiExample.*` (see the ground-truth
-values in `CLAUDE.md`). Parser edge/color extraction is the active work. Decisions in
-`docs/decisions/`.
+First worked example verified: `tool/examples/TouchOrigamiExample.*` (see the
+ground-truth values in `AGENTS.md`). The parser now emits exact placed nodes, ports,
+connections, and common instance values; catalog defaults and layer hierarchy are the
+remaining Drag codegen blockers. Decisions live in `docs/decisions/`.

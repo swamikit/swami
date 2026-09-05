@@ -23,7 +23,7 @@ Run:
     python3 -m tool.src.parser.test_generalize        # from repo root
     python3 tool/src/parser/test_generalize.py
 """
-import pathlib, sys, unittest, urllib.request, urllib.error
+import pathlib, struct, sys, unittest, urllib.request, urllib.error
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[2]
@@ -153,6 +153,53 @@ class TestInteractionCorpus(unittest.TestCase):
         # And the placed graph is NOT the whole library (would be ~350+ nodes).
         self.assertLess(out["placed_node_count"], 100,
                         f"Interaction_Drag over-counting into library: {out['placed_node_count']} nodes")
+
+    def test_interaction_drag_walks_declared_nodes_and_connections(self):
+        """The semantic IR comes from component vectors, not duplicate string owners."""
+        p = _fetch_corpus_file("Interaction_Drag.origami")
+        if not p:
+            self.skipTest("Interaction_Drag.origami not fetchable (no network / origami.design down)")
+        out = parse(str(p))
+        self.assertEqual(out["schema_version"], 1)
+        self.assertEqual(out["placed_node_count"], 24)
+        self.assertEqual(out["edge_count"], 19)
+        self.assertEqual(out["unresolved_edge_count"], 0)
+
+        node_ids = {node["id"] for node in out["placed_nodes"]}
+        self.assertEqual(len(node_ids), out["placed_node_count"])
+        for edge in out["edges"]:
+            self.assertIn(edge["source"]["node_id"], node_ids)
+            self.assertIn(edge["destination"]["node_id"], node_ids)
+            self.assertTrue(edge["resolved"])
+
+        drag = next(node for node in out["placed_nodes"] if node["type"] == "origami.Drag")
+        self.assertEqual([port["name"] for port in drag["inputs"]],
+                         ["Enable", "Layer", "Start", "Reset", "Settings"])
+        self.assertEqual([port["name"] for port in drag["outputs"]],
+                         ["Position", "Velocity", "Translation"])
+
+        settings = next(node for node in out["placed_nodes"]
+                        if node["type"] == "origami.DragSettings")
+        settings_inputs = {port["name"]: port for port in settings["inputs"]}
+        self.assertEqual(settings_inputs["Momentum Friction"]["value"],
+                         {"type_tag": None, "kind": "number", "value": 4.0})
+        self.assertEqual(settings_inputs["Momentum"]["value"]["value"], True)
+
+        artboard = next(node for node in out["placed_nodes"] if node["type"] == "ios.Screen")
+        background = next(port for port in artboard["inputs"] if port["name"] == "Background")
+        self.assertEqual(background["value"]["kind"], "vector4")
+        self.assertEqual(background["value"]["value"],
+                         [0.8666666666666667, 0.4392156862745098,
+                          0.8745098039215686, 1.0])
+
+    def test_table_validation_rejects_oversized_vtables(self):
+        data = bytearray(400)
+        data[4:8] = b"ORGM"
+        table, vtable = 300, 80
+        struct.pack_into("<i", data, table, table - vtable)
+        struct.pack_into("<H", data, vtable, 202)  # over MAX_VTABLE_SIZE
+        struct.pack_into("<H", data, vtable + 2, 8)
+        self.assertIsNone(Graph(bytes(data)).table(table))
 
 
 class TestStabilityAcrossCorpus(unittest.TestCase):
