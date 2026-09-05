@@ -12,10 +12,11 @@ name: publish-docs
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, closed]
+    types: [opened, synchronize, ready_for_review]
     paths:
       - 'app/Swami/**'
       - 'app/Swami.xcodeproj/**'
+      - '.github/workflows/publish-docs.yml'
   push:
     branches: [main]
     # Merges that only touch pattern sources feed post-merge.yml, which
@@ -49,7 +50,6 @@ env:
 
 jobs:
   build-and-publish:
-    if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: macos-15
     steps:
       - name: Checkout source
@@ -182,26 +182,3 @@ jobs:
             DocC publish skipped: the archive rendered ${{ steps.guard.outputs.pages }} documentation page(s), which is the Xcode-placeholder state (an empty catalog would overwrite the last good preview with a blank page).
 
             Add real content under `app/Swami/Swami.docc/` — the Swami landing page, articles, or sample-code pages — and push again to publish.
-
-  clean-pr-preview:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout published site
-        uses: actions/checkout@v7
-        with:
-          ref: gh-pages
-      - name: Remove closed pull request preview
-        env:
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -r --ignore-unmatch "pr-${PR}"
-          if git diff --cached --quiet; then
-            echo "no preview to remove"
-            exit 0
-          fi
-          git commit -m "docs: remove preview for PR #${PR}"
-          git push origin gh-pages

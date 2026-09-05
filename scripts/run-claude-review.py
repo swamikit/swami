@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claude review of the current PR, posted as a formal GitHub PR Review.
+"""Quibble review of the current PR, posted as a formal GitHub PR Review.
 
 Refactor B (issue #36): posts findings via the Reviews API — one call creates a
 formal Review (APPROVE / REQUEST_CHANGES / COMMENT) with per-finding inline
@@ -278,7 +278,9 @@ def format_review_body(
         "",
         "<details><summary>What Quibble checked</summary>",
         "",
-        "Current-head diff, repository guidance, review skill, relevant decisions, and submitted evidence.",
+        "Current-head diff and submitted evidence, using `AGENTS.md`, "
+        "[`skill/review/SKILL.md`](../blob/main/skill/review/SKILL.md), and "
+        "relevant records under `docs/decisions/`.",
         "",
         "</details>",
     ]

@@ -46,7 +46,7 @@ class SummaryFallbackFormatContractTests(unittest.TestCase):
     def test_deep_inline_comment_format_survives_summary_only_fallback(self) -> None:
         comments = mod.format_review_comments(
             [{
-                "severity": "P1",
+                "severity": "P2",
                 "file": "x.py",
                 "line": 4,
                 "_side": "RIGHT",
@@ -56,7 +56,7 @@ class SummaryFallbackFormatContractTests(unittest.TestCase):
             }]
         )
         degraded = review_posting._summary_only({"body": "summary", "comments": comments})
-        self.assertIn("#### `x.py:4`\n\n[P1] deep formatter title", degraded["body"])
+        self.assertIn("#### `x.py:4`\n\n[P2] deep formatter title", degraded["body"])
 
     def test_deep_unanchored_formatter_matches_gate_contract(self) -> None:
         payload = mod.format_review(
@@ -602,7 +602,7 @@ class FindPriorReviewsFilterTests(unittest.TestCase):
                 "id": 1,
                 "user": {"login": "github-actions[bot]"},
                 "state": "CHANGES_REQUESTED",
-                "body": f"{mod.MARKER}\n\n## Claude review\n### P1 (1)\n- bad",
+                "body": f"{mod.MARKER}\n\n## Quibble Review Summary\n### P1 (1)\n- bad",
             },
             {  # id=2: some OTHER github-actions workflow's review → skip
                 "id": 2,

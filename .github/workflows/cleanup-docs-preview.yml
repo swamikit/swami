@@ -1,0 +1,42 @@
+name: cleanup-docs-preview
+
+# Keep cleanup independent from publish-docs path filtering. A PR may publish
+# a preview and later revert every DocC-related change before it closes.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+# Concurrency groups are repository-wide. Sharing this group with
+# publish-docs.yml serializes every gh-pages writer.
+concurrency:
+  group: gh-pages
+  cancel-in-progress: false
+
+jobs:
+  clean-pr-preview:
+    # Fork pull_request tokens are read-only, and fork previews cannot have
+    # been published by this workflow for the same reason.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout published site
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+      - name: Remove closed pull request preview
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -r --ignore-unmatch "pr-${PR}"
+          if git diff --cached --quiet; then
+            echo "no preview to remove"
+            exit 0
+          fi
+          git commit -m "docs: remove preview for PR #${PR}"
+          git push origin gh-pages

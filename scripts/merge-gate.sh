@@ -1080,19 +1080,23 @@ upsert_gate_comment() {
 }
 
 clear_gate_comment() {
-  local pr="$1" id
+  local pr="$1" id listing
   # A green gate already has a first-class commit status in the Checks UI.
   # Remove our diagnostic sticky so successful PRs do not accumulate bot prose.
+  if ! listing="$(
+    gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
+      --jq '.[][] | select(.user.login == "github-actions[bot]") | select((.body // "") | contains("<!-- merge-gate -->")) | .id' \
+      2>/dev/null
+  )"; then
+    echo "::warning::merge-gate: could not list diagnostic comments for cleanup" >&2
+    return 0
+  fi
   while IFS= read -r id; do
     [[ -z "$id" ]] && continue
     if ! gh api "/repos/$REPO/issues/comments/$id" -X DELETE >/dev/null 2>&1; then
       echo "::warning::merge-gate: could not remove green diagnostic comment $id" >&2
     fi
-  done < <(
-    gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
-      --jq '.[][] | select(.user.login == "github-actions[bot]") | select((.body // "") | contains("<!-- merge-gate -->")) | .id' \
-      2>/dev/null || true
-  )
+  done <<<"$listing"
 }
 
 # ---------------------------------------------------------------------------
@@ -1210,7 +1214,7 @@ JSON
   "state": "CHANGES_REQUESTED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **request changes**\n\n### P1 (2)\n### P2 (0)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **request changes**\n\n### P1 (2)\n### P2 (0)\n### P3 (0)\n"
 }]
 JSON
   compute_gate
@@ -1229,7 +1233,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (1)\n### P2 (0)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (1)\n### P2 (0)\n### P3 (0)\n"
 }]
 JSON
   compute_gate
@@ -1247,7 +1251,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1270,7 +1274,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (0)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (0)\n### P3 (0)\n"
 }]
 JSON
   # findings.jsonl empty on purpose — the previous-push finding disappeared.
@@ -1289,7 +1293,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1316,7 +1320,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1341,7 +1345,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1366,7 +1370,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'

@@ -82,7 +82,7 @@ jobs:
         && github.event.issue.pull_request != null
         && contains(github.event.comment.body, '@claude review'))
     runs-on: ubuntu-latest
-    # One thorough Claude review is the only Quibble review.
+    # One thorough model pass is the only Quibble review.
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       # `quibble-review` GitHub App credentials — the review scripts mint an
