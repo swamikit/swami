@@ -224,9 +224,13 @@ def _chat_gemini(
 
     try:
         genai.configure(api_key=api_key)
-        gm = genai.GenerativeModel(model)
+        # `system_instruction` puts the review rules on Gemini's trusted system
+        # channel. Sending them as an extra content part (the legacy shape)
+        # would let an untrusted PR diff in `user` compete with or override
+        # the JSON-only / severity-taxonomy rules the Reviewer relies on.
+        gm = genai.GenerativeModel(model, system_instruction=system)
         resp = gm.generate_content(
-            [system, user],
+            user,
             generation_config=gen_config,
         )
     except Exception as exc:  # noqa: BLE001
@@ -234,10 +238,39 @@ def _chat_gemini(
             raise RateLimited(f"gemini: {exc}") from exc
         raise ModelError(f"gemini: {exc}") from exc
 
-    text = getattr(resp, "text", None)
+    # `resp.text` is a *property* that raises `ValueError` when the candidate
+    # has no text part (finish_reason SAFETY / RECITATION / MAX_TOKENS). Read
+    # it outside a guard and the exception escapes the ModelError contract —
+    # `chat_with_fallback` won't cut over. Prefer walking candidates and map
+    # anything unexpected onto ModelError.
+    try:
+        text = _gemini_extract_text(resp)
+    except Exception as exc:  # noqa: BLE001
+        raise ModelError(f"gemini: malformed response: {exc}") from exc
     if not text:
         raise ModelError("gemini: empty response text")
     return text
+
+
+def _gemini_extract_text(resp: Any) -> str:
+    """Pull the reply text out of a Gemini response object.
+
+    Walks ``resp.candidates[0].content.parts`` first so a safety-filtered or
+    MAX_TOKENS-truncated reply doesn't trip the ``resp.text`` quick-accessor's
+    ``ValueError``. Falls back to ``resp.text`` when no candidates/parts are
+    exposed (older SDK shapes, minimal test fixtures) — that read is inside
+    the caller's try/except and any raise there still becomes ``ModelError``.
+    """
+    candidates = getattr(resp, "candidates", None) or []
+    if candidates:
+        content = getattr(candidates[0], "content", None)
+        parts = getattr(content, "parts", None) or []
+        pieces = [getattr(p, "text", "") for p in parts]
+        joined = "".join(p for p in pieces if p)
+        if joined:
+            return joined
+    # No usable candidate parts — try the quick accessor. May raise; caller maps it.
+    return getattr(resp, "text", "") or ""
 
 
 # ---------------------------------------------------------------------------

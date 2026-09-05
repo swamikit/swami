@@ -124,6 +124,49 @@ class _GeminiResponse:
         self.text = text
 
 
+class _GeminiPart:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _GeminiContent:
+    def __init__(self, parts: list) -> None:
+        self.parts = parts
+
+
+class _GeminiCandidate:
+    def __init__(self, parts: list) -> None:
+        self.content = _GeminiContent(parts)
+
+
+class _GeminiResponseWithCandidates:
+    """Response whose text lives on ``candidates[0].content.parts`` (the shape
+    the real SDK returns). ``.text`` deliberately raises so we assert the
+    extractor walks candidates instead of tripping the quick-accessor."""
+    def __init__(self, text: str) -> None:
+        self.candidates = [_GeminiCandidate([_GeminiPart(text)])]
+
+    @property
+    def text(self) -> str:  # pragma: no cover — should never be reached
+        raise ValueError(
+            "text quick-accessor invoked; extractor should walk parts"
+        )
+
+
+class _GeminiResponseTextRaises:
+    """Response with no text part — mirrors SAFETY / RECITATION / MAX_TOKENS
+    truncation, where ``.text`` is a property that raises ``ValueError``."""
+    def __init__(self) -> None:
+        self.candidates = []
+
+    @property
+    def text(self) -> str:
+        raise ValueError(
+            "The `response.text` quick accessor requires the response to "
+            "contain a valid `Part`"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -238,8 +281,9 @@ class ChatDispatchTests(unittest.TestCase):
             captured: dict = {}
 
             class FakeModel:
-                def __init__(self, name):
+                def __init__(self, name, system_instruction=None):
                     captured["model"] = name
+                    captured["system_instruction"] = system_instruction
 
                 def generate_content(self, contents, generation_config=None):
                     captured["contents"] = contents
@@ -254,7 +298,10 @@ class ChatDispatchTests(unittest.TestCase):
                 )
             self.assertEqual(out, '{"ok": true}')
             self.assertEqual(captured["model"], "gemini-2.0-flash-exp")
-            self.assertEqual(captured["contents"], ["sys", "usr"])
+            # System prompt travels on the trusted `system_instruction` channel,
+            # never as an extra content part alongside untrusted user input.
+            self.assertEqual(captured["system_instruction"], "sys")
+            self.assertEqual(captured["contents"], "usr")
             self.assertEqual(
                 captured["gen_config"]["response_mime_type"],
                 "application/json",
@@ -266,11 +313,56 @@ class ChatDispatchTests(unittest.TestCase):
         finally:
             _wipe_fake_sdks()
 
+    def test_gemini_prefers_candidates_over_text_accessor(self) -> None:
+        """When candidates carry parts, extractor must walk them and never
+        invoke the raising `.text` quick-accessor."""
+        _wipe_fake_sdks()
+        try:
+            class FakeModel:
+                def __init__(self, _name, system_instruction=None):
+                    pass
+
+                def generate_content(self, _contents, generation_config=None):
+                    return _GeminiResponseWithCandidates("from parts")
+
+            _install_fake_gemini(FakeModel)
+            with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "gk-test"}):
+                out = mc.chat(
+                    provider="gemini", model="gemini-2.0-flash-exp",
+                    system="s", user="u",
+                )
+            self.assertEqual(out, "from parts")
+        finally:
+            _wipe_fake_sdks()
+
+    def test_gemini_text_property_valueerror_maps_to_modelerror(self) -> None:
+        """`resp.text` on a safety-filtered / MAX_TOKENS-truncated reply is a
+        property that raises `ValueError`. That must be mapped onto
+        `ModelError` so `chat_with_fallback` cuts over instead of crashing."""
+        _wipe_fake_sdks()
+        try:
+            class FakeModel:
+                def __init__(self, _name, system_instruction=None):
+                    pass
+
+                def generate_content(self, _contents, generation_config=None):
+                    return _GeminiResponseTextRaises()
+
+            _install_fake_gemini(FakeModel)
+            with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "gk-test"}):
+                with self.assertRaises(mc.ModelError):
+                    mc.chat(
+                        provider="gemini", model="gemini-2.0-flash-exp",
+                        system="s", user="u",
+                    )
+        finally:
+            _wipe_fake_sdks()
+
     def test_gemini_rate_limit(self) -> None:
         _wipe_fake_sdks()
         try:
             class FakeModel:
-                def __init__(self, _name):
+                def __init__(self, _name, system_instruction=None):
                     pass
 
                 def generate_content(self, *_a, **_k):
@@ -336,7 +428,7 @@ class FallbackTests(unittest.TestCase):
 
             # Fake Gemini as primary — always 429s.
             class FakeGeminiModel:
-                def __init__(self, _name):
+                def __init__(self, _name, system_instruction=None):
                     pass
 
                 def generate_content(self, *_a, **_k):
@@ -385,7 +477,7 @@ class FallbackTests(unittest.TestCase):
             calls: list[str] = []
 
             class FakeGeminiModel:
-                def __init__(self, _name):
+                def __init__(self, _name, system_instruction=None):
                     pass
 
                 def generate_content(self, *_a, **_k):
@@ -425,7 +517,7 @@ class FallbackTests(unittest.TestCase):
             calls: list[str] = []
 
             class FakeGeminiModel:
-                def __init__(self, _name):
+                def __init__(self, _name, system_instruction=None):
                     pass
 
                 def generate_content(self, *_a, **_k):
@@ -461,7 +553,7 @@ class FallbackTests(unittest.TestCase):
         _wipe_fake_sdks()
         try:
             class FakeGeminiModel:
-                def __init__(self, _name):
+                def __init__(self, _name, system_instruction=None):
                     pass
 
                 def generate_content(self, *_a, **_k):
