@@ -63,11 +63,17 @@ ORPHANS="$WORK/orphans.jsonl"            # subset that are un-tracked
 : > "$FINDINGS"
 : > "$ORPHANS"
 
+# PRs whose reviewer-comment fetches errored out (auth, rate, 404, network).
+# Reported in the SUMMARY so a partial audit can never look byte-identical
+# to a clean one — that silent-zero was the whole failure class this script
+# exists to prevent (see header comment).
+FAILED_FETCHES=()
+
 # Preload every open+closed issue title/body/URL once — searching per finding
 # is O(findings × issues). One dump + jq greps stays under gh's rate limits
 # on any realistic backlog.
 ISSUES_JSON="$WORK/issues.json"
-gh issue list --state all --limit 500 \
+gh issue list --repo "$REPO" --state all --limit 500 \
   --json number,title,body,url,createdAt \
   > "$ISSUES_JSON"
 
@@ -97,7 +103,7 @@ is_false_positive() {
 # Discover PRs merged since SINCE
 # ---------------------------------------------------------------------------
 PRS_JSON="$WORK/prs.json"
-gh pr list --state merged --limit 100 \
+gh pr list --repo "$REPO" --state merged --limit 100 \
   --json number,mergedAt,title,url,headRefOid \
   > "$PRS_JSON"
 
@@ -114,7 +120,7 @@ done < <(
 
 if [[ ${#PR_NUMBERS[@]} -eq 0 ]]; then
   echo "audit-p2s: no PRs merged since $SINCE — nothing to audit." >&2
-  echo "SUMMARY total=0 addressed=0 orphans=0 filed=0"
+  echo "SUMMARY total=0 addressed=0 orphans=0 filed=0 errors=0"
   exit 0
 fi
 
@@ -147,7 +153,15 @@ record_finding() {
 collect_codex() {
   local pr="$1"
   local raw="$WORK/codex-$pr.json"
-  gh api "/repos/$REPO/pulls/$pr/comments" --paginate > "$raw" 2>/dev/null || return 0
+  local err="$WORK/codex-$pr.err"
+  # Do NOT swallow gh errors: auth failure, rate limit, 404, or a network
+  # blip must never look like "PR had no findings". Record the PR in
+  # FAILED_FETCHES and let SUMMARY report errors=N.
+  if ! gh api "/repos/$REPO/pulls/$pr/comments" --paginate > "$raw" 2>"$err"; then
+    FAILED_FETCHES+=("codex:$pr")
+    echo "audit-p2s: gh api pulls/$pr/comments FAILED — $(head -1 "$err" 2>/dev/null || echo 'no stderr')" >&2
+    return 0
+  fi
 
   # Filter to codex/chatgpt authors and P2|P3 badges, extract the fields we
   # need. Emits tab-separated: sev, path, line, id, url, title, body_b64.
@@ -184,7 +198,14 @@ collect_codex() {
 collect_claude() {
   local pr="$1"
   local raw="$WORK/claude-$pr.json"
-  gh api "/repos/$REPO/issues/$pr/comments" --paginate > "$raw" 2>/dev/null || return 0
+  local err="$WORK/claude-$pr.err"
+  # Same reasoning as collect_codex: never swallow the failure into a
+  # silent zero. Record and continue so one bad PR does not blank the run.
+  if ! gh api "/repos/$REPO/issues/$pr/comments" --paginate > "$raw" 2>"$err"; then
+    FAILED_FETCHES+=("claude:$pr")
+    echo "audit-p2s: gh api issues/$pr/comments FAILED — $(head -1 "$err" 2>/dev/null || echo 'no stderr')" >&2
+    return 0
+  fi
 
   # Find the sticky comment (there is at most one). `read` returning 1 (no
   # match) and `head` closing the pipe on jq (SIGPIPE) are both expected —
@@ -269,7 +290,8 @@ collect_claude() {
 #
 # A finding is "addressed" if ANY of:
 #   * an issue mentions the exact `path:line` (title or body)
-#   * an issue links to the exact comment URL (title or body)
+#   * an issue links to the exact comment URL (title or body) — but ONLY
+#     when the URL uniquely identifies THIS finding
 #
 # The earlier "issue mentions PR #N AND the file path" heuristic was too
 # loose: a single follow-up issue on PR #58 that named the file made every
@@ -277,17 +299,29 @@ collect_claude() {
 # how the previous audit hid all of PR #58's Claude P2/P3s. Match by exact
 # anchor only.
 #
+# Reviewer matters for the URL check. Codex line comments each have their
+# own `html_url` (unique per finding), so URL match is honest. The Claude
+# sticky is ONE comment carrying N findings — all N share the same URL, so
+# once any one is filed (and the filed issue references the sticky URL),
+# the URL match would mark every remaining Claude finding on that PR as
+# addressed. For Claude findings the URL is deliberately NOT used.
+#
 # We also do NOT treat "a later commit on the PR touched this file" as
 # addressed: on merged PRs every commit is later than every review comment,
 # so that heuristic evaluates to "always addressed". Issue-linkage is the
 # honest signal.
 #
-# is_addressed <pr> <path> <line> <comment_url>
+# is_addressed <path> <line> <comment_url> <reviewer>
 is_addressed() {
-  local pr="$1" path="$2" line="$3" curl="$4"
+  local path="$1" line="$2" curl="$3" reviewer="$4"
   local needle_pathline="${path}:${line}"
+  local url_arg="$curl"
+  # Claude sticky URL is shared across all findings on the PR — do not use it.
+  if [[ "$reviewer" == "claude" ]]; then
+    url_arg=""
+  fi
   jq -e --arg pl "$needle_pathline" \
-        --arg url "$curl" '
+        --arg url "$url_arg" '
     any(.[]?;
       (.body // "") as $b
       | (.title // "") as $t
@@ -309,8 +343,16 @@ for pr in "${PR_NUMBERS[@]}"; do
 done
 
 TOTAL="$(wc -l < "$FINDINGS" | tr -d ' ')"
+ERRORS="${#FAILED_FETCHES[@]}"
 if [[ "$TOTAL" -eq 0 ]]; then
-  echo "SUMMARY since=$SINCE prs=${#PR_NUMBERS[@]} total=0 addressed=0 orphans=0 filed=0"
+  if [[ "$ERRORS" -gt 0 ]]; then
+    echo "audit-p2s: $ERRORS PR fetch(es) failed — total=0 does NOT mean 'clean'." >&2
+    printf '  failed: %s\n' "${FAILED_FETCHES[@]}" >&2
+  fi
+  echo "SUMMARY since=$SINCE prs=${#PR_NUMBERS[@]} total=0 addressed=0 orphans=0 filed=0 errors=$ERRORS"
+  # A run with fetch failures and no findings is not a clean audit — exit
+  # non-zero so callers (and CI) cannot mistake it for one.
+  [[ "$ERRORS" -gt 0 ]] && exit 1
   exit 0
 fi
 
@@ -320,11 +362,11 @@ fi
 ADDRESSED=0
 ORPHAN=0
 while IFS= read -r finding; do
-  pr="$(jq -r .pr    <<<"$finding")"
   path="$(jq -r .path  <<<"$finding")"
   line="$(jq -r .line  <<<"$finding")"
   curl="$(jq -r .comment_url <<<"$finding")"
-  if is_addressed "$pr" "$path" "$line" "$curl"; then
+  rev="$(jq -r .reviewer <<<"$finding")"
+  if is_addressed "$path" "$line" "$curl" "$rev"; then
     ADDRESSED=$((ADDRESSED + 1))
   else
     ORPHAN=$((ORPHAN + 1))
@@ -374,7 +416,7 @@ if [[ "$FILE_ISSUES" -eq 1 && "$ORPHAN" -gt 0 ]]; then
 
     # Idempotency belt: re-check right before filing, in case an earlier
     # iteration of THIS run just filed a near-duplicate issue.
-    if is_addressed "$pr" "$path" "$line" "$curl"; then
+    if is_addressed "$path" "$line" "$curl" "$rev"; then
       continue
     fi
 
@@ -400,7 +442,7 @@ no existing issue tracks by \`file:line\` or PR reference._
 EOF
 )
 
-    url="$(gh issue create --title "$issue_title" --body "$issue_body" 2>/dev/null || true)"
+    url="$(gh issue create --repo "$REPO" --title "$issue_title" --body "$issue_body" 2>/dev/null || true)"
     if [[ -n "$url" ]]; then
       FILED=$((FILED + 1))
       echo "  filed: $url"
@@ -415,5 +457,16 @@ EOF
   done < "$ORPHANS"
 fi
 
+if [[ "$ERRORS" -gt 0 ]]; then
+  echo
+  echo "WARNING: $ERRORS PR fetch(es) failed — reported totals are a lower bound." >&2
+  printf '  failed: %s\n' "${FAILED_FETCHES[@]}" >&2
+fi
+
 echo
-echo "SUMMARY since=$SINCE prs=${#PR_NUMBERS[@]} total=$TOTAL addressed=$ADDRESSED orphans=$ORPHAN filed=$FILED"
+echo "SUMMARY since=$SINCE prs=${#PR_NUMBERS[@]} total=$TOTAL addressed=$ADDRESSED orphans=$ORPHAN filed=$FILED errors=$ERRORS"
+
+# Any fetch failure means the audit is incomplete — signal that in exit
+# code, so a partial audit cannot be mistaken for a clean one.
+[[ "$ERRORS" -gt 0 ]] && exit 1
+exit 0
