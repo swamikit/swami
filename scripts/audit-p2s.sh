@@ -66,6 +66,9 @@ fi
 WORK="$(mktemp -d -t audit-p2s.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REVIEWERS_CONFIG="${REVIEWERS_CONFIG:-$SCRIPT_DIR/../.github/reviewers.yml}"
+
 FINDINGS="$WORK/findings.jsonl"          # one JSON object per finding
 ORPHANS="$WORK/orphans.jsonl"            # subset that are un-tracked
 : > "$FINDINGS"
@@ -292,17 +295,56 @@ collect_claude() {
   collect_claude_sticky "$pr"
 }
 
+quibble_review_contract() {
+  awk '
+    function unquote(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^"|"$/, "", value)
+      return value
+    }
+    /^[[:space:]]*-[[:space:]]+id:[[:space:]]*/ {
+      if (found) exit
+      value = $0
+      sub(/^[[:space:]]*-[[:space:]]+id:[[:space:]]*/, "", value)
+      in_reviewer = (unquote(value) == "claude")
+      if (in_reviewer) found = 1
+      next
+    }
+    in_reviewer && /^[[:space:]]+identities:[[:space:]]*$/ {
+      in_identities = 1
+      next
+    }
+    in_reviewer && in_identities && /^[[:space:]]+-[[:space:]]+/ {
+      value = $0
+      sub(/^[[:space:]]+-[[:space:]]+/, "", value)
+      value = unquote(value)
+      identities = identities (identities ? "," : "") value
+      next
+    }
+    in_reviewer && /^[[:space:]]+marker:[[:space:]]*/ {
+      in_identities = 0
+      value = $0
+      sub(/^[[:space:]]+marker:[[:space:]]*/, "", value)
+      marker = unquote(value)
+    }
+    END {
+      if (found && identities && marker) print identities "\t" marker
+    }
+  ' "$REVIEWERS_CONFIG"
+}
+
 latest_quibble_review_line() {
   local reviews_raw="$1"
-  jq -r \
-    --arg primary_login "quibble-review[bot]" \
-    --arg fallback_login "github-actions[bot]" '
+  local contract identities marker
+  contract="$(quibble_review_contract)"
+  IFS=$'\t' read -r identities marker <<<"$contract" || true
+  [[ -n "${identities:-}" && -n "${marker:-}" ]] || return 1
+  jq -r --arg identities "$identities" --arg marker "$marker" '
+    ($identities | split(",")) as $allowed
+    |
     [ .[]
-      | select(
-          .user.login == $primary_login
-          or .user.login == $fallback_login
-        )
-      | select(.body // "" | contains("<!-- reviewer:claude -->"))
+      | select(.user.login as $login | $allowed | index($login))
+      | select(.body // "" | contains($marker))
     ]
     | last
     | if . == null then empty else [(.id|tostring), (.body|@base64)] | @tsv end

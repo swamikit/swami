@@ -36,6 +36,9 @@
 #                           merge on its own (e.g. Codex is external — we
 #                           can't hold merge on a service we don't own).
 reviewers:
+  # `claude` and the reviewer:claude markers are intentionally stable machine
+  # identifiers even though the human-facing role is Quibble. Renaming them
+  # would strand in-flight review history and break prior-review dismissal.
   - id: claude
     identities:
       - quibble-review[bot]

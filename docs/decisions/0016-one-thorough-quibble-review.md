@@ -31,11 +31,12 @@ Quibble runs one thorough current-head review. It posts a compact summary,
 inline findings, a formal verdict, and the existing machine-readable markers
 consumed by merge-gate. Codex remains the separate external review.
 
-The Swami workflow uses Anthropic directly for this pass. If that request fails,
-the workflow posts the existing failure marker and merge-gate stays pending. It
-does not silently substitute another provider. Provider-neutral selection and
-fallback policy belong in Agent Factory, where they can be shared and tested
-without coupling Swami to a second presentation tier.
+The Swami workflow uses Anthropic directly for this pass. If the credential is
+missing or the request fails, the workflow posts the existing failure marker,
+fails visibly, and merge-gate stays pending. It does not silently substitute
+another provider. Provider-neutral selection and fallback policy belong in
+Agent Factory, where they can be shared and tested without coupling Swami to a
+second presentation tier.
 
 ## Consequences
 
@@ -64,3 +65,6 @@ without coupling Swami to a second presentation tier.
 - `rg -n '\bfast\b' scripts/review_posting.py` returns no matches;
   `post_review(..., reviewer=...)` treats the reviewer id as a diagnostic label,
   not a behavior-dispatch key.
+- The `claude` registry id and `reviewer:claude` markers remain intentionally
+  stable machine identifiers for prior-review discovery and dismissal. Quibble
+  is the human-facing role name.

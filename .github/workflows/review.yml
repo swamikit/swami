@@ -211,6 +211,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.context.outputs.pr }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          HEAD_SHA: ${{ steps.context.outputs.head_sha || github.event.pull_request.head.sha }}
         run: |
-          gh pr comment $PR --body "Review GA is present but ANTHROPIC_API_KEY is not set in repo secrets. Set it in Settings -> Secrets and variables -> Actions to enable automated review."
+          body=$(printf '%s\n\n## Quibble Review Summary\n\nHEAD: `%s`\n\n_reviewer failed — no findings this run._\n\n`MissingCredential: ANTHROPIC_API_KEY is not set`\n\nSet the repository Actions secret and retry the review.' \
+            '<!-- reviewer:claude-failure -->' "$HEAD_SHA")
+          gh pr comment "$PR" --body "$body"
+          echo "::error::ANTHROPIC_API_KEY is not set; posted Quibble failure marker"
+          exit 1
