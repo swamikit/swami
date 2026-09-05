@@ -967,25 +967,34 @@ upsert_gate_comment() {
   local comment_file="$WORK/gate-comment.md"
   format_gate_comment "$state" "$desc" "$long" "$sha" > "$comment_file"
 
-  # Find prior gate comment (any author — GitHub Actions bots may post).
+  # Find prior gate comments (any author — local maintainers and GitHub
+  # Actions may both run this script). A token may only edit comments created
+  # by its own identity, so try newest-to-oldest and create a new sticky if
+  # none are editable.
   # `--paginate --slurp` so the jq filter runs once across ALL pages —
   # without --slurp, --jq runs independently per page and `last` never
   # crosses page boundaries, so a sticky on page 1 with more comments on
   # page 2 would be dropped in favor of an empty page-2 result.
-  local existing_id
+  local existing_ids="" existing_id updated=0
   local comment_pages="$WORK/upsert-comment-pages.json"
   if gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
        > "$comment_pages" 2>/dev/null; then
-    existing_id="$(
-      jq -r 'add // [] | [.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | last | .id // empty' \
+    existing_ids="$(
+      jq -r 'add // [] | [.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | reverse | .[].id' \
         "$comment_pages"
     )"
   fi
 
-  if [[ -n "$existing_id" ]]; then
-    gh api "/repos/$REPO/issues/comments/$existing_id" -X PATCH \
-      -F body=@"$comment_file" >/dev/null
-  else
+  while IFS= read -r existing_id; do
+    [[ -z "$existing_id" ]] && continue
+    if gh api "/repos/$REPO/issues/comments/$existing_id" -X PATCH \
+         -F body=@"$comment_file" >/dev/null 2>/dev/null; then
+      updated=1
+      break
+    fi
+  done <<<"$existing_ids"
+
+  if [[ "$updated" -eq 0 ]]; then
     gh api "/repos/$REPO/issues/$pr/comments" -X POST \
       -F body=@"$comment_file" >/dev/null
   fi
