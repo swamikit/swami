@@ -101,17 +101,24 @@ jobs:
           # + the review.yml "ANTHROPIC_API_KEY is not set" signal).
           # `--slurp` is required with `--paginate`: without it gh emits one
           # JSON array per page (concatenated), which crashes `json.load()`
-          # in the orphan step with `JSONDecodeError: Extra data` on any PR
-          # with >100 comments and also breaks the `.[]` jq expressions
-          # below (they'd only see the last page's array).
+          # with `JSONDecodeError: Extra data` on any PR with >100 comments.
+          # But `--slurp` "wrap[s] all pages of JSON arrays or objects into
+          # an outer JSON array" (per `gh api --help`) — even a single page
+          # becomes `[[...]]`, not the flat list the downstream jq `.[]` and
+          # Python `for c in ...` expect. `jq 'add // []'` flattens that
+          # outer array into one comment list (empty when there are no
+          # pages/comments). Both hazards need both fixes to compose.
           gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/issues/${PR_NUM}/comments" \
+            | jq 'add // []' \
             > /tmp/issue_comments.json
 
           # PR review comments (line-level) carry Codex P1 Badges. Same
-          # `--slurp` rationale as above — one array over all pages.
+          # `--slurp` + flatten rationale as above — one flat array of
+          # comments over all pages.
           gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUM}/comments" \
+            | jq 'add // []' \
             > /tmp/review_comments.json
 
       - name: Compute gate
