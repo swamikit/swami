@@ -92,11 +92,10 @@ For each patch node, decide in this order:
    mapping model`). If the node's category is covered there, use that as the
    SwiftUI target.
 2. **Helper exists?** If `app/Swami/` HEAD ships a public helper with the same
-   name as the patch (today: `interaction(...)`, `drag(...)` — check the module
-   for the current list), use it. Port-list matching is a per-helper check when
-   the parser starts decoding ports; until then, follow the helper's documented
-   signature. Only call helpers that are public in `app/Swami/` right now — do
-   not invent one by name.
+   name as the patch (check the module for the current list), use it. Port-list
+   matching is a per-helper check when the parser starts decoding ports; until
+   then, follow the helper's documented signature. Only call helpers that are
+   public in `app/Swami/` right now — do not invent one by name.
 3. **Native SwiftUI covers it?** Per ADR-0009, map to the most idiomatic native
    construct. Math to operators, logic to `&&`/`||`, tap-with-position to
    `SpatialTapGesture`, scroll to `ScrollView`, loops to `ForEach`, most `Layer.*`
@@ -161,14 +160,27 @@ arithmetic expression using the endpoints and progress the graph gives you:
 let value = A + (B - A) * t
 ```
 
-For a non-linear curve, apply the curve to `t` first (e.g. `let e = ease(t)`)
-and use `A + (B - A) * e`. If the endpoints are compound values (points,
-sizes, colors), interpolate each component with the same formula.
+If the endpoints are compound values (points, sizes, colors), interpolate
+each component with the same formula. The linear form above is authoritative
+for the linear case only.
 
-If this pattern recurs enough to justify a helper (per ADR-0009 point 3), the
-follow-up is a separate `app/Swami/Transition.swift` PR — tracked in #53. Do
-not invent a helper call in the emitted pattern. Until such a helper is public
-in `app/Swami/`, keep the interpolation inline as shown above.
+**Non-linear curves are unsupported at HEAD.** There is no easing helper
+public in `app/Swami/` today and no stdlib primitive that emits a faithful
+Origami curve inline (a plausible-looking `ease(t)` call is fake — the earlier
+`interpolated(to:by:)` / `lerp(...)` guidance was the same defect one layer
+up). Per AGENTS.md's "Flag, don't fake" rule (which lists continuous-time
+springs, custom JS patches, and absolute layout — non-linear Transition
+curves belong on the same list), the translator MUST flag any Transition
+whose curve is not linear and stop generating code for it: emit an
+`// unsupported: origami.Transition non-linear curve — no easing helper in
+app/Swami/ (see #53)` comment at the site and leave the value unwired. Do
+not invent a curve function; do not fall back to a stdlib approximation.
+
+The resolution path is a separate `app/Swami/Transition.swift` PR (tracked
+in #53) that ships a curve-aware helper with ports matching Origami's
+Transition patch (ADR-0010). Once that helper is public, this section will
+authorize its use for non-linear curves; until then, flag-and-stop is the
+only correct output.
 
 ### 7. Emit compilable Swift with a DocC sample-code header
 

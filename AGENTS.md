@@ -88,7 +88,9 @@ oracle — means, not a deliverable.
 | Layer tree | the `View` body |
 
 Origami `Transition` = interpolation (not SwiftUI's `.transition()` modifier).
-Flag, don't fake: continuous-time springs, custom JS patches, absolute layout.
+Flag, don't fake: continuous-time springs, custom JS patches, absolute layout,
+non-linear `origami.Transition` curves (no easing helper is public in
+`app/Swami/` yet — see `skill/pattern-translation/SKILL.md` step 6 and #53).
 
 ### Verified oracle — Touch Origami Example
 
