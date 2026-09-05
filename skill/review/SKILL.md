@@ -123,6 +123,33 @@ buckets. Say which is which.
   Review the code against it. If the evidence looks fabricated, that's the
   finding, not "I re-ran it and it passes".
 
+## When the diff exceeds the reviewer cap
+
+`scripts/run-claude-review.py` caps the diff it sends to Claude at
+`MAX_DIFF_BYTES` (200,000 bytes). Anything larger is truncated and the
+reviewer synthesizes a P1 finding that blocks the automated merge gate
+(ADR-0014 — the Reviewer read *is* the gate; approving on a partial diff
+is a false green). When you hit that cap, work through this ladder in
+order before overriding:
+
+1. **Split the PR.** Break it into smaller topic-scoped PRs that each fit
+   under the cap. This is the default and by far the safest option — a
+   review that reads the whole change is the whole point of the gate.
+2. **Manual full-diff review with an explicit rebuttal.** For a
+   one-pattern-one-PR where the size is unavoidable, a human reviewer
+   reads the whole diff (generated Swift + IR included — those files are
+   the shipped pattern; SSIM can conceal structural mistakes in them, so
+   they are not vendored noise you can safely skip) and posts a rebuttal
+   comment on the PR that (a) acknowledges the truncation, (b) explains
+   why splitting isn't viable here, and (c) records the structural
+   findings from the manual read (or explicitly states none). Only then
+   merge manually. This is the escape hatch, not the default — use it
+   sparingly and never as a way to keep generated code from being read.
+
+Do not filter generated `.swift` or IR out of the diff to slip under the
+cap. Those files are what the pattern actually is; approving HEAD
+without them read is exactly the false green the gate exists to catch.
+
 ## Message-exchange context
 
 - 30-minute poll deadline for both sides. Event-driven fallback on timeout: if

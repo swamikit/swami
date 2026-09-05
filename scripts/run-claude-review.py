@@ -52,7 +52,7 @@ def build_system(context: str, truncated_bytes: int = 0) -> str:
             f"{MAX_DIFF_BYTES} bytes ({truncated_bytes} bytes omitted). A "
             "`[diff truncated — N bytes omitted]` marker appears at the end of "
             "the diff. You have NOT seen the whole PR. Per ADR-0014 (Reviewer "
-            "approval is the merge gate) you MUST NOT return verdict='approve'. "
+            "approval is the merge gate) you MUST NOT return `approve=true`. "
             "Return `approve=false` with a P1 finding at "
             "`.github/reviewer` line 1 explaining that the PR must be split or "
             "reviewed manually because the diff exceeds the review cap.\n"
@@ -100,13 +100,12 @@ def call_claude(system: str, diff: str, sticky: str, truncated_bytes: int = 0) -
             "## Pixel-gate sticky (read-only context — do NOT propose edits to it)\n\n"
             + sticky
         )
-    user = user_parts
     with client.messages.stream(
         model=MODEL,
         max_tokens=MAX_TOKENS,
         system=system,
         thinking={"type": "adaptive"},
-        messages=[{"role": "user", "content": "\n\n".join(user)}],
+        messages=[{"role": "user", "content": "\n\n".join(user_parts)}],
     ) as stream:
         msg = stream.get_final_message()
     for block in msg.content:
@@ -233,6 +232,11 @@ def _cap_diff(diff: str, limit: int = MAX_DIFF_BYTES) -> tuple[str, int]:
     downstream layer (prompt, main-level enforcement, sticky banner) keys
     off of; per ADR-0014 an approve verdict on a truncated diff is a false
     green because the Reviewer read IS the merge gate.
+
+    NOTE: return type is `tuple[str, int]`, not `str`. `main()` is the only
+    caller inside this module (grep `_cap_diff` — nothing else imports it),
+    but if you add a caller elsewhere, remember to unpack both values or the
+    truncation signal will silently vanish.
     """
     raw = diff.encode("utf-8", errors="replace")
     if len(raw) <= limit:
@@ -308,9 +312,15 @@ def main() -> int:
                 "manual reviewer."
             ),
             "suggestion": (
-                "Break the PR into smaller topic-scoped PRs that each fit "
-                "under the diff cap, or request a manual human review "
-                "before merge."
+                "Follow the escape-hatch procedure in `skill/review/SKILL.md` "
+                "under \"When the diff exceeds the reviewer cap\": (a) split "
+                "the PR into smaller topic-scoped PRs that fit under the diff "
+                "cap; or (b) if it's one-pattern-one-PR with unavoidable "
+                "size, do a manual full-diff review (generated Swift + IR "
+                "included — those are the shipped pattern, not vendored "
+                "noise) and merge manually with an explicit rebuttal "
+                "comment. Do not filter generated paths out of the diff to "
+                "get under the cap."
             ),
         }
         existing = review.get("findings") or []
