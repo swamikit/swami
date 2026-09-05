@@ -51,12 +51,19 @@ def build_system(context: str) -> str:
         "line — no vibes, no manager-report tone. Cite the ADR or skill section that "
         "grounds each finding. SSIM alone is evidence, not verdict (ADR-0014). Do "
         "NOT propose edits to the pixel-gate sticky comment (verify.yml owns it).\n\n"
+        "Severity taxonomy (aligns with Codex so cross-reviewer tooling can grep a "
+        "single set of tokens):\n"
+        "  P1 = must-fix before merge (correctness, safety, ADR violation, gate failure)\n"
+        "  P2 = should-fix (design smell, unclear code, non-blocking risk)\n"
+        "  P3 = nice-to-have (polish, wording, small refactor)\n\n"
         "Respond with a SINGLE JSON object and nothing else, matching this shape:\n"
         '{"summary": "<one paragraph read of the PR>",'
-        ' "findings": [{"severity": "blocking"|"nit"|"nice-to-have",'
+        ' "findings": [{"severity": "P1"|"P2"|"P3",'
         ' "file": "path/from/repo/root", "line": <int or null>,'
-        ' "claim": "<short claim>", "evidence": "<why — cite ADR/skill/beat>"}],'
-        ' "approve": <bool — true only when no blocking findings>}\n'
+        ' "title": "<short title>",'
+        ' "reasoning": "<why — cite ADR/skill/beat>",'
+        ' "suggestion": "<suggested fix or rebuttal hook, may be empty>"}],'
+        ' "approve": <bool — true only when no P1 findings>}\n'
         "If the diff is empty or trivial, return findings=[] and approve=true.\n\n"
         "===== REPO CONTEXT =====\n" + context
     )
@@ -101,40 +108,53 @@ def format_comment(review: dict, head_sha: str) -> str:
     findings = review.get("findings") or []
     approve = bool(review.get("approve"))
     summary = (review.get("summary") or "").strip()
-    lines = [MARKER, "", "## Claude review", ""]
+    verdict = "approve" if approve else "request changes"
+    lines = [MARKER, "", "## Claude review"]
+    # Verdict rides on the HEAD line — a single header row at the top so tooling
+    # that greps for the marker can read HEAD + verdict without scanning the
+    # whole comment. Codex's format does the same.
+    head_bits = []
     if head_sha:
-        lines += [f"HEAD: `{head_sha}`", ""]
+        head_bits.append(f"HEAD: `{head_sha}`")
+    head_bits.append(f"verdict: **{verdict}**")
+    lines += [" · ".join(head_bits), ""]
     if summary:
         lines += [summary, ""]
     if not findings:
         lines.append("_No findings._")
     else:
-        buckets: dict[str, list[dict]] = {"blocking": [], "nit": [], "nice-to-have": []}
+        # Normalize severity to P1/P2/P3 (aligned with Codex). Unknown / null /
+        # legacy values (blocking/nit/nice-to-have from older runs) fold into P3
+        # so the render loop — which iterates the three known buckets — never
+        # silently drops a finding.
+        legacy = {"blocking": "P1", "nit": "P2", "nice-to-have": "P3"}
+        buckets: dict[str, list[dict]] = {"P1": [], "P2": [], "P3": []}
         for f in findings:
-            # Normalize severity — unknown / null / oddly-cased values fold into
-            # "nice-to-have" so the render loop (which iterates the three known
-            # buckets) never silently drops a finding.
-            sev = str(f.get("severity") or "").strip().lower()
-            if sev not in buckets:
-                sev = "nice-to-have"
+            raw = str(f.get("severity") or "").strip()
+            sev = raw.upper() if raw.upper() in buckets else legacy.get(raw.lower(), "P3")
             buckets[sev].append(f)
-        for sev in ("blocking", "nit", "nice-to-have"):
+        for sev in ("P1", "P2", "P3"):
             items = buckets.get(sev) or []
             if not items:
                 continue
-            lines += [f"### {sev.capitalize()} ({len(items)})"]
+            lines += [f"### {sev} ({len(items)})"]
             for f in items:
                 loc = str(f.get("file") or "?")
                 if f.get("line"):
                     loc += f":{f['line']}"
-                claim = (f.get("claim") or "").strip()
-                evidence = (f.get("evidence") or "").strip()
-                lines.append(f"- `{loc}` — {claim}")
-                if evidence:
-                    lines.append(f"  - {evidence}")
+                # Accept both new (`title`/`reasoning`) and legacy (`claim`/
+                # `evidence`) field names so a cached prompt-side or replayed
+                # response still renders cleanly during the transition.
+                title = (f.get("title") or f.get("claim") or "").strip()
+                reasoning = (f.get("reasoning") or f.get("evidence") or "").strip()
+                suggestion = (f.get("suggestion") or "").strip()
+                lines.append(f"- **`{loc}` — [{sev}] {title}**")
+                if reasoning:
+                    lines.append(f"  - {reasoning}")
+                if suggestion:
+                    lines.append(f"  - {suggestion}")
             lines.append("")
-    verdict = "approve" if approve else "request changes"
-    lines += ["", f"_verdict: **{verdict}**_ · reviewer skill: `skill/review/SKILL.md`"]
+    lines += ["_reviewer skill: `skill/review/SKILL.md`_"]
     return "\n".join(lines)
 
 
