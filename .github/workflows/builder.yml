@@ -43,8 +43,12 @@ on:
   workflow_dispatch:
     inputs:
       pattern:
-        description: 'Origami pattern stem (e.g. Interaction_Drag). Resolves to https://origami.design/public/origami_files/patterns/<stem>.origami.'
-        required: true
+        description: 'Origami pattern stem (e.g. Interaction_Drag). Resolves to https://origami.design/public/origami_files/patterns/<stem>.origami. Leave blank when dispatching the ready path.'
+        required: false
+        type: string
+      issue_number:
+        description: 'Issue number to pick up on the ready path. Triage GA dispatches this workflow with an issue number because the label it applied with GITHUB_TOKEN cannot itself fire an issues.labeled workflow run (GitHub recursion guard). Leave blank when dispatching the translate path.'
+        required: false
         type: string
 
 permissions:
@@ -55,11 +59,13 @@ permissions:
 jobs:
   translate:
     # issues.labeled fires for every label; gate to the `translate` label only.
-    # workflow_dispatch is always allowed. Fork PRs can't reach this workflow
+    # workflow_dispatch is allowed only when a `pattern` input is provided, so a
+    # ready-path dispatch (which passes `issue_number` and leaves `pattern`
+    # blank) doesn't also fire this job. Fork PRs can't reach this workflow
     # (issues events run in the base repo), but the api-key gate below still
     # protects the Claude call from a missing-secret environment.
     if: |
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && inputs.pattern != '') ||
       (github.event_name == 'issues' && github.event.label.name == 'translate')
     runs-on: macos-15
     steps:
@@ -446,8 +452,18 @@ jobs:
     # translate job because the machinery is different (no .origami fetch,
     # no ContentView wiring, no macOS runner needed) — sharing steps behind
     # a mode gate would fork the readability of the translate path.
+    #
+    # Two entry points on purpose (Codex P1 discussion_r3938968244): a human
+    # applying the `ready` label directly fires the issues.labeled path, and
+    # Triage GA (whose GITHUB_TOKEN-applied label CANNOT itself fire this
+    # workflow — GitHub's recursion guard) instead dispatches this workflow
+    # explicitly with `inputs.issue_number`. The dispatch path exists because
+    # workflow_dispatch is the documented exception to the GITHUB_TOKEN
+    # recursion rule (see .github/workflows/builder.yml translate-job's
+    # "Trigger verify.yml" step for the same pattern applied downstream).
     if: |
-      github.event_name == 'issues' && github.event.label.name == 'ready'
+      (github.event_name == 'issues' && github.event.label.name == 'ready') ||
+      (github.event_name == 'workflow_dispatch' && inputs.issue_number != '')
     runs-on: ubuntu-latest
     env:
       # Same job-level hoist as review.yml — step-level `if:` needs to read
@@ -469,9 +485,18 @@ jobs:
         id: context
         env:
           GH_TOKEN: ${{ github.token }}
-          ISSUE_NUM: ${{ github.event.issue.number }}
+          # On the issues.labeled path, github.event.issue.number is set.
+          # On the workflow_dispatch path (Triage GA calling in — see the
+          # job-level `if:` above), it's empty and we fall through to the
+          # dispatch input. Guard the empty case so we fail loudly instead
+          # of running `gh issue view ""` and getting a confusing error.
+          ISSUE_NUM: ${{ github.event.issue.number || inputs.issue_number }}
         run: |
           set -eu
+          if [ -z "${ISSUE_NUM:-}" ]; then
+            echo "::error::no issue number resolved — issues.labeled payload was empty and inputs.issue_number was not set."
+            exit 1
+          fi
           gh issue view "$ISSUE_NUM" \
             --json number,title,body,url,labels,author,createdAt,state \
             --jq . > /tmp/issue.json
