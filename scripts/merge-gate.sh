@@ -40,7 +40,13 @@
 #     `merge-gate`) — the workflow only POSTS the status.
 #   - Auto-merging. This script is the GATE, not the merger.
 
-set -euo pipefail
+set -Eeuo pipefail
+
+# GitHub's step summary otherwise reports only "exit code 1" for failures
+# inside command substitutions. Keep the failing line and command visible so
+# the enforcement path is diagnosable without reproducing it on a maintainer's
+# machine.
+trap 'rc=$?; printf "::error::merge-gate: line %s exited %s: %s\\n" "$LINENO" "$rc" "$BASH_COMMAND" >&2' ERR
 
 # ---------------------------------------------------------------------------
 # Args
@@ -583,19 +589,19 @@ rule_p2p3_orphans() {
 
   local body_refs url_refs
   body_refs="$(
-    printf '%s\n' "$scan" \
-      | grep -Eio '(resolves|fixes|closes|tracks|see|per|→|->)[[:space:]]*#[0-9]+' \
-      | grep -Eo '#[0-9]+' \
-      | grep -Eo '[0-9]+' \
-      | sort -u
-  )" || true
+    { printf '%s\n' "$scan" \
+        | grep -Eio '(resolves|fixes|closes|tracks|see|per|→|->)[[:space:]]*#[0-9]+' \
+        | grep -Eo '#[0-9]+' \
+        | grep -Eo '[0-9]+' \
+        | sort -u; } || true
+  )"
   url_refs="$(
-    printf '%s\n' "$scan" \
-      | grep -Eio "https://github\\.com/${repo_re}/issues/[0-9]+" \
-      | grep -Eo '/issues/[0-9]+' \
-      | grep -Eo '[0-9]+' \
-      | sort -u
-  )" || true
+    { printf '%s\n' "$scan" \
+        | grep -Eio "https://github\\.com/${repo_re}/issues/[0-9]+" \
+        | grep -Eo '/issues/[0-9]+' \
+        | grep -Eo '[0-9]+' \
+        | sort -u; } || true
+  )"
 
   local candidates
   candidates="$(printf '%s\n%s\n' "$body_refs" "$url_refs" | sort -u | grep -E '^[0-9]+$' || true)"
