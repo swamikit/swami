@@ -31,16 +31,54 @@ MAX_TOKENS = 16000
 MAX_FILES = 20
 MAX_TOTAL_BYTES = 200_000
 
-# Paths Builder must never write to. Rewriting workflows or secrets from a
-# ready-issue plan would let a crafted issue body escalate privileges via
-# self-modifying CI. Keep this list strict; widen only with a paired ADR.
+# Paths Builder must never write to. Rewriting anything that CI executes —
+# workflows, actions, script helpers, or Xcode build phases embedded in the
+# project file — would let a crafted issue body escalate privileges via
+# self-modifying CI. This is deny-by-shape (not by named script) so a new
+# helper landing under scripts/ or a new workflow under .github/ is protected
+# on day one without a paired edit here (Codex P1 review round 2).
 FORBIDDEN_PREFIXES = (
-    ".github/workflows/",
-    ".github/actions/",
-    "scripts/run-triage.py",
-    "scripts/run-claude-review.py",
-    "scripts/run-builder-from-issue.py",
+    ".github/",          # every workflow, action, CODEOWNERS, PR templates,
+                         # issue templates — any config CI reads
+    "scripts/",          # every helper builder.yml / verify.yml / review.yml
+                         # run with repo secrets in scope
 )
+
+# Paths matched by exact filename or path substring — used for the Xcode
+# project shell-build-phase escalation path Codex called out (a plan can add
+# a "Run Script" phase to project.pbxproj that executes on any subsequent
+# build). Also covers .xcworkspace shared data.
+FORBIDDEN_SUBSTRINGS = (
+    ".xcodeproj/",       # anything inside an Xcode project bundle
+    ".xcworkspace/",
+)
+
+FORBIDDEN_SUFFIXES = (
+    ".pbxproj",          # Xcode project files carry shell build phases
+)
+
+
+def _forbidden_reason(norm: str) -> str | None:
+    """Return the reason `norm` is forbidden, or None if it is allowed.
+
+    `norm` must already be `os.path.normpath`ed. Root-level dotfiles
+    (`.gitignore`, `.gitattributes`, `.mailmap`, `.env*`, …) are refused as a
+    class — they configure the whole repo and have no business being emitted
+    from an issue body.
+    """
+    for pref in FORBIDDEN_PREFIXES:
+        if norm == pref.rstrip("/") or norm.startswith(pref):
+            return f"forbidden prefix `{pref}`"
+    for sub in FORBIDDEN_SUBSTRINGS:
+        if sub in norm:
+            return f"forbidden substring `{sub}` (Xcode project bundles execute build phases)"
+    for suf in FORBIDDEN_SUFFIXES:
+        if norm.endswith(suf):
+            return f"forbidden suffix `{suf}` (Xcode project files execute build phases)"
+    # Root-level dotfile (no `/` in normpath, name starts with `.`).
+    if "/" not in norm and norm.startswith("."):
+        return "root-level dotfile (repo-wide config must go through a human PR)"
+    return None
 
 
 def sh(cmd: list[str]) -> str:
@@ -79,13 +117,20 @@ def build_system(context: str) -> str:
         "  - Produce the change as a set of file writes. Emit COMPLETE file "
         "    contents (not diffs) for each file you touch — Builder applies "
         "    them as full-file writes.\n"
+        "  - CREATION-ONLY: only emit paths that do NOT yet exist in the "
+        "    repo. You are not shown the current contents of any file, so "
+        "    editing an existing file would mean inventing its current "
+        "    contents and clobbering the real file with the invention. If "
+        "    the issue requires editing an existing file, return `plan=null` "
+        "    and say so in `reasoning`.\n"
         f"  - Touch at most {MAX_FILES} files. If the issue is wider than "
         "    that, return `plan=null` and explain in `reasoning` that the "
         "    issue should be split.\n"
-        "  - Never touch these paths (return `plan=null` if the issue asks "
-        f"    you to): {', '.join(FORBIDDEN_PREFIXES)}. Workflow / script "
-        "    self-modification from an issue body is a privilege-escalation "
-        "    vector — that must go through a human PR.\n"
+        "  - Never touch anything CI executes — every path under `.github/` "
+        "    or `scripts/`, any `.xcodeproj/` or `.xcworkspace/` bundle, any "
+        "    `.pbxproj` file, or any root-level dotfile. Return `plan=null` "
+        "    if the issue asks you to; that class of change is a "
+        "    privilege-escalation vector and must go through a human PR.\n"
         "  - If the issue is ambiguous or you cannot produce a confident "
         "    plan, return `plan=null`. Builder will comment on the issue "
         "    asking for clarification rather than opening a wrong PR.\n\n"
@@ -158,13 +203,33 @@ def validate_plan(plan: dict) -> tuple[bool, str]:
         norm = os.path.normpath(path)
         if norm.startswith("..") or os.path.isabs(norm) or norm == ".":
             return False, f"plan.files[{i}].path escapes the repo root: {path!r}."
-        for pref in FORBIDDEN_PREFIXES:
-            if norm == pref or norm.startswith(pref):
-                return False, (
-                    f"plan.files[{i}].path {path!r} touches a forbidden path "
-                    f"({pref}). Workflow / script self-modification must go "
-                    "through a human PR."
-                )
+        reason = _forbidden_reason(norm)
+        if reason is not None:
+            return False, (
+                f"plan.files[{i}].path {path!r} is forbidden: {reason}. "
+                "Anything CI executes — workflows, script helpers, or Xcode "
+                "build phases — must go through a human PR."
+            )
+        # Creation-only until read-back lands. `build_system` tells Claude to
+        # emit COMPLETE file contents, but `Load builder context` in the ready
+        # job only supplies AGENTS.md + docs/decisions/*.md — never the file
+        # being overwritten. That means every "edit existing file F" issue
+        # asks the planner to invent F's current contents and Builder would
+        # silently clobber the real file with the invention. Guard by
+        # refusing to write over anything that exists at HEAD; a follow-up
+        # PR can lift this once the workflow reads the target files back into
+        # /tmp/context.md and hands them to the planner (Codex P1 round 2,
+        # Claude review sticky P1 #1).
+        if Path(norm).exists():
+            return False, (
+                f"plan.files[{i}].path {path!r} already exists at HEAD, and "
+                "the ready-path planner is CREATION-ONLY until it is given "
+                "the file's current contents. Builder was asked to emit "
+                "COMPLETE file contents but never saw this file, so writing "
+                "it would clobber real code with a hallucination. Split the "
+                "issue into a create-a-new-file task, or wait until the "
+                "planner's context includes the target files."
+            )
         total += len(contents.encode("utf-8", errors="replace"))
     if total > MAX_TOTAL_BYTES:
         return False, f"plan writes {total} bytes across all files (cap {MAX_TOTAL_BYTES})."
@@ -266,10 +331,25 @@ def main() -> int:
     sh(["git", "commit", "-m", plan["commit_message"]])
     sh(["git", "push", "--set-upstream", "origin", branch])
 
+    # PRs opened with the workflow's GITHUB_TOKEN do NOT emit `pull_request`
+    # events (GitHub's recursion guard on the automatic token). Without an
+    # explicit dispatch, verify.yml's pixel gate and review.yml's Claude
+    # review would never wake on this PR — the double-green gate AGENTS.md
+    # Beat 3/4 and ADR-0014 put the merge decision behind would be
+    # structurally unreachable. Fire both by workflow_dispatch after the PR
+    # is created; each dispatch is best-effort — a warning on failure, not a
+    # hard fail, so the PR still lands on the tracking issue even if a gate
+    # is temporarily unreachable (Codex P1 round 2, Claude sticky P1 #3).
     pr_body = (
         plan["pr_body"].rstrip()
         + f"\n\n---\n\nTracking issue: #{issue_num}\n\n"
-        + f"_Opened by Builder GA (ready path). Planner: {MODEL}._"
+        + f"_Opened by Builder GA (ready path). Planner: {MODEL}._\n\n"
+        + "_This PR was opened by a workflow's GITHUB_TOKEN, so GitHub's "
+        + "recursion guard suppresses the automatic `pull_request` event. "
+        + "Builder explicitly dispatches `verify.yml` (against the ready "
+        + "branch) and `review.yml` (against this PR number) after PR "
+        + "creation — check the workflow-run list on the head SHA to "
+        + "distinguish a missing gate from a skipped one._"
     )
     pr_body_path = Path("/tmp/builder-pr-body.md")
     pr_body_path.write_text(pr_body)
@@ -282,17 +362,54 @@ def main() -> int:
         "--body-file", str(pr_body_path)])
 
     # Best-effort: get the PR URL back for the tracking-issue comment.
+    # Also grab the PR number for review.yml's workflow_dispatch input.
     try:
-        url = sh(["gh", "pr", "view", branch, "--repo", repo,
-                  "--json", "url", "--jq", ".url"]).strip()
-    except subprocess.CalledProcessError:
+        pr_view = sh(["gh", "pr", "view", branch, "--repo", repo,
+                      "--json", "url,number", "--jq", "."]).strip()
+        pr_meta = json.loads(pr_view)
+        url = pr_meta.get("url", f"(branch {branch})")
+        pr_number = pr_meta.get("number")
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
         url = f"(branch {branch})"
+        pr_number = None
+
+    # Dispatch verify.yml against the ready branch (its workflow_dispatch
+    # trigger has no required inputs — see .github/workflows/verify.yml). It
+    # runs the pixel gate on macos-15 and posts its own sticky comment.
+    if not sh_ok(["gh", "workflow", "run", "verify.yml",
+                  "--repo", repo, "--ref", branch]):
+        sys.stderr.write(
+            f"::warning::gh workflow run verify.yml --ref {branch} failed — "
+            "pixel gate must be triggered manually.\n"
+        )
+
+    # Dispatch review.yml with the PR number. review.yml's workflow_dispatch
+    # takes `pr_number` (added in the same round of fixes) so Review GA can
+    # be woken on Builder-opened PRs.
+    if pr_number is None:
+        sys.stderr.write(
+            "::warning::could not resolve PR number after `gh pr create` — "
+            "skipping review.yml dispatch. A maintainer can trigger it via "
+            "`gh workflow run review.yml -f pr_number=<N>`.\n"
+        )
+    else:
+        if not sh_ok(["gh", "workflow", "run", "review.yml",
+                      "--repo", repo,
+                      "-f", f"pr_number={pr_number}"]):
+            sys.stderr.write(
+                f"::warning::gh workflow run review.yml -f pr_number={pr_number} "
+                "failed — Review GA must be triggered manually (comment "
+                "`@claude review` on the PR).\n"
+            )
 
     post_issue_comment(repo, issue_num, (
         f"Builder GA opened a PR for this issue: {url}\n\n"
         f"Branch: `{branch}`\n\n"
         f"**Planner reasoning:** {reasoning or '(none returned)'}\n\n"
-        "Review, iterate, or close — the `ready` label has done its job."
+        "Review, iterate, or close — the `ready` label has done its job. "
+        "Builder dispatched `verify.yml` and `review.yml` explicitly on the "
+        "new PR (GITHUB_TOKEN-opened PRs don't fire those events on their "
+        "own); check the PR's Checks tab for the runs."
     ))
     print(f"opened PR from {branch} with {len(written)} file(s)")
     return 0
