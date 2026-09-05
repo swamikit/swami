@@ -13,9 +13,8 @@
 #                   the gate must recognize both.
 #   marker        — HTML comment that appears in the reviewer's Review body
 #                   (or per-line comment body for line-badge reviewers).
-#                   Used to disambiguate multiple reviewers that share the
-#                   same identity (deep vs fast both post as
-#                   `quibble-review[bot]`). `null` for reviewers that don't
+#                   Used to disambiguate reviews that may share an identity.
+#                   `null` for reviewers that don't
 #                   embed a marker (e.g. Codex uses shield badges instead).
 #   failure_marker — HTML comment on the failure-path ISSUE comment fallback
 #                   posted when the reviewer's own Review API POST errored.
@@ -45,15 +44,6 @@ reviewers:
     failure_marker: "<!-- reviewer:claude-failure -->"
     style: reviews-api
     gates_merge: true
-
-  - id: fast
-    identities:
-      - quibble-review[bot]
-      - github-actions[bot]
-    marker: "<!-- reviewer:fast -->"
-    failure_marker: "<!-- reviewer:fast-failure -->"
-    style: reviews-api
-    gates_merge: false
 
   - id: codex
     identities:

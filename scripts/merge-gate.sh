@@ -1079,6 +1079,22 @@ upsert_gate_comment() {
   fi
 }
 
+clear_gate_comment() {
+  local pr="$1" id
+  # A green gate already has a first-class commit status in the Checks UI.
+  # Remove our diagnostic sticky so successful PRs do not accumulate bot prose.
+  while IFS= read -r id; do
+    [[ -z "$id" ]] && continue
+    if ! gh api "/repos/$REPO/issues/comments/$id" -X DELETE >/dev/null 2>&1; then
+      echo "::warning::merge-gate: could not remove green diagnostic comment $id" >&2
+    fi
+  done < <(
+    gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
+      --jq '.[][] | select(.user.login == "github-actions[bot]") | select((.body // "") | contains("<!-- merge-gate -->")) | .id' \
+      2>/dev/null || true
+  )
+}
+
 # ---------------------------------------------------------------------------
 # --self-test: fixture-based coverage of every priority rule.
 # ---------------------------------------------------------------------------
@@ -1375,14 +1391,6 @@ reviewers:
     failure_marker: "<!-- reviewer:claude-failure -->"
     style: reviews-api
     gates_merge: true
-  - id: fast
-    identities:
-      - quibble-review[bot]
-      - github-actions[bot]
-    marker: "<!-- reviewer:fast -->"
-    failure_marker: "<!-- reviewer:fast-failure -->"
-    style: reviews-api
-    gates_merge: false
   - id: codex
     identities:
       - chatgpt-codex-connector[bot]
@@ -1393,8 +1401,8 @@ reviewers:
 YAML
   local rows
   rows="$(parse_reviewers "$cfg")"
-  if [[ "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')" == "3" ]]; then
-    printf '  PASS  6a config parser emits 3 rows\n'
+  if [[ "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')" == "2" ]]; then
+    printf '  PASS  6a config parser emits 2 rows\n'
   else
     printf '  FAIL  6a config parser row count: got %d rows\n' \
       "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')"
@@ -1611,7 +1619,11 @@ if [[ -n "$HEAD_SHA" ]]; then
 else
   echo "::warning::merge-gate: no HEAD_SHA — cannot POST commit status" >&2
 fi
-upsert_gate_comment "$PR" "$RESULT_STATE" "$RESULT_DESC" "$RESULT_LONG" "$HEAD_SHA"
+if [[ "$RESULT_STATE" == "success" ]]; then
+  clear_gate_comment "$PR"
+else
+  upsert_gate_comment "$PR" "$RESULT_STATE" "$RESULT_DESC" "$RESULT_LONG" "$HEAD_SHA"
+fi
 
 # Exit 0 always on the real path — CI decision is the posted status, not the
 # script's exit code. Fail-closed exits above (missing config, unfetchable PR)

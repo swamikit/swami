@@ -245,11 +245,11 @@ def format_review_body(
         "REQUEST_CHANGES": "request changes",
         "COMMENT": "comment (no verdict)",
     }[event]
-    lines = [MARKER, "", "## Claude review"]
+    lines = [MARKER, "", "## Quibble Review Summary"]
     head_bits = []
     if head_sha:
         head_bits.append(f"HEAD: `{head_sha}`")
-    head_bits.append(f"verdict: **{verdict}**")
+    head_bits.append(f"status: **{verdict}**")
     lines += [" · ".join(head_bits), ""]
     if truncated_bytes > 0:
         # Visible banner so a human reader sees the truncation immediately.
@@ -274,7 +274,14 @@ def format_review_body(
             lines.append(f"### {sev} ({len(buckets[sev])})")
         lines += ["", "_Findings inline in Files changed._"]
     lines += _format_unanchored_block(unanchored_findings or [])
-    lines += ["", "_reviewer skill: `skill/review/SKILL.md`_"]
+    lines += [
+        "",
+        "<details><summary>What Quibble checked</summary>",
+        "",
+        "Current-head diff, repository guidance, review skill, relevant decisions, and submitted evidence.",
+        "",
+        "</details>",
+    ]
     return "\n".join(lines)
 
 
@@ -625,12 +632,9 @@ def find_prior_reviews(
       CHANGES_REQUESTED review posted under GITHUB_TOKEN would never be
       dismissed and could keep blocking merge forever after App auth is
       restored.
-    - `body contains MARKER`: the deep and fast reviewers BOTH post as
-      `quibble-review[bot]` (and both fall back to `github-actions[bot]`
-      the same way), so identity alone would let each reviewer dismiss
-      the other's reviews. The MARKER (`<!-- reviewer:claude -->` here;
-      `<!-- reviewer:fast -->` in the sibling script) is what keeps each
-      script scoped to its own history — and also keeps this filter from
+    - `body contains MARKER`: identity alone could let this reviewer dismiss
+      another workflow's reviews posted under the same fallback identity.
+      The marker keeps this script scoped to its own history and keeps it from
       touching any OTHER workflow's `github-actions[bot]` reviews.
 
     State filter: only APPROVED and CHANGES_REQUESTED are returned.
@@ -756,7 +760,7 @@ def _post_failure_comment(
     back to an issue comment (not a Review) because Review posting is what
     just failed; retrying that here would likely re-fail for the same reason.
     """
-    lines = [FAILURE_MARKER, "", "## Claude review"]
+    lines = [FAILURE_MARKER, "", "## Quibble Review Summary"]
     if head_sha:
         lines += ["", f"HEAD: `{head_sha}`"]
     lines += [

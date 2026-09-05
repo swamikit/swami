@@ -173,6 +173,8 @@ class FormatReviewShapeTests(unittest.TestCase):
         body = mod.format_review(r, head_sha="abc123", anchors=anchors)["body"]
         # Marker must be first line so merge-gate greps still match.
         self.assertTrue(body.startswith(mod.MARKER))
+        self.assertIn("## Quibble Review Summary", body)
+        self.assertIn("status: **request changes**", body)
         # Count headers for all three severities are always emitted so
         # downstream regex greps work regardless of which severities the
         # reviewer actually raised.
@@ -182,6 +184,7 @@ class FormatReviewShapeTests(unittest.TestCase):
         # "inline in Files changed" pointer so a human reader knows where to
         # look for the actual finding text.
         self.assertIn("Findings inline in Files changed.", body)
+        self.assertIn("<summary>What Quibble checked</summary>", body)
 
     def test_comment_entry_shape(self) -> None:
         r = {
@@ -578,8 +581,7 @@ class FindPriorReviewsFilterTests(unittest.TestCase):
         Also guards the negatives:
         - `github-actions[bot]` WITHOUT the marker (some OTHER workflow's
           review) is NOT returned — the MARKER body check scopes us.
-        - `quibble-review[bot]` with a DIFFERENT marker (the fast
-          reviewer's `<!-- reviewer:fast -->`) is NOT returned.
+        - `quibble-review[bot]` with a different workflow marker is not returned.
         - Human reviews are NEVER returned.
 
         Runs `gh api --paginate ... --jq <expr>` end-to-end by mocking
@@ -592,8 +594,8 @@ class FindPriorReviewsFilterTests(unittest.TestCase):
 
         # Realistic mixed cast: a fallback-authored CHANGES_REQUESTED with
         # OUR marker (must dismiss), a fallback-authored review from some
-        # unrelated workflow (must NOT dismiss), a fast-reviewer quibble
-        # review (different marker, must NOT dismiss), a COMMENTED review
+        # unrelated workflow (must NOT dismiss), another quibble-authored
+        # workflow review (different marker, must NOT dismiss), a COMMENTED review
         # (wrong state, must NOT dismiss), and a human review.
         fake_reviews = [
             {  # id=1: fallback-authored, our marker, gate-able state → DISMISS
@@ -608,11 +610,11 @@ class FindPriorReviewsFilterTests(unittest.TestCase):
                 "state": "CHANGES_REQUESTED",
                 "body": "<!-- some-other-workflow --> Unrelated CI review",
             },
-            {  # id=3: fast reviewer (quibble login, wrong marker) → skip
+            {  # id=3: another workflow (quibble login, wrong marker) → skip
                 "id": 3,
                 "user": {"login": "quibble-review[bot]"},
                 "state": "CHANGES_REQUESTED",
-                "body": "<!-- reviewer:fast -->\n\n## Fast pre-pass review",
+                "body": "<!-- reviewer:other -->\n\n## Other workflow review",
             },
             {  # id=4: quibble + our marker + gate-able state → DISMISS
                 "id": 4,
