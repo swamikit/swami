@@ -21,6 +21,11 @@ on:
 permissions:
   contents: write        # push renders to the evidence branch
   pull-requests: write   # comment onto the PR
+  actions: write         # dispatch-review job calls `gh workflow run review.yml`
+                         # POST /actions/workflows/{id}/dispatches — 403s without this
+                         # scope, at which point the step's `if !` fallback would exit 0
+                         # with only a ::warning::, leaving a ready-path PR with no
+                         # Reviewer input (ADR-0014 §2 requires Reviewer approval).
 
 env:
   APP_PROJECT: app/Swami.xcodeproj
@@ -435,26 +440,45 @@ jobs:
           gh pr comment "$PR" --repo "$REPO" --edit-last --body "$BODY" 2>/dev/null \
             || gh pr comment "$PR" --repo "$REPO" --body "$BODY"
 
-      - name: Dispatch review.yml when Verify was dispatched
-        # Chain-of-triggers: Builder GA's ready path dispatches verify.yml
-        # explicitly (because GITHUB_TOKEN-opened PRs don't fire pull_request
-        # events — the same recursion guard is why builder.yml grants
-        # actions:write and dispatches). Previously the Python script
-        # dispatched review.yml immediately after verify.yml, but Verify
-        # takes 5-10 min (macOS + Origami install + build + render) while
-        # Review starts in ~10s on Ubuntu, so Review always fetched
-        # /tmp/sticky.md before the pixel-gate evidence existed and the
-        # sticky was blank (Codex P1 round 3). Fire Review from HERE — after
-        # evidence is posted — so the sticky is available. Gated on
-        # workflow_dispatch so normal pull_request runs (which already fire
-        # review.yml via its own pull_request trigger) don't double-fire.
-        if: github.event_name == 'workflow_dispatch' && steps.evidence.outputs.pr != ''
+  # Chain-of-triggers: Builder GA's ready path dispatches verify.yml explicitly
+  # (because GITHUB_TOKEN-opened PRs don't fire pull_request events — the same
+  # recursion guard is why builder.yml grants actions:write and dispatches).
+  # Previously this dispatch lived as the final step of pixel-gate, which made
+  # Review's reachability a child of pixel-gate's: docs-only PRs skip pixel-gate
+  # via paths-filter and a red pixel-gate short-circuits the step, so the
+  # common ready-path PR arrived with no Reviewer input (Claude P1 round 3).
+  # Lifted into its own job that `needs: [changes, pixel-gate]` with
+  # `if: always()`, so it fires whether pixel-gate ran green, red, or skipped
+  # — as long as the run was a workflow_dispatch (normal pull_request events
+  # already trigger review.yml via its own on:pull_request handler, no
+  # double-fire).
+  #
+  # Sticky-race note: firing from a job downstream of pixel-gate still gives
+  # the "Post evidence" step time to publish the sticky when pixel-gate ran;
+  # when pixel-gate skipped (docs-only) there is no sticky to wait for and an
+  # empty read is a correct read.
+  dispatch-review:
+    needs: [changes, pixel-gate]
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch review.yml
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ steps.evidence.outputs.pr }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           set -eu
+          # Resolve PR from the dispatched ref (e.g. `ready/issue-42`). If no
+          # open PR is found we still exit 0 — the pixel-gate artifacts stand
+          # on their own, and a follow-up rerun via pull_request will fill in
+          # the Reviewer pass.
+          PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
+                  --json number --jq '.[0].number // empty')
+          if [ -z "$PR" ]; then
+            echo "::warning::no open PR found for head=$BRANCH — skipping review.yml dispatch."
+            exit 0
+          fi
           if ! gh workflow run review.yml --repo "$REPO" -f "pr_number=$PR"; then
             echo "::warning::gh workflow run review.yml -f pr_number=$PR failed — Review must be triggered manually (e.g. \`gh workflow run review.yml -f pr_number=$PR\`, or comment '@claude review' on the PR)."
           else
