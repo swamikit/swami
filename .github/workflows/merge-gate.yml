@@ -81,14 +81,55 @@ jobs:
 
           # Issue comments carry the stickies (Codex summary + Claude review
           # + the review.yml "ANTHROPIC_API_KEY is not set" signal).
+          # `gh api --paginate` emits ONE JSON array PER PAGE (concatenated,
+          # not merged) unless `--slurp` is used. Downstream `jq ... | length`
+          # would then emit one integer per page (e.g. "0\n1"), which Bash
+          # rejects as "integer expression expected" and (inside an `if`) with
+          # `set -e` disabled silently falls through — a fail-open. Pipe
+          # through `jq -s 'add'` to slurp+flatten into a single JSON array.
           gh api --paginate \
             "repos/${GITHUB_REPOSITORY}/issues/${PR_NUM}/comments" \
+            | jq -s 'add' \
             > /tmp/issue_comments.json
 
-          # PR review comments (line-level) carry Codex P1 Badges.
-          gh api --paginate \
-            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUM}/comments" \
-            > /tmp/review_comments.json
+          # PR review threads (with isResolved) via GraphQL — the REST
+          # /pulls/{n}/comments endpoint carries the P1 Badge bodies but
+          # exposes no thread-resolution state, so a same-HEAD rebuttal
+          # (thread marked resolved without a new push) is invisible there
+          # and the gate stays failed on a rebutted P1. GraphQL exposes
+          # `reviewThreads { isResolved, comments { ... } }` in one round-trip.
+          # `gh api -F key=value` auto-detects the value's type: purely numeric
+          # values become JSON numbers, others become strings. The `number`
+          # variable is declared `Int!` in the query, so PR_NUM (a bare
+          # integer) is passed as an int; `owner`/`name` stay strings.
+          gh api graphql \
+            -F owner="${GITHUB_REPOSITORY%/*}" \
+            -F name="${GITHUB_REPOSITORY#*/}" \
+            -F number="${PR_NUM}" \
+            -f query='
+              query($owner:String!, $name:String!, $number:Int!) {
+                repository(owner:$owner, name:$name) {
+                  pullRequest(number:$number) {
+                    reviewThreads(first:100) {
+                      pageInfo { hasNextPage }
+                      nodes {
+                        isResolved
+                        comments(first:1) {
+                          nodes {
+                            author { login }
+                            body
+                            path
+                            line
+                            originalLine
+                            commit { oid }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }' \
+            > /tmp/review_threads.json
 
       - name: Compute gate
         id: gate
@@ -129,29 +170,60 @@ jobs:
             | sort_by(.updated_at) | last | .body // ""
           ' /tmp/issue_comments.json)
 
-          # Parse the sticky. If it exists but either the HEAD line or the
-          # `### P1 (N)` heading is missing, treat it as UNPARSEABLE and
-          # fail the gate below — a regex miss here (format drift, a
-          # truncated body, a heading-style change) must never silently
-          # read as "0 P1s at HEAD".
+          # Parse the sticky.
+          #  - HEAD must be present. If it isn't, mark UNPARSEABLE and fail
+          #    the gate below — a missing HEAD means we cannot verify the
+          #    review actually looked at the current diff, and the freshness
+          #    comparison further down would silently pass on `[ -n "$H" ]`.
+          #  - `### P1 (N)` may or may not be present: run-claude-review.py's
+          #    format_comment() only emits per-severity headings for NONEMPTY
+          #    buckets ("_No findings._" when everything is empty, otherwise
+          #    just the ones with items) — so a CLEAN review has NO `### P1`
+          #    line at all. Treat that as 0 P1s, not as UNPARSEABLE.
+          #  - A failure sticky (posted by _post_failure_comment when the
+          #    Anthropic call raises) carries a distinct marker and must be
+          #    treated as a fail, not as a 0-finding pass.
           CLAUDE_HEAD=""
           CLAUDE_P1=0
           CLAUDE_PRESENT=false
           CLAUDE_UNPARSEABLE=false
+          CLAUDE_FAILED=false
           if [ -n "$CLAUDE_BODY" ]; then
             CLAUDE_PRESENT=true
             CLAUDE_HEAD=$(printf '%s\n' "$CLAUDE_BODY" \
               | grep -oE 'HEAD: `[0-9a-f]{7,40}`' \
               | head -1 \
               | grep -oE '[0-9a-f]{7,40}' || true)
+            # Extract the count directly from the parens in one pass. The
+            # previous form (`grep '### P1 (N)' | grep -oE '[0-9]+'`) matched
+            # BOTH the `1` in `P1` and the count, producing a two-line value
+            # that failed as a shell integer inside an `if` (where set -e is
+            # off) and silently skipped the P1 branch.
             CLAUDE_P1_RAW=$(printf '%s\n' "$CLAUDE_BODY" \
-              | grep -oE '^### P1 \([0-9]+\)' \
-              | head -1 \
-              | grep -oE '[0-9]+' || true)
-            if [ -z "$CLAUDE_HEAD" ] || [ -z "$CLAUDE_P1_RAW" ]; then
+              | sed -nE 's/^### P1 \(([0-9]+)\).*/\1/p' \
+              | head -1)
+            # Distinct failure marker emitted by run-claude-review.py's
+            # _post_failure_comment(). Detect it BEFORE parsing counts so a
+            # failure sticky can never route through the "0 P1s" branch.
+            if printf '%s\n' "$CLAUDE_BODY" \
+                | grep -qF '<!-- claude-review-failure -->'; then
+              CLAUDE_FAILED=true
+            fi
+            if [ -z "$CLAUDE_HEAD" ]; then
+              # Missing HEAD → cannot verify freshness → fail closed.
               CLAUDE_UNPARSEABLE=true
+            elif [ -n "$CLAUDE_P1_RAW" ]; then
+              # Must be a plain non-negative integer — anything else is a
+              # producer-format drift we should fail closed on.
+              case "$CLAUDE_P1_RAW" in
+                *[!0-9]*) CLAUDE_UNPARSEABLE=true ;;
+                *)        CLAUDE_P1=$CLAUDE_P1_RAW ;;
+              esac
             else
-              CLAUDE_P1=$CLAUDE_P1_RAW
+              # No `### P1 (N)` heading present. This is the reviewer's
+              # explicit "clean" shape (either `_No findings._` or only
+              # nonempty P2/P3 headings). Zero P1s at HEAD.
+              CLAUDE_P1=0
             fi
           fi
 
@@ -163,12 +235,34 @@ jobs:
           # to comments authored by `github-actions[bot]` so a human
           # commenter (or a quote of this workflow) cannot type the string
           # and permanently drop the Claude requirement.
+          #
+          # Staleness guard: review.yml does not delete or supersede this
+          # comment when the secret is later configured, so a plain
+          # `grep -qF` across the whole PR history would keep CLAUDE_DISABLED
+          # true forever — and once the secret IS set, a merge could land
+          # in the window before Claude's sticky posts, dropping the reviewer
+          # requirement by a stale artifact. Compare updated_at timestamps
+          # instead: only treat Claude as disabled when the LATEST "not set"
+          # comment is more recent than the LATEST Claude review sticky. As
+          # soon as Claude posts (or repost-updates) a sticky, the disable
+          # signal is considered obsolete. ISO 8601 timestamps sort lexically,
+          # so plain string comparison is correct here.
+          DISABLE_COMMENT_TIME=$(jq -r --arg login "$CLAUDE_BOT_LOGIN" '
+            [.[] | select(.user.login == $login)
+                 | select(.body | contains("ANTHROPIC_API_KEY is not set in repo secrets"))]
+            | sort_by(.updated_at) | last | .updated_at // ""
+          ' /tmp/issue_comments.json)
+          CLAUDE_STICKY_TIME=$(jq -r --arg login "$CLAUDE_BOT_LOGIN" '
+            [.[] | select(.user.login == $login)
+                 | select(.body | contains("<!-- claude-review -->"))]
+            | sort_by(.updated_at) | last | .updated_at // ""
+          ' /tmp/issue_comments.json)
           CLAUDE_DISABLED=false
-          if jq -r --arg login "$CLAUDE_BOT_LOGIN" \
-              '.[] | select(.user.login == $login) | .body' \
-              /tmp/issue_comments.json \
-              | grep -qF 'ANTHROPIC_API_KEY is not set in repo secrets'; then
-            CLAUDE_DISABLED=true
+          if [ -n "$DISABLE_COMMENT_TIME" ]; then
+            if [ -z "$CLAUDE_STICKY_TIME" ] \
+                || [ "$DISABLE_COMMENT_TIME" \> "$CLAUDE_STICKY_TIME" ]; then
+              CLAUDE_DISABLED=true
+            fi
           fi
 
           # Codex sticky: issue comment authored by the Codex bot
@@ -197,28 +291,44 @@ jobs:
             fi
           fi
 
-          # Codex P1s: line-level PR review comments authored by the Codex
-          # bot containing the string `P1 Badge`, filtered to the CURRENT
-          # HEAD (a P1 badge attached to an older commit was already
-          # superseded by whatever the new push did — the reviewer will
-          # re-post if the issue survived). The author filter is what
-          # prevents a random commenter from replying "P1 Badge" on a
-          # thread and inflating the count (or, worse, replying with the
-          # phrase to make their own PR fail).
+          # Codex P1s: the first comment on each PR review thread authored by
+          # the Codex bot containing `P1 Badge`, filtered by TWO gates:
+          #   1. `.commit.oid == HEAD_SHA` — the badge is pinned to the
+          #      current HEAD. Codex re-posts P1s that survive a push, so a
+          #      badge on an older commit was superseded by whatever the
+          #      push did (or invalidated by Codex silently on rerun).
+          #   2. `.isResolved == false` — the thread has NOT been resolved.
+          #      This honours the repo's same-HEAD rebuttal mechanism: a
+          #      reviewer P1 that has been rebutted and its thread resolved
+          #      is closed for that HEAD, even without another push. The
+          #      previous form counted only by (1) and ignored resolution
+          #      state, so a rebutted P1 kept the gate red forever until a
+          #      no-op push.
+          # >100 open review threads on one PR is unusual; if the paginator
+          # says there's a next page we fail closed rather than under-count.
+          CODEX_THREADS_HAS_MORE=$(jq -r \
+            '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' \
+            /tmp/review_threads.json)
           CODEX_P1_COUNT=$(jq -r --arg sha "$HEAD_SHA" --arg login "$CODEX_BOT_LOGIN" '
-            [.[] | select(.user.login == $login)
-                 | select(.body | contains("P1 Badge"))
-                 | select(.commit_id == $sha)]
+            [.data.repository.pullRequest.reviewThreads.nodes[]
+             | select(.isResolved == false)
+             | .comments.nodes[0]
+             | select(.author.login == $login)
+             | select(.body | contains("P1 Badge"))
+             | select(.commit.oid == $sha)]
             | length
-          ' /tmp/review_comments.json)
+          ' /tmp/review_threads.json)
           CODEX_P1_COUNT=${CODEX_P1_COUNT:-0}
           CODEX_P1_LOC=$(jq -r --arg sha "$HEAD_SHA" --arg login "$CODEX_BOT_LOGIN" '
-            first(.[] | select(.user.login == $login)
-                       | select(.body | contains("P1 Badge"))
-                       | select(.commit_id == $sha)
-                       | "\(.path):\(.line // .original_line // "?")")
+            first(.data.repository.pullRequest.reviewThreads.nodes[]
+                  | select(.isResolved == false)
+                  | .comments.nodes[0]
+                  | select(.author.login == $login)
+                  | select(.body | contains("P1 Badge"))
+                  | select(.commit.oid == $sha)
+                  | "\(.path):\(.line // .originalLine // "?")")
             // ""
-          ' /tmp/review_comments.json)
+          ' /tmp/review_threads.json)
 
           # ----- priority: mergeability > unparseable > checks > freshness > P1 --
           STATE=""
@@ -238,11 +348,32 @@ jobs:
           #    sticky can never silently turn `merge-gate` green.
           if [ -z "$STATE" ] && [ "$CLAUDE_UNPARSEABLE" = "true" ]; then
             STATE=failure
-            DESC="Claude sticky present but unparseable (HEAD line or '### P1 (N)' heading missing)"
+            DESC="Claude sticky present but unparseable (HEAD line missing or malformed)"
           fi
           if [ -z "$STATE" ] && [ "$CODEX_UNPARSEABLE" = "true" ]; then
             STATE=failure
             DESC="Codex sticky present but unparseable (SHA in backticks missing)"
+          fi
+
+          # 2a) Claude failure sticky. When the Anthropic call raises,
+          #    run-claude-review.py posts a marker-tagged sticky with the
+          #    current HEAD and `_reviewer failed — no findings this run._`
+          #    before exiting non-zero. That sticky is fresh and reports zero
+          #    P1s, so without this branch it would route through the
+          #    success path and turn `merge-gate` green on a failed review.
+          if [ -z "$STATE" ] && [ "$CLAUDE_FAILED" = "true" ]; then
+            STATE=failure
+            DESC="Claude review failed to complete — see workflow logs and retry"
+          fi
+
+          # 2b) Too many review threads to enumerate in a single GraphQL
+          #    page. We ask for 100 which comfortably covers any real PR;
+          #    if a PR ever exceeds that, fail closed so we do not silently
+          #    under-count unresolved Codex P1 threads that fell off the
+          #    page. Paginate here if this ever fires in practice.
+          if [ -z "$STATE" ] && [ "$CODEX_THREADS_HAS_MORE" = "true" ]; then
+            STATE=failure
+            DESC=">100 review threads on this PR — merge-gate cannot enumerate them all safely"
           fi
 
           # 3) Checks — the Claude review workflow itself. If Claude is

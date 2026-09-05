@@ -11,6 +11,14 @@ from pathlib import Path
 import anthropic
 
 MARKER = "<!-- claude-review -->"
+# Distinct sub-marker written ONLY by _post_failure_comment. The merge-gate
+# workflow (`.github/workflows/merge-gate.yml`) keys off this marker to fail
+# closed on a review that crashed — without it, the failure sticky (which
+# carries a fresh HEAD and zero `### P1 (N)` headings) would route through
+# the "0 P1s at HEAD" success branch and turn `merge-gate` green on a
+# reviewer that never actually ran. Keep the two markers in lock-step across
+# repos; the sticky is not counted as complete unless CLAUDE_FAILED is off.
+FAILURE_MARKER = "<!-- claude-review-failure -->"
 MODEL = "claude-opus-5"
 MAX_TOKENS = 16000
 # Cap the diff we send to Claude. Origami-Patterns-scale PRs comfortably fit;
@@ -246,7 +254,7 @@ def _post_failure_comment(repo: str, pr: str, head_sha: str, exc: BaseException)
     """Best-effort: post a small marker-tagged comment so the PR sees the failure
     instead of a silent workflow-status miss. Never raises — a broken poster
     should not compound the original error."""
-    lines = [MARKER, "", "## Claude review"]
+    lines = [MARKER, FAILURE_MARKER, "", "## Claude review"]
     if head_sha:
         lines += ["", f"HEAD: `{head_sha}`"]
     lines += [
