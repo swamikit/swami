@@ -671,12 +671,13 @@ JSON
   cat > "$WORK/review-contract.json" <<'JSON'
 [
   {"id": 7, "user": {"login": "quibble-review[bot]"}, "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)"},
-  {"id": 8, "user": {"login": "someone-else"}, "body": "<!-- reviewer:claude -->\n\n## Anything"}
+  {"id": 8, "user": {"login": "someone-else"}, "body": "<!-- reviewer:claude -->\n\n## Anything"},
+  {"id": 9, "user": {"login": "quibble-review[bot]"}, "body": "<!-- reviewer:claude -->\n\n## Legacy display heading\n\nlegacy-label: **approve**\n\n### P1 (0)"}
 ]
 JSON
   local selected_review
   selected_review="$(latest_quibble_review_line "$WORK/review-contract.json" | cut -f1)"
-  if [[ "$selected_review" == "7" ]]; then
+  if [[ "$selected_review" == "9" ]]; then
     printf '  PASS  E  Quibble selection keys on identity and marker, not heading/status prose\n'
   else
     printf '  FAIL  E  Quibble selection returned review %q\n' "$selected_review"
