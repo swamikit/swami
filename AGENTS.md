@@ -353,12 +353,11 @@ against HEAD, not authoritative pronouncements.
   be testable against HEAD. Build ↔ Review cycles until double-green; merge
   then; post-merge writes back to the relevant learning surface so the next
   turn starts smarter.
-- **Reviewers wired (2026-09-05).** Deep reviewer and fast pre-pass both
-  post as `quibble-review[bot]` (GitHub App) via the Reviews API — per-line
-  inline comments plus a formal APPROVE / REQUEST_CHANGES / COMMENT verdict.
-  Fast pre-pass is COMMENT-only (advisory); only the deep reviewer's verdict
-  gates merge. External Codex reviews independently in its own posts.
-  `.github/workflows/merge-gate.yml` reads all three via `.github/reviewers.yml`
+- **Reviewers wired (2026-09-05).** One thorough reviewer posts as
+  `quibble-review[bot]` (GitHub App) via the Reviews API — per-line inline
+  comments plus a formal APPROVE / REQUEST_CHANGES / COMMENT verdict.
+  External Codex reviews independently in its own posts.
+  `.github/workflows/merge-gate.yml` reads both via `.github/reviewers.yml`
   (config-driven, not name-hardcoded), applies the priority-ordered rules
   (mergeability → checks → reviewer freshness → P1 count → P2/P3 orphans),
   and posts a `merge-gate` commit status. Branch protection on main requires

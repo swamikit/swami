@@ -34,6 +34,7 @@ concurrency:
   # manual re-runs all mutate the same branch, so a per-ref group let two
   # PRs race on gh-pages. One shared group + cancel-in-progress: false
   # forces them into a queue and preserves each run's push.
+  # cleanup-docs-preview.yml uses this exact repository-wide group too.
   group: gh-pages
   cancel-in-progress: false
 
@@ -167,7 +168,7 @@ jobs:
           message: |
             DocC preview for this PR: ${{ steps.target.outputs.public_url }}
 
-            Rebuilds on every push. Cleaned up when the PR closes (TODO: cleanup job).
+            Rebuilds on every push. Cleaned up when the PR closes.
 
       - name: Sticky PR comment (empty archive)
         if: github.event_name == 'pull_request' && steps.guard.outputs.skip == 'true'

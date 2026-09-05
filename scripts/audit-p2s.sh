@@ -2,7 +2,7 @@
 #
 # audit-p2s.sh — for every PR merged since --since (default: today), collect
 # every P2/P3 finding left on it by BOTH reviewers (Codex line comments +
-# Claude review sticky), decide whether each finding is already tracked by a
+# Quibble review), decide whether each finding is already tracked by a
 # repo issue, and print the orphans. With --file-issues, open one issue per
 # orphan.
 #

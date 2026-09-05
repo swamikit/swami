@@ -1021,34 +1021,55 @@ format_gate_comment() {
   }
 }
 
+gate_comment_ids_from_file() {
+  local flat="$1" order="${2:-oldest}" ownership="${3:-any}"
+  local filter='.[]
+    | select((.body // "") | startswith("<!-- merge-gate -->"))
+    | select($ownership != "actions" or .user.login == "github-actions[bot]")'
+  if [[ "$order" == "newest" ]]; then
+    jq -r --arg ownership "$ownership" "[$filter] | reverse | .[].id" "$flat"
+  else
+    jq -r --arg ownership "$ownership" "$filter | .id" "$flat"
+  fi
+}
+
+find_gate_comment_ids() {
+  local pr="$1" order="${2:-oldest}" prefix="${3:-gate-comment-list}" ownership="${4:-any}"
+  local pages="$WORK/${prefix}-pages.json"
+  local flat="$WORK/${prefix}-flat.json"
+  local err="$WORK/${prefix}.err"
+  if ! gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
+       > "$pages" 2>"$err" \
+       || ! flatten_paginated_arrays "$pages" "$flat"; then
+    echo "::warning::merge-gate: could not list diagnostic comments ($(head -1 "$err" 2>/dev/null || true))" >&2
+    return 1
+  fi
+  gate_comment_ids_from_file "$flat" "$order" "$ownership"
+}
+
+gate_comment_action() {
+  if [[ "$1" == "success" ]]; then
+    echo clear
+  else
+    echo upsert
+  fi
+}
+
 upsert_gate_comment() {
   local pr="$1" state="$2" desc="$3" long="$4" sha="$5"
   local comment_file="$WORK/gate-comment.md"
   format_gate_comment "$state" "$desc" "$long" "$sha" > "$comment_file"
 
-  # Find prior gate comments (any author — local maintainers and GitHub
-  # Actions may both run this script). A token may only edit comments created
-  # by its own identity, so try newest-to-oldest and create a new sticky if
-  # none are editable.
+  # Find prior gate comments created by GitHub Actions. A token may only edit
+  # comments created by its own identity; human comments that quote the marker
+  # must never become update targets.
   # `--paginate --slurp` fetches ALL pages; flatten once, then reverse the
   # complete collection so edit attempts run newest-to-oldest across page
   # boundaries.
   local existing_ids="" existing_id updated=0 patch_rc=0 patch_status=""
-  local comment_pages="$WORK/upsert-comment-pages.json"
-  local comments_flat="$WORK/upsert-comments.json"
-  local comments_err="$WORK/upsert-comments.err"
   local patch_err="$WORK/upsert-patch.err"
   local patch_response="$WORK/upsert-patch-response.txt"
-  if gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
-       > "$comment_pages" 2>"$comments_err" \
-       && flatten_paginated_arrays "$comment_pages" "$comments_flat"; then
-    existing_ids="$(
-      jq -r '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | reverse | .[].id' \
-        "$comments_flat"
-    )"
-  else
-    echo "::warning::merge-gate: could not list prior comments; a duplicate sticky may be created ($(head -1 "$comments_err" 2>/dev/null || true))" >&2
-  fi
+  existing_ids="$(find_gate_comment_ids "$pr" newest upsert-comment actions || true)"
 
   : > "$patch_err"
   while IFS= read -r existing_id; do
@@ -1077,6 +1098,21 @@ upsert_gate_comment() {
     gh api "/repos/$REPO/issues/$pr/comments" -X POST \
       -F body=@"$comment_file" >/dev/null
   fi
+}
+
+clear_gate_comment() {
+  local pr="$1" id listing
+  # A green gate already has a first-class commit status in the Checks UI.
+  # Remove our diagnostic sticky so successful PRs do not accumulate bot prose.
+  if ! listing="$(find_gate_comment_ids "$pr" oldest clear-comment actions)"; then
+    return 0
+  fi
+  while IFS= read -r id; do
+    [[ -z "$id" ]] && continue
+    if ! gh api "/repos/$REPO/issues/comments/$id" -X DELETE >/dev/null 2>&1; then
+      echo "::warning::merge-gate: could not remove green diagnostic comment $id" >&2
+    fi
+  done <<<"$listing"
 }
 
 # ---------------------------------------------------------------------------
@@ -1194,7 +1230,7 @@ JSON
   "state": "CHANGES_REQUESTED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **request changes**\n\n### P1 (2)\n### P2 (0)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **request changes**\n\n### P1 (2)\n### P2 (0)\n### P3 (0)\n"
 }]
 JSON
   compute_gate
@@ -1213,7 +1249,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (1)\n### P2 (0)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (1)\n### P2 (0)\n### P3 (0)\n"
 }]
 JSON
   compute_gate
@@ -1231,7 +1267,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1254,7 +1290,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (0)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (0)\n### P3 (0)\n"
 }]
 JSON
   # findings.jsonl empty on purpose — the previous-push finding disappeared.
@@ -1273,7 +1309,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1300,7 +1336,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1325,7 +1361,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1350,7 +1386,7 @@ JSON
   "state": "APPROVED",
   "commit_id": "abc123",
   "user": {"login": "quibble-review[bot]"},
-  "body": "<!-- reviewer:claude -->\n\n## Claude review\n\nverdict: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
+  "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)\n### P2 (1)\n### P3 (0)\n"
 }]
 JSON
   cat > "$WORK/findings.jsonl" <<'JSONL'
@@ -1375,14 +1411,6 @@ reviewers:
     failure_marker: "<!-- reviewer:claude-failure -->"
     style: reviews-api
     gates_merge: true
-  - id: fast
-    identities:
-      - quibble-review[bot]
-      - github-actions[bot]
-    marker: "<!-- reviewer:fast -->"
-    failure_marker: "<!-- reviewer:fast-failure -->"
-    style: reviews-api
-    gates_merge: false
   - id: codex
     identities:
       - chatgpt-codex-connector[bot]
@@ -1393,8 +1421,8 @@ reviewers:
 YAML
   local rows
   rows="$(parse_reviewers "$cfg")"
-  if [[ "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')" == "3" ]]; then
-    printf '  PASS  6a config parser emits 3 rows\n'
+  if [[ "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')" == "2" ]]; then
+    printf '  PASS  6a config parser emits 2 rows\n'
   else
     printf '  FAIL  6a config parser row count: got %d rows\n' \
       "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')"
@@ -1505,6 +1533,29 @@ MARKDOWN
     failures=$((failures + 1))
   fi
 
+  if [[ "$(gate_comment_action success)" == "clear" \
+     && "$(gate_comment_action pending)" == "upsert" \
+     && "$(gate_comment_action failure)" == "upsert" ]]; then
+    printf '  PASS  9  green clears diagnostic; non-green upserts it\n'
+  else
+    printf '  FAIL  9  gate comment action routing\n'
+    failures=$((failures + 1))
+  fi
+
+  cat > "$WORK/gate-comments.json" <<'JSON'
+[
+  {"id": 1, "user": {"login": "github-actions[bot]"}, "body": "<!-- merge-gate -->\nowned"},
+  {"id": 2, "user": {"login": "sam"}, "body": "Quoting <!-- merge-gate --> for discussion"},
+  {"id": 3, "user": {"login": "sam"}, "body": "<!-- merge-gate -->\nhuman-authored"}
+]
+JSON
+  if [[ "$(gate_comment_ids_from_file "$WORK/gate-comments.json" oldest actions)" == "1" ]]; then
+    printf '  PASS  10 upsert and cleanup select only owned marker-first comments\n'
+  else
+    printf '  FAIL  10 gate comment selection included an unsafe comment\n'
+    failures=$((failures + 1))
+  fi
+
   echo
   if [[ $failures -eq 0 ]]; then
     echo "merge-gate --self-test: OK (all cases passed)"
@@ -1611,7 +1662,11 @@ if [[ -n "$HEAD_SHA" ]]; then
 else
   echo "::warning::merge-gate: no HEAD_SHA — cannot POST commit status" >&2
 fi
-upsert_gate_comment "$PR" "$RESULT_STATE" "$RESULT_DESC" "$RESULT_LONG" "$HEAD_SHA"
+if [[ "$(gate_comment_action "$RESULT_STATE")" == "clear" ]]; then
+  clear_gate_comment "$PR"
+else
+  upsert_gate_comment "$PR" "$RESULT_STATE" "$RESULT_DESC" "$RESULT_LONG" "$HEAD_SHA"
+fi
 
 # Exit 0 always on the real path — CI decision is the posted status, not the
 # script's exit code. Fail-closed exits above (missing config, unfetchable PR)
