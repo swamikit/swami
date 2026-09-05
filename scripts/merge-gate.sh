@@ -223,11 +223,10 @@ reviewer_field() {
   local want="$1" cfg="$2" field="$3"
   parse_reviewers "$cfg" | awk -F'\t' -v want="$want" -v field="$field" '
     $1 == want && !found { print $field; found = 1 }
-    END { if (!found) exit 1 }
   '
 }
 
-# Return the identities CSV for reviewer id, or fail if not found.
+# Return the identities CSV for reviewer id, or "" if not found.
 reviewer_identities() {
   reviewer_field "$1" "$2" 2
 }
@@ -580,6 +579,8 @@ extract_issue_numbers() {
 #       The issue must be OPEN or CLOSED-COMPLETED (not "not_planned") and
 #       its body must reference the PR number or the finding's `path:line`
 #       so we know the link is genuine.
+# Resolving a review thread does not emit an Actions event. Recompute by
+# posting a PR comment, or dispatch merge-gate.yml with `-f pr="$PR"`.
 #
 # Inputs:
 #   $WORK/findings.jsonl — one JSON per finding (deep + codex)
@@ -962,8 +963,8 @@ upsert_gate_comment() {
   local comments_flat="$WORK/upsert-comments.json"
   local patch_err="$WORK/upsert-patch.err"
   if gh api "/repos/$REPO/issues/$pr/comments" --paginate --slurp \
-       > "$comment_pages" 2>/dev/null; then
-    flatten_paginated_arrays "$comment_pages" "$comments_flat"
+       > "$comment_pages" 2>/dev/null \
+       && flatten_paginated_arrays "$comment_pages" "$comments_flat" 2>/dev/null; then
     existing_ids="$(
       jq -r '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | reverse | .[].id' \
         "$comments_flat"
@@ -982,7 +983,7 @@ upsert_gate_comment() {
       # A comment owned by another identity is expected to reject edits.
       # Network/server/rate-limit failures are not identity mismatches and
       # must stay loud instead of degrading into duplicate-comment spam.
-      if ! grep -Eq 'HTTP (403|404)' "$patch_err"; then
+      if ! grep -Eq 'Resource not accessible|Not Found' "$patch_err"; then
         echo "::error::merge-gate: sticky PATCH failed — $(head -1 "$patch_err")" >&2
         return "$patch_rc"
       fi
@@ -1318,11 +1319,13 @@ YAML
     printf '  FAIL  6d reviewer helpers: %q\n' "$helper_values"
     failures=$((failures + 1))
   fi
-  if reviewer_marker unknown-reviewer "$cfg" >/dev/null 2>&1; then
-    printf '  FAIL  6e unknown reviewer should return non-zero\n'
-    failures=$((failures + 1))
+  local unknown_marker
+  unknown_marker="$(reviewer_marker unknown-reviewer "$cfg")"
+  if [[ -z "$unknown_marker" ]]; then
+    printf '  PASS  6e unknown reviewer returns empty successfully\n'
   else
-    printf '  PASS  6e unknown reviewer returns non-zero\n'
+    printf '  FAIL  6e unknown reviewer returned %q\n' "$unknown_marker"
+    failures=$((failures + 1))
   fi
 
   # ---- Case 7: gh --paginate --slurp response normalization ---------------
@@ -1339,8 +1342,8 @@ JSON
 
   # ---- Case 8: pure link extraction stays hermetic under pipefail ---------
   local extracted
-  extracted="$(extract_issue_numbers "Closes #$PR. No absolute issue URL.")"
-  if [[ "$extracted" == "$PR" ]]; then
+  extracted="$(extract_issue_numbers 'Closes #4242. No absolute issue URL.')"
+  if [[ "$extracted" == "4242" ]]; then
     printf '  PASS  8  pure link extraction survives missing optional pattern\n'
   else
     printf '  FAIL  8  pure link extraction returned %q\n' "$extracted"
