@@ -150,8 +150,16 @@ fi
 
 # ---------- step 5: Claude sticky ----------
 
+# Trust only comments posted by the workflow itself: run-claude-review.py runs
+# under GH_TOKEN=github.token, so `.user.login` is `github-actions[bot]` and
+# `.user.type` is `Bot`. Filtering solely on the `<!-- claude-review -->`
+# marker would let any commenter (including a fork PR author) post a fake
+# "approve, no P1s" sticky and slip past this gate.
 CLAUDE_BODY="$(echo "$COMMENTS_JSON" | jq -r '
-  [ .[] | select(.body | contains("<!-- claude-review -->")) ]
+  [ .[]
+    | select(.body | contains("<!-- claude-review -->"))
+    | select( ((.user.login // "") == "github-actions[bot]")
+              and ((.user.type // "") == "Bot") ) ]
   | sort_by(.created_at)
   | last
   | .body // ""
@@ -160,8 +168,17 @@ CLAUDE_BODY="$(echo "$COMMENTS_JSON" | jq -r '
 CLAUDE_REQUIRED=1
 # If ANTHROPIC_API_KEY is not configured as a repo secret, Claude review is
 # skipped intentionally by the workflow and its absence is not a merge blocker.
-if ! gh secret list --repo "$REPO" 2>/dev/null | awk '{print $1}' | grep -qx "ANTHROPIC_API_KEY"; then
-  CLAUDE_REQUIRED=0
+# `gh secret list` requires admin scope on the repo, which reviewers and most
+# CI tokens don't have; distinguish "call failed" (fail closed — we cannot
+# tell) from "call succeeded and secret is absent" (fail open — genuine skip).
+if secrets_out="$(gh secret list --repo "$REPO" 2>&1)"; then
+  case "$secrets_out" in
+    *ANTHROPIC_API_KEY*) CLAUDE_REQUIRED=1 ;;
+    *) CLAUDE_REQUIRED=0 ;;
+  esac
+else
+  abort "cannot enumerate repo secrets to check ANTHROPIC_API_KEY: $secrets_out" \
+    "Re-run with a token that has admin scope on $REPO, or set ANTHROPIC_API_KEY so the Claude gate is unambiguously required."
 fi
 
 if [[ -z "$CLAUDE_BODY" || "$CLAUDE_BODY" == "null" ]]; then
@@ -212,7 +229,28 @@ fi
 # ---------- step 7: Claude P1 count ----------
 
 if [[ "$CLAUDE_ACTIVE" -eq 1 ]]; then
-  # Matches "### P1 (N)" header; N is the count Claude wrote itself.
+  # The sticky's header line looks like: `verdict: **approve**` or
+  # `verdict: **request changes**` (see scripts/run-claude-review.py:135, 143).
+  # Trust the verdict as the primary gate — a `request changes` verdict must
+  # abort even when the response is malformed and no `### P1 (N)` header was
+  # emitted (e.g. P2-only body, or diff-truncated auto-request-changes at
+  # scripts/run-claude-review.py:295 which posts a synthetic P1 in a different
+  # format). Otherwise the count defaults to 0 and the gate lets a
+  # request-changes review merge.
+  CLAUDE_VERDICT="$(echo "$CLAUDE_BODY" \
+    | grep -oE 'verdict:[[:space:]]*\*\*(approve|request changes)\*\*' \
+    | head -n1 | sed -E 's/.*\*\*(approve|request changes)\*\*/\1/')"
+  if [[ -z "$CLAUDE_VERDICT" ]]; then
+    abort "Claude sticky present but has no 'verdict: **approve|request changes**' line" \
+      "Re-run the 'review' workflow to refresh the sticky."
+  fi
+  if [[ "$CLAUDE_VERDICT" != "approve" ]]; then
+    abort "Claude review verdict is '$CLAUDE_VERDICT'" \
+      "Read the sticky, address the findings, push; sticky updates in place."
+  fi
+  # Matches "### P1 (N)" header; N is the count Claude wrote itself. Belt and
+  # suspenders after the verdict check: a valid `approve` sticky should always
+  # have zero P1s, so any P1 count on an approve verdict is itself a red flag.
   CLAUDE_P1_N="$(echo "$CLAUDE_BODY" | grep -oE '^###[[:space:]]+P1[[:space:]]*\([0-9]+\)' \
     | head -n1 | grep -oE '[0-9]+' | head -n1 || true)"
   CLAUDE_P1_N="${CLAUDE_P1_N:-0}"
@@ -220,7 +258,7 @@ if [[ "$CLAUDE_ACTIVE" -eq 1 ]]; then
     abort "Claude review lists $CLAUDE_P1_N P1 finding(s)" \
       "Read the sticky, fix each P1, push; sticky updates in place."
   fi
-  ok "no Claude P1 findings"
+  ok "Claude review verdict=approve, no Claude P1 findings"
 fi
 
 # ---------- step 8: merge (or dry-run) ----------
