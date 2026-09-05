@@ -135,21 +135,20 @@ order before overriding:
 1. **Split the PR.** Break it into smaller topic-scoped PRs that each fit
    under the cap. This is the default and by far the safest option — a
    review that reads the whole change is the whole point of the gate.
-2. **Re-run the reviewer against a filtered subset.** If the bulk is
-   generated code (Swift + IR for a translated pattern, snapshot fixtures,
-   vendored trees), a maintainer can re-run `run-claude-review.py`
-   locally with the generated paths stripped from the diff so the review
-   sees the hand-written surface. Note in the PR which paths were
-   filtered and why.
-3. **Manual merge with an explicit rebuttal.** For a one-pattern-one-PR
-   where the size is unavoidable and can't be filtered meaningfully,
-   treat the synthetic truncation P1 as a documented note: post a
-   rebuttal comment on the PR that (a) acknowledges the truncation, (b)
-   explains why splitting/filtering aren't viable here, and (c) points to
-   the human review that stood in for the automated one. Then merge
-   manually. This is the escape hatch, not the default — use it sparingly
-   and never for a change with meaningful hand-written logic still
-   unreviewed.
+2. **Manual full-diff review with an explicit rebuttal.** For a
+   one-pattern-one-PR where the size is unavoidable, a human reviewer
+   reads the whole diff (generated Swift + IR included — those files are
+   the shipped pattern; SSIM can conceal structural mistakes in them, so
+   they are not vendored noise you can safely skip) and posts a rebuttal
+   comment on the PR that (a) acknowledges the truncation, (b) explains
+   why splitting isn't viable here, and (c) records the structural
+   findings from the manual read (or explicitly states none). Only then
+   merge manually. This is the escape hatch, not the default — use it
+   sparingly and never as a way to keep generated code from being read.
+
+Do not filter generated `.swift` or IR out of the diff to slip under the
+cap. Those files are what the pattern actually is; approving HEAD
+without them read is exactly the false green the gate exists to catch.
 
 ## Message-exchange context
 

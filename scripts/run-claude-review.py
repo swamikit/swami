@@ -315,11 +315,12 @@ def main() -> int:
                 "Follow the escape-hatch procedure in `skill/review/SKILL.md` "
                 "under \"When the diff exceeds the reviewer cap\": (a) split "
                 "the PR into smaller topic-scoped PRs that fit under the diff "
-                "cap; (b) if the bulk is generated code (Swift + IR), a "
-                "maintainer may re-run the reviewer against a filtered "
-                "subset; (c) if it's one-pattern-one-PR with unavoidable "
-                "size, treat this P1 as a documented note and merge manually "
-                "with an explicit rebuttal comment."
+                "cap; or (b) if it's one-pattern-one-PR with unavoidable "
+                "size, do a manual full-diff review (generated Swift + IR "
+                "included — those are the shipped pattern, not vendored "
+                "noise) and merge manually with an explicit rebuttal "
+                "comment. Do not filter generated paths out of the diff to "
+                "get under the cap."
             ),
         }
         existing = review.get("findings") or []
