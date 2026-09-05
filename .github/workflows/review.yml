@@ -34,24 +34,39 @@ permissions:
 # so a race that beats the concurrency gate still doesn't ship a stale
 # verdict.
 #
-# Group second segment is the "instance" — HEAD SHA on pull_request
-# events, otherwise the event name. Without the instance suffix, an
-# issue_comment trigger fired by another bot's PR comment (e.g. Codex
-# posting its review summary) enters the SAME group as the in-flight
-# `pull_request:opened` review and, with cancel-in-progress, kills the
-# running quibble review BEFORE the job-level `if:` gate on the new run
-# can skip it (concurrency evaluates before `if:`). Test PR #79 hit this
-# — Codex posted a comment ~6s into the pull_request run, the comment
-# fired issue_comment, and the quibble review was cancelled mid-flight.
-# Separating trigger shapes into distinct groups keeps cancel-in-progress
-# useful (still cancels same-HEAD-same-event redundant runs) without
-# letting unrelated issue_comment triggers stomp the pull_request run.
+# Partition triggers by "actionable" vs "ignorable" so that comments
+# unrelated to the review (Codex posting its summary, a human replying to
+# a diff comment, etc.) can't cancel the in-flight actionable run — while
+# preserving the round-2 property that a newer actionable run cancels an
+# older one:
+#
+#   Actionable — pull_request, workflow_dispatch, and @claude-review
+#   issue_comment. All of these change the verdict, so they share one
+#   group `review-<PR>` and cancel each other correctly (newer wins).
+#
+#   Ignorable — every other issue_comment. Each is given its own
+#   per-comment group `review-<PR>-ignorable-<comment-id>` so it (a)
+#   never touches the actionable group, and (b) still de-duplicates
+#   same-comment edit/delete churn among itself. The job-level `if:`
+#   would skip these anyway — but concurrency evaluates BEFORE `if:`,
+#   so without the partition the ignorable run cancels the actionable
+#   one and then never posts anything itself. Test PR #79 hit exactly
+#   this: Codex posted a comment ~6s into the pull_request run and
+#   cancelled the quibble review mid-flight (Codex P1 on this PR).
+#
+# The prior HEAD-SHA-based partition (fix round 1 on this PR) fixed the
+# wrong axis: it put actionable triggers (pull_request/synchronize vs
+# workflow_dispatch vs @claude review comment) into DIFFERENT groups,
+# so an older actionable run could finish LAST and dismiss the newer
+# verdict — exactly the race the round-2 fix on PR #75 was written to
+# prevent.
 #
 # `inputs.pr_number` covers the workflow_dispatch shape (Builder GA's
 # ready-path handoff — pull_request / issue_comment payloads are empty
 # on that trigger).
 concurrency:
-  group: "review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}-${{ github.event.pull_request.head.sha || github.event_name }}"
+  group: >-
+    review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}${{ (github.event_name == 'issue_comment' && !contains(github.event.comment.body, '@claude review')) && format('-ignorable-{0}', github.event.comment.id) || '' }}
   cancel-in-progress: true
 
 jobs:

@@ -37,21 +37,38 @@ on:
   check_run:
     types: [completed]
 
-# One in-flight run per PR. `cancel-in-progress: true` — a burst of comments
-# on a PR doesn't queue N runs; only the latest one's status counts.
+# Partition triggers by "actionable" vs "ignorable" — same fix shape as
+# review.yml on this PR (quibble P2 on this PR flagged the asymmetry):
 #
-# The `'no-pr'` fallback matters for `check_run: [completed]`: checks that
-# ran on a direct push to main have no associated PR, so pull_request.number,
-# issue.number, AND check_run.pull_requests[0].number all resolve to null,
-# leaving the group as `merge-gate-` — an empty suffix GitHub can reject at
-# workflow parse before the job-level `if:` guard runs (that guard already
-# skips no-PR events at job level; this fallback just keeps parse healthy so
-# the job actually reaches the guard). All no-PR events share the one group,
-# which is harmless because the guard skips them immediately. Test PR #79's
-# merge-gate runs were all `event=push` with `conclusion=failure`/`jobs=[]`
-# — the same failure shape a rejected concurrency evaluation produces.
+#   Actionable — pull_request, pull_request_review,
+#   pull_request_review_comment, pull_request_review_thread, and
+#   check_run:completed. All of these change the merge-gate answer, so
+#   they share one group `merge-gate-<PR-or-no-pr>` and a newer run
+#   cancels the older one (correct staleness behavior).
+#
+#   Ignorable — issue_comment. The gate doesn't consume comment bodies
+#   (PR body edits arrive via pull_request:edited, not issue_comment),
+#   so these are essentially always ignorable for gate purposes. Each is
+#   given its own per-comment group `merge-gate-<PR>-ignorable-<comment-id>`
+#   so it (a) never touches the actionable group, and (b) still
+#   de-duplicates same-comment edit/delete churn among itself.
+#
+# Without this partition the same stomping class fixed on review.yml
+# applies here: another bot's PR comment fires issue_comment, enters
+# the same group, and cancels the in-flight actionable run before the
+# job-level `if:` can skip it (concurrency evaluates before `if:`).
+# A cancelled merge-gate run leaves a mergeable PR silently pending
+# until the next event re-triggers it.
+#
+# The `'no-pr'` fallback on the actionable group is belt-and-suspenders
+# defense: the job-level `if:` already filters no-PR cases (issue_comment
+# on regular issues, check_run on direct pushes to main), so this
+# fallback isn't a diagnosed root cause — it just keeps the group
+# expression well-formed on every trigger. All no-PR events share the
+# one group, which is harmless because the guard skips them immediately.
 concurrency:
-  group: "merge-gate-${{ github.event.pull_request.number || github.event.issue.number || github.event.check_run.pull_requests[0].number || 'no-pr' }}"
+  group: >-
+    merge-gate-${{ github.event.pull_request.number || github.event.issue.number || github.event.check_run.pull_requests[0].number || 'no-pr' }}${{ github.event_name == 'issue_comment' && format('-ignorable-{0}', github.event.comment.id) || '' }}
   cancel-in-progress: true
 
 permissions:
