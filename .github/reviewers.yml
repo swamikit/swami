@@ -1,0 +1,64 @@
+# .github/reviewers.yml — reviewer registry.
+#
+# The merge-gate (scripts/merge-gate.sh) and downstream tooling READ this file
+# so a new reviewer (or a rename) is a config edit, not a code edit. Every
+# entry describes ONE reviewer:
+#
+#   id            — short slug used in logs and rule references.
+#   identities    — list of GitHub logins the reviewer authors comments/reviews
+#                   under (bots typically use `<name>[bot]`). Multiple entries
+#                   allowed for the App/fallback pair pattern documented on
+#                   PR #74 — the reviewer scripts fall back to
+#                   `github-actions[bot]` when App auth is unavailable, and
+#                   the gate must recognize both.
+#   marker        — HTML comment that appears in the reviewer's Review body
+#                   (or per-line comment body for line-badge reviewers).
+#                   Used to disambiguate multiple reviewers that share the
+#                   same identity (deep vs fast both post as
+#                   `quibble-review[bot]`). `null` for reviewers that don't
+#                   embed a marker (e.g. Codex uses shield badges instead).
+#   failure_marker — HTML comment on the failure-path ISSUE comment fallback
+#                   posted when the reviewer's own Review API POST errored.
+#                   Presence at HEAD_SHA means "reviewer failed — wait for
+#                   retry", NOT "reviewer approved".
+#   style         — 'reviews-api'            → posts a formal PR Review whose
+#                                              body carries the marker and
+#                                              whose inline comments carry a
+#                                              finding-marker.
+#                 — 'reviews-api-line-badges' → posts inline P{1,2,3} shield
+#                                              badges as line comments (Codex).
+#                                              We can't grep a body marker;
+#                                              we walk PR review threads.
+#   gates_merge   — true  → this reviewer's verdict counts toward the gate:
+#                           APPROVED == green, CHANGES_REQUESTED == red,
+#                           missing at HEAD == pending, COMMENT ignored.
+#                 — false → advisory only. We still READ its P2/P3 findings
+#                           for orphan tracking, but its verdict never blocks
+#                           merge on its own (e.g. Codex is external — we
+#                           can't hold merge on a service we don't own).
+reviewers:
+  - id: claude
+    identities:
+      - quibble-review[bot]
+      - github-actions[bot]
+    marker: "<!-- reviewer:claude -->"
+    failure_marker: "<!-- reviewer:claude-failure -->"
+    style: reviews-api
+    gates_merge: true
+
+  - id: fast
+    identities:
+      - quibble-review[bot]
+      - github-actions[bot]
+    marker: "<!-- reviewer:fast -->"
+    failure_marker: "<!-- reviewer:fast-failure -->"
+    style: reviews-api
+    gates_merge: false
+
+  - id: codex
+    identities:
+      - chatgpt-codex-connector[bot]
+    marker: null
+    failure_marker: null
+    style: reviews-api-line-badges
+    gates_merge: false
