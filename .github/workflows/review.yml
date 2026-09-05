@@ -45,6 +45,13 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # `quibble-review` GitHub App credentials — the review scripts mint an
+      # installation access token from these so review comments post as
+      # `quibble-review[bot]` instead of `github-actions[bot]`. When either
+      # secret is unset the scripts log a `::warning` and fall back to
+      # GITHUB_TOKEN, so a rotation gap doesn't take reviews offline.
+      QUIBBLE_APP_ID: ${{ secrets.QUIBBLE_APP_ID }}
+      QUIBBLE_APP_PRIVATE_KEY: ${{ secrets.QUIBBLE_APP_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -145,7 +152,10 @@ jobs:
         #   anthropic -> Claude Opus (full review + fast-review Opus fallback)
         #   google-generativeai -> Gemini (fast-review primary)
         #   openai -> OpenRouter-compatible client used by model_client
-        run: python3 -m pip install --quiet 'anthropic==1.4.0' 'google-generativeai==0.8.3' 'openai==1.51.0'
+        #   PyJWT + cryptography -> quibble-review App installation-token minting
+        #     (scripts/gh_app_auth.py). Same pin discipline: bump deliberately
+        #     when we've verified the new majors of PyJWT / cryptography behave.
+        run: python3 -m pip install --quiet 'anthropic==1.4.0' 'google-generativeai==0.8.3' 'openai==1.51.0' 'PyJWT==2.9.0' 'cryptography==43.0.3'
 
       # Fast-review pre-pass. Posts a lightweight review comment (~15s) before
       # the full Claude Opus review lands (~60s). Gated on ANTHROPIC_API_KEY
