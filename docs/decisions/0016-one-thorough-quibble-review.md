@@ -61,3 +61,6 @@ without coupling Swami to a second presentation tier.
   cases directly.
 - `rg -n 'model_client|run-fast-review|run_fast_review|reviewer:fast|GEMINI_API_KEY|OPENROUTER_API_KEY' -g '!docs/**' .`
   returns no matches. Builder and triage call their model runtimes independently.
+- `rg -n '\bfast\b' scripts/review_posting.py` returns no matches;
+  `post_review(..., reviewer=...)` treats the reviewer id as a diagnostic label,
+  not a behavior-dispatch key.

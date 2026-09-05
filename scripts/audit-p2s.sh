@@ -294,9 +294,14 @@ collect_claude() {
 
 latest_quibble_review_line() {
   local reviews_raw="$1"
-  jq -r --arg login "quibble-review[bot]" '
+  jq -r \
+    --arg primary_login "quibble-review[bot]" \
+    --arg fallback_login "github-actions[bot]" '
     [ .[]
-      | select(.user.login == $login)
+      | select(
+          .user.login == $primary_login
+          or .user.login == $fallback_login
+        )
       | select(.body // "" | contains("<!-- reviewer:claude -->"))
     ]
     | last
@@ -672,13 +677,13 @@ JSON
 [
   {"id": 7, "user": {"login": "quibble-review[bot]"}, "body": "<!-- reviewer:claude -->\n\n## Quibble Review Summary\n\nstatus: **approve**\n\n### P1 (0)"},
   {"id": 8, "user": {"login": "someone-else"}, "body": "<!-- reviewer:claude -->\n\n## Anything"},
-  {"id": 9, "user": {"login": "quibble-review[bot]"}, "body": "<!-- reviewer:claude -->\n\n## Legacy display heading\n\nlegacy-label: **approve**\n\n### P1 (0)"}
+  {"id": 9, "user": {"login": "github-actions[bot]"}, "body": "<!-- reviewer:claude -->\n\n## Legacy display heading\n\nlegacy-label: **approve**\n\n### P1 (0)"}
 ]
 JSON
   local selected_review
   selected_review="$(latest_quibble_review_line "$WORK/review-contract.json" | cut -f1)"
   if [[ "$selected_review" == "9" ]]; then
-    printf '  PASS  E  Quibble selection keys on identity and marker, not heading/status prose\n'
+    printf '  PASS  E  Quibble selection accepts configured identities and ignores display prose\n'
   else
     printf '  FAIL  E  Quibble selection returned review %q\n' "$selected_review"
     failures=$((failures + 1))
@@ -694,11 +699,14 @@ JSON
   }
 ]
 JSON
-  : > "$FINDINGS"
-  gh() { cat "$WORK/sticky-contract.json"; }
-  collect_claude_sticky 999
-  unset -f gh
-  if jq -e 'select(.path == "scripts/sticky.sh" and (.line|tostring) == "12" and .severity == "P2")' "$FINDINGS" >/dev/null; then
+  local case_f_findings="$WORK/findings-case-f.jsonl"
+  (
+    FINDINGS="$case_f_findings"
+    : > "$FINDINGS"
+    gh() { cat "$WORK/sticky-contract.json"; }
+    collect_claude_sticky 999
+  )
+  if jq -e 'select(.path == "scripts/sticky.sh" and (.line|tostring) == "12" and .severity == "P2")' "$case_f_findings" >/dev/null; then
     printf '  PASS  F  legacy sticky findings ignore heading/status prose\n'
   else
     printf '  FAIL  F  legacy sticky finding was not collected\n'
