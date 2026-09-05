@@ -24,6 +24,18 @@ from __future__ import annotations
 import json, os, subprocess, sys
 from pathlib import Path
 
+# Bootstrap sys.path so the packaged import resolves regardless of how the
+# script is invoked. Running `python3 scripts/run-fast-review.py` (the shape
+# implied by the shebang and the sibling `run-claude-review.py`) puts
+# scripts/ on sys.path[0], not the repo root — so `from scripts.model_client`
+# would ModuleNotFoundError with name='scripts' even when the sibling module
+# is present. Inserting the repo root ahead of it makes both invocation modes
+# (`python3 scripts/run-fast-review.py` and `python3 -m scripts.run_fast_review`
+# from the repo root) resolve the packaged form the same way.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 # Sibling PR introduces scripts/model_client.py. Fail loudly with a hint if it
 # is not yet on the branch this script is running from — a silent no-op review
 # would be worse than a hard error, because the workflow would "green" without
