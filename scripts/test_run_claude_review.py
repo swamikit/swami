@@ -44,19 +44,26 @@ mod = _load_module()
 
 class SummaryFallbackFormatContractTests(unittest.TestCase):
     def test_deep_inline_comment_format_survives_summary_only_fallback(self) -> None:
-        comments = mod.format_review_comments(
-            [{
-                "severity": "P2",
-                "file": "x.py",
-                "line": 4,
-                "_side": "RIGHT",
-                "title": "deep formatter title",
-                "reasoning": "evidence",
-                "suggestion": "fix it",
-            }]
-        )
-        degraded = review_posting._summary_only({"body": "summary", "comments": comments})
-        self.assertIn("#### `x.py:4`\n\n[P2] deep formatter title", degraded["body"])
+        # Cover the remaining deep reviewer's original P1 contract and the P2
+        # case previously exercised only by the deleted fast-review test.
+        for severity in ("P1", "P2"):
+            with self.subTest(severity=severity):
+                comments = mod.format_review_comments(
+                    [{
+                        "severity": severity,
+                        "file": "x.py",
+                        "line": 4,
+                        "_side": "RIGHT",
+                        "title": "deep formatter title",
+                        "reasoning": "evidence",
+                        "suggestion": "fix it",
+                    }]
+                )
+                degraded = review_posting._summary_only({"body": "summary", "comments": comments})
+                self.assertIn(
+                    f"#### `x.py:4`\n\n[{severity}] deep formatter title",
+                    degraded["body"],
+                )
 
     def test_deep_unanchored_formatter_matches_gate_contract(self) -> None:
         payload = mod.format_review(

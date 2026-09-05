@@ -26,6 +26,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: gh-pages
+          fetch-depth: 0
       - name: Remove closed pull request preview
         env:
           PR: ${{ github.event.pull_request.number }}
@@ -41,6 +42,13 @@ jobs:
           git commit -m "docs: remove preview for PR #${PR}"
           # The shared gh-pages concurrency group serializes known workflow
           # writers. Rebase as a final guard against a manual or unknown push.
-          git fetch origin gh-pages
-          git rebase origin/gh-pages
-          git push origin gh-pages
+          for attempt in 1 2 3; do
+            git fetch origin gh-pages
+            git rebase origin/gh-pages
+            if git push origin gh-pages; then
+              exit 0
+            fi
+            echo "push raced another gh-pages writer; retry ${attempt}/3"
+          done
+          echo "::error::could not publish preview cleanup after 3 attempts"
+          exit 1

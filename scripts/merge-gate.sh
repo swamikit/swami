@@ -1021,8 +1021,20 @@ format_gate_comment() {
   }
 }
 
+gate_comment_ids_from_file() {
+  local flat="$1" order="${2:-oldest}" ownership="${3:-any}"
+  local filter='.[]
+    | select((.body // "") | startswith("<!-- merge-gate -->"))
+    | select($ownership != "actions" or .user.login == "github-actions[bot]")'
+  if [[ "$order" == "newest" ]]; then
+    jq -r --arg ownership "$ownership" "[$filter] | reverse | .[].id" "$flat"
+  else
+    jq -r --arg ownership "$ownership" "$filter | .id" "$flat"
+  fi
+}
+
 find_gate_comment_ids() {
-  local pr="$1" order="${2:-oldest}" prefix="${3:-gate-comment-list}"
+  local pr="$1" order="${2:-oldest}" prefix="${3:-gate-comment-list}" ownership="${4:-any}"
   local pages="$WORK/${prefix}-pages.json"
   local flat="$WORK/${prefix}-flat.json"
   local err="$WORK/${prefix}.err"
@@ -1032,11 +1044,7 @@ find_gate_comment_ids() {
     echo "::warning::merge-gate: could not list diagnostic comments ($(head -1 "$err" 2>/dev/null || true))" >&2
     return 1
   fi
-  if [[ "$order" == "newest" ]]; then
-    jq -r '[.[] | select((.body // "") | contains("<!-- merge-gate -->"))] | reverse | .[].id' "$flat"
-  else
-    jq -r '.[] | select((.body // "") | contains("<!-- merge-gate -->")) | .id' "$flat"
-  fi
+  gate_comment_ids_from_file "$flat" "$order" "$ownership"
 }
 
 gate_comment_action() {
@@ -1097,7 +1105,7 @@ clear_gate_comment() {
   local pr="$1" id listing
   # A green gate already has a first-class commit status in the Checks UI.
   # Remove our diagnostic sticky so successful PRs do not accumulate bot prose.
-  if ! listing="$(find_gate_comment_ids "$pr" oldest clear-comment)"; then
+  if ! listing="$(find_gate_comment_ids "$pr" oldest clear-comment actions)"; then
     return 0
   fi
   while IFS= read -r id; do
@@ -1532,6 +1540,20 @@ MARKDOWN
     printf '  PASS  9  green clears diagnostic; non-green upserts it\n'
   else
     printf '  FAIL  9  gate comment action routing\n'
+    failures=$((failures + 1))
+  fi
+
+  cat > "$WORK/gate-comments.json" <<'JSON'
+[
+  {"id": 1, "user": {"login": "github-actions[bot]"}, "body": "<!-- merge-gate -->\nowned"},
+  {"id": 2, "user": {"login": "sam"}, "body": "Quoting <!-- merge-gate --> for discussion"},
+  {"id": 3, "user": {"login": "sam"}, "body": "<!-- merge-gate -->\nhuman-authored"}
+]
+JSON
+  if [[ "$(gate_comment_ids_from_file "$WORK/gate-comments.json" oldest actions)" == "1" ]]; then
+    printf '  PASS  10 green cleanup selects only owned marker-first comments\n'
+  else
+    printf '  FAIL  10 green cleanup selected an unsafe comment\n'
     failures=$((failures + 1))
   fi
 

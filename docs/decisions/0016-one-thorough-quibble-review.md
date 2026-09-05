@@ -1,4 +1,4 @@
-# ADR-0015: One thorough Quibble review
+# ADR-0016: One thorough Quibble review
 
 - Status: Accepted
 - Date: 2026-09-05
