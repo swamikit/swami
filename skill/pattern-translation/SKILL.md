@@ -1,273 +1,261 @@
 ---
 name: pattern-translation
-description: How to translate one Origami pattern into idiomatic SwiftUI. Reads the .origami file's semantic IR, maps patches to SwiftUI constructs (native-first per ADR-0009), emits a compilable Swift file. Community-portable — doesn't know about swamikit/swami's specific PR flow. Load into any agent (or human dev) that has the parser (tool/src/parser/), the Swami helper library (app/Swami/), and an .origami file to translate.
+description: Translate one Origami pattern (.origami file) into one idiomatic SwiftUI file. Self-contained, community-portable playbook. Covers the judgment procedure for mapping Origami's dataflow patch graph onto SwiftUI's declarative state graph. Load whenever you have a .origami file and a target SwiftUI reference project with a Swami-shaped helper module.
 metadata:
   type: procedural
 ---
 
-# Pattern translation — Origami .origami to SwiftUI
+# Pattern translation: Origami .origami to SwiftUI
 
-Translate one Origami pattern into a compilable SwiftUI file. This skill is the
-**judgment half** of the translator: the parser produces facts (placed nodes
-today; edges, ports, and port defaults as the parser lands them); this skill
-decides how those facts land in SwiftUI.
+## This is a portable skill
 
-Community-portable by design. It does not mention `swamikit/swami`'s branches,
-PR templates, or review flow. Those live in `skill/workflow/`. Load `workflow`
-on top when you're opening a PR in this repo; load `pattern-translation` alone
-elsewhere.
+This file is the whole skill. It carries every fact it needs: the mapping model,
+the format facts, the helper conventions, the verification bar. Nothing links out
+to a private repo layout, an ADR file, or an internal branching model.
 
-## Inputs you must have on hand
+Shape:
 
-- **One `.origami` file** (the source pattern; bytes on disk).
-- **The parser** at `tool/src/parser/` (`origami_graph.py`). Today it enumerates
-  placed nodes only — see *Current parser limits* below for exactly what fields
-  it produces. Treat anything else as not-yet-decoded.
-- **The Swami helper library** at `app/Swami/` — read the public surface of the
-  `.swift` files before you emit anything that references a helper. Only what
-  is public and shipping is fair game.
-- **The mapping model table** — the `## The mapping model` section in
-  `AGENTS.md` / `CLAUDE.md` at the repo root. This is the current authoritative
-  patch-category → SwiftUI-construct reference. (The per-category DocC
-  collection pages under `app/Swami/Swami.docc/` are the eventual home for
-  per-patch decisions but do not exist yet; do not block on them.)
-- **The load-bearing ADRs**:
-  - **ADR-0009** — native-first; helpers only for recurring mismatches;
-    inline-preferred delivery.
-  - **ADR-0010** — bare, patch-matched helper names; one helper = one patch;
-    ports match exactly.
+- **Input**: one `.origami` file plus a SwiftUI reference project that ships a
+  Swami-shaped helper module (a Swift module whose public API is one function
+  per Origami patch that recurs enough to earn a helper).
+- **Output**: one Swift file per pattern that compiles against that module and
+  renders faithfully.
+- **Sibling skill**: `skill/docc-authoring/` in this same skills directory owns
+  the file-name, struct-name, and DocC-page shape of that output file. Load it
+  alongside this one when you emit the file.
 
-Missing the `.origami` file, the parser, `app/Swami/`, or the ADRs is a stop
-condition. Say what's missing and don't guess.
+Lift the file verbatim into any repo whose reference project matches that shape.
 
-### Current parser limits
+## The mapping model
 
-`origami_graph.parse(path)` today returns a document dict with `placed_nodes`,
-`placed_node_count`, and a `kinds` histogram. Each placed node has:
+Origami's patch graph and SwiftUI are both reactive dataflow. Target SwiftUI's
+state graph, not imperative functions. Every placed patch maps to one row of
+this table:
 
-- `table` — its FlatBuffers table offset (opaque; disambiguates duplicates).
-- `type` — the patch id string, e.g. `origami.Interaction`,
-  `origami.ClassicAnimation`, `layer.Oval`. This is what the mapping model
-  keys on.
-- `name` — the human name from the graph, when present. May be `None`.
+| Origami                                                | SwiftUI                                       |
+|--------------------------------------------------------|-----------------------------------------------|
+| Pure value patch (Add, Transition/interpolate, logic)  | computed property / expression                |
+| Interaction (Tap, Down/press, Double Tap, Long Press)  | gesture + `@State` / `@GestureState`          |
+| State / memory (Switch, Sample and Hold)               | `@State` + update logic                       |
+| Animation (Classic Animation, Pop / Spring)            | `withAnimation` / `.animation(.spring)`       |
+| Layer tree                                             | the `View` body                               |
 
-Not yet produced (tracked in the parser's `_todo` and in `NEEDS-VERIFY.md`):
+### ISAT beats
 
-- **edges** — connections between output and input ports.
-- **ports** — the per-node input/output port list.
-- **port default values** — the constants that live on unconnected inputs
-  (colors, sizes, durations, curves).
+Every Origami graph resolves through **Interaction → State → Animation →
+Transition**. That is the order in which the user's touch becomes pixels on
+screen, and it maps 1:1 onto SwiftUI's stack:
 
-Work from what's there. Where a step below asks for edges, ports, or exact
-constants, cross-check by hand against the `.origami` in Origami Studio or the
-patch's composite `.diamond/graph` in `Origami Studio.app/Contents/Resources/Patches/`,
-and flag the missing-decoder gap so the follow-up can retire the workaround.
+- **I**nteraction → `gesture`
+- **S**tate → `@State`
+- **A**nimation → `withAnimation`
+- **T**ransition → interpolation (an expression, see below)
 
-## Translation flow
+Walk the graph in ISAT order and the SwiftUI falls out.
 
-### 1. Parse `.origami` to semantic IR
-
-Run the parser (`tool/src/parser/origami_graph.py`) on the file. What you get
-out of it, per placed node (see *Current parser limits* above):
-
-- `type` — the patch id (e.g. `origami.Interaction`, `origami.ClassicAnimation`,
-  `layer.Oval`). This is the key for the mapping model.
-- `name` — the human name, when present.
-- `table` — the FlatBuffers table offset (opaque; use only to distinguish
-  duplicate nodes of the same `type`).
-
-Ports, edges, and port default values are not yet decoded. Where later steps
-need them (e.g. wiring interactions to state, reading exact durations or
-colors), you'll either read them from the `.origami` in Origami Studio by hand
-or fall back to documented defaults with a comment — do not fabricate.
-
-The parser is deterministic; run it once, work from its output. Do not eyeball
-FlatBuffers.
-
-### 2. Walk the IR; pick the SwiftUI mapping per patch
-
-For each patch node, decide in this order:
-
-1. **Check the mapping model table** in `AGENTS.md` / `CLAUDE.md` (`## The
-   mapping model`). If the node's category is covered there, use that as the
-   SwiftUI target.
-2. **Helper exists?** If `app/Swami/` HEAD ships a public helper with the same
-   name as the patch (check the module for the current list), use it. Port-list
-   matching is a per-helper check when the parser starts decoding ports; until
-   then, follow the helper's documented signature. Only call helpers that are
-   public in `app/Swami/` right now — do not invent one by name.
-3. **Native SwiftUI covers it?** Per ADR-0009, map to the most idiomatic native
-   construct. Math to operators, logic to `&&`/`||`, tap-with-position to
-   `SpatialTapGesture`, scroll to `ScrollView`, loops to `ForEach`, most `Layer.*`
-   to `Shape`/`View` primitives. **Do not wrap an API that already fits.** Reach
-   for `SpatialTapGesture` directly rather than a `spatialTap()` helper.
-4. **Neither native nor helper covers it?** Flag it. Emit a `// unsupported:
-   <type> — <reason>` comment at the call site; do not fabricate an API.
-   Record the miss so a follow-up can decide whether a helper is warranted (per
-   ADR-0009 point 3 — a helper earns its place when a patch recurs without a
-   faithful native equivalent).
-
-### 3. Layout — patches under the artboard become the `View` body
-
-The Origami artboard is the root view. Its child layer tree becomes the SwiftUI
-`body`. Groups become `VStack`/`HStack`/`ZStack` by their stacking axis;
-individual layers become the corresponding SwiftUI primitive from the mapping
-table (`Frame` → a shape or `.background`; `Oval` → `Circle`; `Text` → `Text`;
-etc.). Preserve semantic names (color name, type style name) per ADR-0007 — the
-IR carries them; the emitted code should too.
-
-### 4. State — Origami's Interaction and State patches to `@State` + gestures
-
-The **ISAT mapping** is the frame for this. Sam's framing: an Origami graph
-resolves through *Interaction → State → Animation → Transition*, and SwiftUI's
-declarative stack lands each stage as `gesture → @State → withAnimation →
-interpolation`.
-
-- **Interaction patches** (`origami.Interaction`, `origami.DoubleTap`,
-  `origami.LongPress`, `origami.Drag`, …) become SwiftUI gesture modifiers —
-  `.onTapGesture`, `.interaction()`, `.gesture(DragGesture(…))`, etc. One patch
-  per gesture modifier; do not fold `Double Tap` and `Long Press` into
-  `Interaction` (ADR-0010: they are separate patches with separate helpers).
-- **State patches** (`origami.Switch`, `origami.SampleAndHold`, memory-carrying
-  logic) become `@State` (or `@GestureState` when the value only lives for the
-  gesture's duration). One `@State` property per stored value; name it after
-  the Origami node.
-
-### 5. Animation — Classic and Spring become `withAnimation` / `.animation`
-
-- `origami.ClassicAnimation` → `.animation(.easeInOut(duration: <t>), value: <v>)`
-  or `withAnimation(.easeInOut(…)) { … }` when the transition is state-driven.
-  Preserve the curve name from the IR (quadratic → `.easeInOut`, linear →
-  `.linear`, etc.).
-- `origami.PopAnimation` / spring patches → `.spring(response:, dampingFraction:)`
-  or `.interpolatingSpring(…)`. Faithful continuous-time springs are a flagged
-  hard case per CLAUDE.md — if the parser hasn't decoded exact constants, emit
-  the closest system spring and comment the mismatch.
-
-### 6. Transition — `origami.Transition` is interpolation, not `.transition()`
+### The Transition trap
 
 Origami's `Transition` patch **interpolates a value between two endpoints as a
-progress fraction moves 0 to 1**. It is a value expression, not the SwiftUI
-`.transition()` view modifier — never emit it as `.transition(...)`. This is
-the most common misreading; do not repeat it.
+progress fraction moves 0 to 1**. It is a value expression.
 
-There is no `interpolated(to:by:)` method on Swift numerics, no stdlib `lerp`,
-and no `app/Swami/` helper for this today. Emit the interpolation as a plain
-arithmetic expression using the endpoints and progress the graph gives you:
+It is **not** SwiftUI's `.transition(...)` view modifier. `.transition(...)` is
+an animation category (opacity, slide, scale on insertion/removal), not a
+data-flow pattern. Getting this wrong wastes hours. If you catch yourself
+reaching for `.transition(...)`, stop.
+
+Emit the linear case as plain arithmetic on the endpoints and progress the
+graph gives you:
 
 ```swift
-// t in 0…1; A and B are the endpoints from the Transition patch's input ports.
+// t in 0...1; A and B are the endpoints from the Transition patch's ports.
 let value = A + (B - A) * t
 ```
 
-If the endpoints are compound values (points, sizes, colors), interpolate
-each component with the same formula. The linear form above is authoritative
-for the linear case only.
+For compound endpoints (points, sizes, colors), interpolate each component
+with the same formula.
 
-**Non-linear curves are unsupported at HEAD.** There is no easing helper
-public in `app/Swami/` today and no stdlib primitive that emits a faithful
-Origami curve inline (a plausible-looking `ease(t)` call is fake — the earlier
-`interpolated(to:by:)` / `lerp(...)` guidance was the same defect one layer
-up). Per AGENTS.md's "Flag, don't fake" rule (which lists continuous-time
-springs, custom JS patches, and absolute layout — non-linear Transition
-curves belong on the same list), the translator MUST flag any Transition
-whose curve is not linear and stop generating code for it: emit an
-`// unsupported: origami.Transition non-linear curve — no easing helper in
-app/Swami/ (see #53)` comment at the site and leave the value unwired. Do
-not invent a curve function; do not fall back to a stdlib approximation.
+### Flag, don't fake
 
-The resolution path is a separate `app/Swami/Transition.swift` PR (tracked
-in #53) that ships a curve-aware helper with ports matching Origami's
-Transition patch (ADR-0010). Once that helper is public, this section will
-authorize its use for non-linear curves; until then, flag-and-stop is the
-only correct output.
+When a patch does not have a faithful native or helper equivalent, **mark the
+site and stop**. Do not invent a helper name; do not paste a plausible-looking
+call that will compile but lie. The list of known-unsupported cases:
 
-### 7. Emit compilable Swift with a DocC sample-code header
+- **Continuous-time springs.** SwiftUI's springs are frame-timed;
+  Origami's are continuous. Emit the closest system spring only when the
+  reference project has no faithful helper, and comment the mismatch.
+- **Custom JS patches.** User-authored patches with arbitrary JS bodies.
+  No mechanical translation; flag as unsupported.
+- **Absolute layout.** Pixel-anchored positioning that fights SwiftUI's
+  layout system. Flag; do not force with `.offset(x:y:)` gymnastics.
+- **Non-linear Transition curves.** No linear-only stdlib primitive emits
+  a faithful Origami easing curve inline. A fake `ease(t)` call is worse
+  than a `// unsupported` comment. Flag until the reference project ships
+  a curve-aware helper.
 
-One file per pattern, `public struct <PatternID>: View`. Filename, struct name,
-and DocC page name all match (per `skill/docc-authoring`). Include the
-sample-code doc comment so the file renders in DocC as a sample-code page:
+Emit `// unsupported: <patch-type>, <one-line reason>` at the site. Leave
+the value unwired.
 
-```swift
-/// # <Category> — <Name>
-///
-/// @Metadata {
-///     @PageKind(sampleCode)
-///     @PageImage(purpose: card, source: "<PatternID>")
-/// }
-///
-/// <One or two sentences: what the pattern does, which patches drive it.>
-public struct <PatternID>: View {
-    // @State properties from step 4
-    // body from steps 3–6
-}
-```
+## Format facts: the .origami file
 
-Filename and struct name follow the Origami sidebar category + pattern name:
-`Interaction_Touch`, `Layer_Oval`, `Interaction_Drag`. See
-`skill/docc-authoring/SKILL.md` for the full page shape and the collection
-mapping-table convention.
+A community user parsing `.origami` by hand needs these:
 
-## Structural self-verification (before opening a PR)
+- `.origami` is a **zip**. The graph document inside is
+  `<name>.diamond/graph`, a **FlatBuffers** binary with file_identifier
+  `ORGM` and the root table at offset **`0x30`**. No `.fbs` schema ships;
+  the walk is schema-less.
+- The file embeds Origami's whole component **library** alongside the placed
+  graph. The placed (in-use) graph is a small subset in the file tail.
+  **Separating placed patches from library definitions is THE core parsing
+  challenge.** Root field 14 is the library (EdgeSwipe, Velocity,
+  StickyBoundaries, ...), NOT the document. A parser that treats field 14 as
+  the document generates the wrong app.
+- The complete patch catalog lives at
+  `Origami Studio.app/Contents/Resources/Patches/*.origami-system/`. That
+  folder holds 66 composite / system patches as readable `.diamond/graph`
+  FlatBuffers.
+  On a macOS host with Origami Studio installed, that path is directly
+  readable. Use it to cross-check patch semantics against the compiled
+  source rather than the web docs.
 
-Compile-gate is table stakes and lives elsewhere (the harness). This skill
-covers the *structural* checks you can run on the emitted file itself.
+Ports and port default values inside the `.origami` file are inside the
+schema-less union payload. Reading them robustly is a parser problem; if your
+parser has not decoded them, either read the values from Origami Studio's
+Inspector by hand or use the patch's documented defaults, and leave a
+`// TODO: parser-decoded default when available` comment. Do not guess.
 
-- **All placed nodes accounted for.** Every node in `placed_nodes` appears in
-  the emitted file — as a helper call, a native construct, or an
-  `// unsupported: <type>` comment. Silent drops mask parser gaps.
-- **Values are sensible.** Constants used in the emitted code match the
-  Origami Inspector's values for that node (colors, sizes, durations, curves)
-  when you can cross-check them. Because the parser has not yet decoded port
-  defaults (see *Current parser limits*), read the values from Origami Studio
-  by hand or use the patch's documented default, and add a `// TODO:
-  parser-decoded default when available` comment — do not guess.
-- **Helper calls match documented signatures.** Every helper you invoke exists
-  in `app/Swami/` HEAD and is called with its documented parameters (ADR-0010:
-  one helper = one patch; ports match exactly). Full port-list-vs-patch
-  checking becomes automatable when the parser's port-extraction pass lands;
-  until then, this is a manual cross-check against the helper's Swift
-  signature.
+## The reference project
 
-## Output shape
+This skill assumes the target SwiftUI project has three surfaces. Rename to fit
+local conventions; the shape is what matters.
 
-- **One file**: `<PatternID>.swift`.
-- **One public struct**: `public struct <PatternID>: View`.
-- **DocC sample-code header** per step 7.
-- **Follows `skill/docc-authoring`** for the doc-comment shape and the
-  collection-page mapping-table convention.
+- **A Swami-shaped helper module.** A Swift module whose public API is one
+  function per recurring Origami patch. Read the module's public surface
+  before you emit anything that references a helper; only public and shipping
+  helpers are fair game.
+- **A `Patterns/` folder.** One Swift file per translated Origami pattern.
+- **A host app target.** Renders each pattern for the visual verify gate
+  (a simulator screenshot or a live preview).
+
+### Helper conventions
+
+Two rules govern the helper module. Both belong in the module's own docs;
+restated here so this skill stands alone.
+
+- **Native-first.** Prefer stdlib and native SwiftUI over adding a helper.
+  Reach for `SpatialTapGesture` directly instead of wrapping it in
+  `spatialTap()`. A helper earns its place only when (a) the same patch
+  pattern recurs three or more times across the corpus, (b) no clean native
+  construct fits, and (c) the helper stays roughly under twenty lines and
+  preserves the patch's port semantics 1:1.
+- **One patch = one helper.** Helpers are named after the patch
+  (`drag(...)`, `interaction(...)`, `doubleTap(...)`). No bundled convenience
+  wrappers that fold Double Tap + Long Press + Tap into one call. The named
+  ports on the Origami patch become the named parameters on the Swift
+  helper, in the same order.
+
+## Judgment procedure
+
+This is the flow. Facts above; procedure here.
+
+### a. Parse
+
+Run the project's `.origami` parser. Get the placed graph: nodes (each with a
+patch type id and a human name), connections between output and input ports,
+and the layer tree. Fall back to Origami Studio's Inspector for anything the
+parser has not yet decoded.
+
+### b. Categorize every node
+
+For each placed node, decide its row in the mapping model table above.
+
+1. Category covered by the table? Use the corresponding SwiftUI construct.
+2. A helper with the exact patch name exists in the reference project's helper
+   module? Call it with the ports the parser gave you.
+3. Native SwiftUI fits directly? Use it (`ScrollView`, `SpatialTapGesture`,
+   `Circle`, `ForEach`, arithmetic operators for math). Do not wrap.
+4. None of the above? Apply **Flag, don't fake**.
+
+### c. Layer tree → View body
+
+Walk the artboard's child layer tree bottom-up. Groups become
+`VStack` / `HStack` / `ZStack` by stacking axis. Individual layers map to
+their SwiftUI primitive: `Frame` becomes a shape or `.background`, `Oval`
+becomes `Circle`, `Text` stays `Text`. Preserve semantic names from the IR
+(color tokens, type-style names) in the emitted code.
+
+### d. Interaction / State / Animation → gestures + @State + withAnimation
+
+Walk the ISAT half of the graph:
+
+- **Interaction patches** (`origami.Interaction`, `origami.DoubleTap`,
+  `origami.LongPress`, `origami.Drag`, ...) become gesture modifiers.
+  One patch, one modifier. Do not fold `Double Tap` and `Long Press` into
+  `Interaction`.
+- **State patches** (`origami.Switch`, `origami.SampleAndHold`,
+  memory-carrying logic) become `@State`. Use `@GestureState` when the value
+  only lives for the gesture's duration. One `@State` property per stored
+  value; name it after the Origami node.
+- **Animation patches** (`origami.ClassicAnimation`, `origami.PopAnimation`,
+  spring patches) become `.animation(...)` or `withAnimation { ... }`.
+  Preserve the curve name (quadratic → `.easeInOut`, linear → `.linear`).
+  For springs where the parser has not decoded exact constants, emit the
+  closest system spring and comment the mismatch.
+- **Transition patches** become interpolation expressions per the arithmetic
+  above. Never `.transition(...)`.
+
+### e. Emit one Swift file
+
+One Swift file per pattern, one `public struct <PatternID>: View`. File name,
+struct name, and DocC page name follow **`skill/docc-authoring/`**. That
+sibling skill owns the header, doc-comment, and file-layout conventions.
+This skill stops at the code content; that one starts at the wrapper.
+
+### f. Render and compare
+
+The gate is visual, not compile.
+
+- Render the pattern in a simulator or SwiftUI preview at the same viewport
+  the Origami artboard uses.
+- Compare side-by-side against Origami's live render (or its
+  `View → Take Screenshot` export).
+- **Pixel evidence**: SSIM ≥ 0.95 on the same viewport dimensions is
+  evidence. A human eyeball on the render is the minimum.
+- **Never claim a translation is done from a clean compile alone.** A file
+  that compiles and renders wrong is not a translation.
+
+Iterate steps b through f until the render matches. Every unmatched
+difference is either a bug in the emitted code, a parser gap, or a
+legitimate flagged case. Decide which, then act.
+
+## Structural self-checks before you ship
+
+Run these on the emitted file before handing it off.
+
+- **Every placed node is accounted for.** Each node in the parser's
+  placed-node list appears in the file as a helper call, a native construct,
+  or an `// unsupported:` comment. Silent drops mask parser gaps.
+- **Constants match the Origami Inspector.** Colors, sizes, durations,
+  curves in the emitted code match what the Inspector shows for the source
+  patch. Where the parser has not decoded a port default, the value is a
+  documented patch default and carries a
+  `// TODO: parser-decoded default when available` comment.
+- **Every helper call matches a public signature.** Every helper you invoke
+  exists in the reference project's helper module today and is called with
+  its documented named parameters. No invented helper names, no invented
+  parameter names.
 
 ## What NOT to do
 
-- **Do not wrap a native SwiftUI API in a helper.** If `SpatialTapGesture` or
-  `ScrollView` fits, use it directly. Wrapping is prohibited by ADR-0009; the
-  win is *knowing* to reach for the native construct, not renaming it.
-- **Do not guess at helper APIs.** Only call helpers that are public in
-  `app/Swami/` right now. If you find yourself needing a helper that isn't
-  there, flag the pattern as blocked on that helper and stop — do not invent
-  a signature.
-- **Do not emit `.swift` that references helpers that don't exist yet.** A
-  file that won't compile against `app/Swami/` HEAD is not a translation; it's
-  a proposal for a helper. Ship the helper first (its own PR), then the
-  pattern.
-- **Do not translate `origami.Transition` as SwiftUI `.transition()`.** It is
-  interpolation. Step 6.
-- **Do not bundle multiple patches into one helper call.** One patch, one
-  helper. ADR-0010.
-- **Do not silently drop unsupported patches.** Emit an `// unsupported`
-  comment at the call site so the miss is visible to the Reviewer and to the
-  next translator.
-
-## Where to read next
-
-- **`AGENTS.md` / `CLAUDE.md`, `## The mapping model`** — the current
-  patch-category → SwiftUI-construct table. Source of truth for step 2 until
-  the per-category DocC collection pages land.
-- **`skill/docc-authoring/SKILL.md`** — the DocC page shape the emitted file's
-  header must match, and the collection-page mapping-table conventions.
-- **`docs/decisions/0009-native-first-helpers-for-recurring-mismatches.md`** —
-  the native-first rule that drives step 2.
-- **`docs/decisions/0010-helper-naming-and-faithful-patch-mapping.md`** —
-  helper naming and the one-patch-one-helper rule.
-- **`NEEDS-VERIFY.md`** — the parser gaps that constrain what "faithful"
-  currently means (placed-vs-library isolation, port-default decoding).
+- Do not wrap a native SwiftUI API in a helper. If `SpatialTapGesture` or
+  `ScrollView` fits, call it directly.
+- Do not invent helper signatures. Only call helpers that ship in the
+  reference project's module right now. A file that references a
+  non-existent helper is a proposal for that helper, not a translation.
+- Do not translate `origami.Transition` as SwiftUI `.transition(...)`. It
+  is interpolation. See the mapping model.
+- Do not bundle multiple patches into one helper call. One patch, one
+  helper.
+- Do not silently drop unsupported patches. Emit the `// unsupported`
+  comment at the call site so the miss is visible to the next reader.
+- Do not claim a translation is done because it compiles. Compile is
+  necessary, never sufficient. The gate is visual.
