@@ -8,6 +8,7 @@ Run:  python3 -m unittest scripts/test_model_client.py -v
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import types
@@ -420,6 +421,28 @@ class ChatDispatchTests(unittest.TestCase):
 
 
 class FallbackTests(unittest.TestCase):
+    def test_invalid_primary_response_triggers_fallback_validation(self) -> None:
+        calls: list[str] = []
+
+        def _chat(**kwargs):
+            calls.append(kwargs["provider"])
+            if kwargs["provider"] == "gemini":
+                return '{"broken":'
+            return '{"ok": true}'
+
+        with mock.patch.object(mc, "chat", side_effect=_chat):
+            value, used = mc.chat_with_fallback(
+                primary=("gemini", "flash"),
+                fallback=("anthropic", "opus"),
+                system="s",
+                user="u",
+                validate=json.loads,
+            )
+
+        self.assertEqual(value, {"ok": True})
+        self.assertEqual(used, "anthropic")
+        self.assertEqual(calls, ["gemini", "anthropic"])
+
     def test_primary_rate_limited_triggers_fallback(self) -> None:
         """Primary raises RateLimited; secondary answers; caller sees which."""
         _wipe_fake_sdks()

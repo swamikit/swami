@@ -26,7 +26,7 @@ mod = _load_module()
 
 class ModelClientContractTests(unittest.TestCase):
     def test_call_model_unpacks_text_provider_tuple(self) -> None:
-        reply = '{"summary":"ok","findings":[],"approve":true}'
+        reply = {"summary": "ok", "findings": [], "approve": True}
         with mock.patch.object(
             mod,
             "chat_with_fallback",
@@ -43,6 +43,8 @@ class ModelClientContractTests(unittest.TestCase):
             system="system",
             user="## PR diff\n\n```diff\ndiff\n```",
             max_tokens=mod.MAX_TOKENS,
+            schema=mod.REVIEW_SCHEMA,
+            validate=mod._extract_json,
         )
 
 

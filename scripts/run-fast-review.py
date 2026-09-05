@@ -103,6 +103,29 @@ SUPPORTED_BOT_IDENTITIES = ("quibble-review[bot]", "github-actions[bot]")
 PRIMARY = ("gemini", "gemini-2.0-flash-exp")
 FALLBACK = ("anthropic", "claude-opus-5")
 MAX_TOKENS = 8000
+REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "severity": {"type": "string", "enum": ["P1", "P2", "P3"]},
+                    "file": {"type": "string", "nullable": True},
+                    "line": {"type": "integer", "nullable": True},
+                    "title": {"type": "string"},
+                    "reasoning": {"type": "string"},
+                    "suggestion": {"type": "string"},
+                },
+                "required": ["severity", "file", "line", "title", "reasoning", "suggestion"],
+            },
+        },
+        "approve": {"type": "boolean"},
+    },
+    "required": ["summary", "findings", "approve"],
+}
 # Cap the diff we send to the fast pre-pass. Deliberately smaller than the
 # deep-review 200KB cap — this pass is meant to be cheap and quick, so an
 # oversize diff gets truncated harder here and the deeper reviewer picks up
@@ -203,12 +226,14 @@ def call_model(system: str, diff: str, truncated_bytes: int = 0) -> tuple[dict, 
     # Unpack it directly; treating the tuple like an object makes every
     # successful response look empty and prevents this worker from ever
     # reaching the Reviews API (issue #89).
-    text, provider = chat_with_fallback(
+    review, provider = chat_with_fallback(
         primary=PRIMARY,
         fallback=FALLBACK,
         system=system,
         user=user_content,
         max_tokens=MAX_TOKENS,
+        schema=REVIEW_SCHEMA,
+        validate=_extract_json,
     )
     if provider != PRIMARY[0]:
         # Surface fallback events in the workflow log so we can grep for them
@@ -217,9 +242,7 @@ def call_model(system: str, diff: str, truncated_bytes: int = 0) -> tuple[dict, 
             f"::warning::gemini rate-limited or errored; served by {provider}",
             file=sys.stderr,
         )
-    if not text:
-        raise RuntimeError("empty text in model response")
-    return _extract_json(text), provider
+    return review, provider
 
 
 def _extract_json(text: str) -> dict:
