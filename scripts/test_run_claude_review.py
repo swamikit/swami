@@ -127,6 +127,7 @@ class FormatReviewShapeTests(unittest.TestCase):
                 {"severity": "P2", "file": "b.py", "line": 4, "title": "meh"},
             ],
         }
+        # Legacy RIGHT-only anchor shape — still accepted for back-compat.
         anchors = {"a.py": {3}, "b.py": {4}}
         body = mod.format_review(r, head_sha="abc123", anchors=anchors)["body"]
         # Marker must be first line so merge-gate greps still match.
@@ -540,9 +541,161 @@ class GetDiffAnchorsIntegrationTests(unittest.TestCase):
         with mock.patch("subprocess.run", side_effect=_fake_run):
             anchors = mod.get_diff_anchors("o/r", "5", env={})
 
-        self.assertEqual(anchors["a.py"], {1, 2, 3})
-        self.assertEqual(anchors["b.md"], {10, 11})
+        # New sided shape: {filename: {"RIGHT": {lines}, "LEFT": {lines}}}
+        self.assertEqual(anchors["a.py"]["RIGHT"], {1, 2, 3})
+        self.assertEqual(anchors["b.md"]["RIGHT"], {10, 11})
         self.assertNotIn("vendored.bin", anchors)
+
+
+class ParseHunkSidedLinesTests(unittest.TestCase):
+    """`_parse_hunk_sided_lines` must return both sides correctly.
+
+    Codex P1 round 2: the Reviews API rejects a `side: RIGHT` comment on
+    a deleted line. This function is the truth we validate against — its
+    output feeds `partition_findings` which picks the side per finding.
+    """
+
+    def test_context_lines_appear_on_both_sides(self) -> None:
+        # Pure context — same line on LEFT and RIGHT.
+        patch = "@@ -1,2 +1,2 @@\n one\n two\n"
+        sided = mod._parse_hunk_sided_lines(patch)
+        self.assertEqual(sided["RIGHT"], {1, 2})
+        self.assertEqual(sided["LEFT"], {1, 2})
+
+    def test_added_lines_only_on_right(self) -> None:
+        patch = "@@ -1,0 +1,2 @@\n+a\n+b\n"
+        sided = mod._parse_hunk_sided_lines(patch)
+        self.assertEqual(sided["RIGHT"], {1, 2})
+        self.assertEqual(sided["LEFT"], set())
+
+    def test_removed_lines_only_on_left(self) -> None:
+        # Two deleted lines starting at LEFT line 5; RIGHT stays empty
+        # because nothing lands on the post-change side.
+        patch = "@@ -5,2 +5,0 @@\n-old1\n-old2\n"
+        sided = mod._parse_hunk_sided_lines(patch)
+        self.assertEqual(sided["RIGHT"], set())
+        self.assertEqual(sided["LEFT"], {5, 6})
+
+    def test_mixed_hunk_partitions_correctly(self) -> None:
+        # A hunk with context + one deletion + one addition.
+        patch = (
+            "@@ -10,3 +12,3 @@\n"
+            " ctx\n"        # LEFT 10, RIGHT 12
+            "-removed\n"    # LEFT 11
+            "+added\n"      # RIGHT 13
+            " tail\n"       # LEFT 12, RIGHT 14
+        )
+        sided = mod._parse_hunk_sided_lines(patch)
+        self.assertEqual(sided["RIGHT"], {12, 13, 14})
+        self.assertEqual(sided["LEFT"], {10, 11, 12})
+
+
+class PartitionSidedAnchorsTests(unittest.TestCase):
+    """`partition_findings` must pick the correct side per finding.
+
+    Sending a deleted-line finding as `side: RIGHT` 422s the whole
+    atomic POST — this is Codex P1 round 2. Assert per-side resolution.
+    """
+
+    def test_removed_line_routes_to_left_side(self) -> None:
+        findings = [
+            {"severity": "P2", "file": "a.py", "line": 11, "title": "deleted"},
+        ]
+        # LEFT-only line 11 (a deletion), RIGHT has different lines.
+        anchors = {"a.py": {"RIGHT": {12, 13}, "LEFT": {10, 11}}}
+        inline, unanchored = mod.partition_findings(findings, anchors)
+        self.assertEqual(len(inline), 1)
+        self.assertEqual(inline[0]["_side"], "LEFT")
+        self.assertEqual(unanchored, [])
+
+    def test_added_line_routes_to_right_side(self) -> None:
+        findings = [
+            {"severity": "P1", "file": "a.py", "line": 13, "title": "new"},
+        ]
+        anchors = {"a.py": {"RIGHT": {12, 13}, "LEFT": {10, 11}}}
+        inline, unanchored = mod.partition_findings(findings, anchors)
+        self.assertEqual(len(inline), 1)
+        self.assertEqual(inline[0]["_side"], "RIGHT")
+
+    def test_context_line_prefers_right(self) -> None:
+        # Context lines appear on both sides — RIGHT is the preferred
+        # anchor because reviewers overwhelmingly comment on the new file.
+        findings = [
+            {"severity": "P2", "file": "a.py", "line": 12, "title": "context"},
+        ]
+        anchors = {"a.py": {"RIGHT": {12, 13}, "LEFT": {10, 12}}}
+        inline, unanchored = mod.partition_findings(findings, anchors)
+        self.assertEqual(inline[0]["_side"], "RIGHT")
+
+    def test_legacy_set_anchors_treated_as_right(self) -> None:
+        # Pre-P1-round-2 callers still pass `dict[str, set[int]]`. Those
+        # sets are RIGHT-only by construction; partition treats them so.
+        findings = [
+            {"severity": "P2", "file": "a.py", "line": 5, "title": "x"},
+        ]
+        anchors = {"a.py": {5, 6}}
+        inline, _ = mod.partition_findings(findings, anchors)
+        self.assertEqual(inline[0]["_side"], "RIGHT")
+
+    def test_comment_uses_left_side_when_partition_says_left(self) -> None:
+        # End-to-end: format_review_comments must emit `side: LEFT` for a
+        # LEFT-anchored finding. This is the whole point of the fix.
+        r = {
+            "approve": False,
+            "findings": [
+                {"severity": "P1", "file": "a.py", "line": 11, "title": "deleted"},
+            ],
+        }
+        anchors = {"a.py": {"RIGHT": {12}, "LEFT": {10, 11}}}
+        p = mod.format_review(r, head_sha="abc123", anchors=anchors)
+        self.assertEqual(len(p["comments"]), 1)
+        self.assertEqual(p["comments"][0]["side"], "LEFT")
+        self.assertEqual(p["comments"][0]["line"], 11)
+
+
+class SyntheticPathAssertionTests(unittest.TestCase):
+    """`_assert_no_synthetic_paths_in_comments` guards the truncation-P1 route."""
+
+    def test_raises_on_synthetic_dot_github_reviewer_path(self) -> None:
+        # This is the exact path that 422'd every truncated review before
+        # the round-1 fix routed the synthetic P1 to `file=None`.
+        comments = [
+            {"path": ".github/reviewer", "line": 1, "side": "RIGHT", "body": "x"},
+        ]
+        with self.assertRaises(RuntimeError):
+            mod._assert_no_synthetic_paths_in_comments(comments)
+
+    def test_ok_when_all_paths_are_real(self) -> None:
+        comments = [
+            {"path": "scripts/x.py", "line": 5, "side": "RIGHT", "body": "y"},
+        ]
+        mod._assert_no_synthetic_paths_in_comments(comments)  # no raise
+
+
+class HeadRecheckTests(unittest.TestCase):
+    """`fetch_current_head_sha` shells out to `gh pr view` and returns the SHA."""
+
+    def test_returns_stripped_sha_from_gh_output(self) -> None:
+        def _fake_run(cmd, **kw):
+            r = mock.MagicMock()
+            r.stdout = "deadbeef1234\n"
+            r.stderr = ""
+            r.returncode = 0
+            return r
+
+        with mock.patch("subprocess.run", side_effect=_fake_run):
+            sha = mod.fetch_current_head_sha("o/r", "5", env={})
+        self.assertEqual(sha, "deadbeef1234")
+
+    def test_returns_empty_on_error_never_raises(self) -> None:
+        # Fetch failure must not crash the reviewer — the caller treats
+        # empty as "cannot verify, proceed with POST".
+        def _fake_run(cmd, **kw):
+            raise RuntimeError("gh exploded")
+
+        with mock.patch("subprocess.run", side_effect=_fake_run):
+            sha = mod.fetch_current_head_sha("o/r", "5", env={})
+        self.assertEqual(sha, "")
 
 
 if __name__ == "__main__":

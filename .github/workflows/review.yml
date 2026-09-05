@@ -23,6 +23,24 @@ permissions:
   pull-requests: write
   contents: read
 
+# Codex P1 round 2: serialize review.yml runs per PR. Two runs racing
+# (rapid pushes, manual retrigger while the previous run is still in
+# flight) let the older run finish LAST, dismiss the newer bot review,
+# and submit a verdict for the OLDER diff — approving code that no
+# longer exists at HEAD. `cancel-in-progress: true` kills the older run
+# the moment a newer trigger fires; the newer run then owns the PR's
+# review. Belt-and-suspenders: run-claude-review.py and run-fast-review.py
+# also re-fetch HEAD immediately before POST and abort if it has moved,
+# so a race that beats the concurrency gate still doesn't ship a stale
+# verdict.
+#
+# `inputs.pr_number` covers the workflow_dispatch shape (Builder GA's
+# ready-path handoff — pull_request / issue_comment payloads are empty
+# on that trigger).
+concurrency:
+  group: 'review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}'
+  cancel-in-progress: true
+
 jobs:
   review:
     # Codex P2: restrict issue_comment re-triggers to PR comments (issues also fire issue_comment).

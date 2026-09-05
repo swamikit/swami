@@ -281,15 +281,40 @@ def _parse_hunk_right_lines(patch: str) -> set[int]:
     context line or an added line — those are exactly the positions the
     Reviews API accepts as `side: RIGHT` anchors.
     """
-    out: set[int] = set()
+    return _parse_hunk_sided_lines(patch)["RIGHT"]
+
+
+def _parse_hunk_sided_lines(patch: str) -> dict[str, set[int]]:
+    """Return `{"RIGHT": {lines}, "LEFT": {lines}}` for a unified patch.
+
+    Codex P1 round 2: the Reviews API distinguishes `side: RIGHT` (a line
+    on the post-change file: additions or context) from `side: LEFT` (a
+    line on the pre-change file: deletions or context). A comment anchored
+    to a deleted line MUST post as `side: LEFT`; a comment on an added
+    line MUST post as `side: RIGHT`. Sending a deleted-line finding as
+    `side: RIGHT` (or vice-versa) 422s the whole atomic review.
+
+    Walk each hunk from its `@@ -a,b +c,d @@` header:
+      - Context (` `): exists on BOTH sides — advance both counters.
+      - Added (`+`): RIGHT only — advance RIGHT.
+      - Removed (`-`): LEFT only — advance LEFT.
+    `\\ No newline at end of file` meta is ignored on both sides.
+    """
+    right_out: set[int] = set()
+    left_out: set[int] = set()
     right = 0
+    left = 0
     in_hunk = False
     for line in patch.splitlines():
         if line.startswith("@@"):
-            # Parse the `+c[,d]` field from `@@ -a,b +c,d @@ context`.
+            # Parse both `-a[,b]` (LEFT start) and `+c[,d]` (RIGHT start)
+            # from `@@ -a,b +c,d @@ context`.
             try:
-                plus = line.split("+", 1)[1]
-                right = int(plus.split(",", 1)[0].split(" ", 1)[0])
+                # `-a,b` sits between the first `-` and the following space.
+                minus_field = line.split("-", 1)[1].split(" ", 1)[0]
+                left = int(minus_field.split(",", 1)[0])
+                plus_field = line.split("+", 1)[1].split(" ", 1)[0]
+                right = int(plus_field.split(",", 1)[0])
             except (IndexError, ValueError):
                 in_hunk = False
                 continue
@@ -298,35 +323,46 @@ def _parse_hunk_right_lines(patch: str) -> set[int]:
         if not in_hunk:
             continue
         if line.startswith("+") and not line.startswith("+++"):
-            out.add(right)
+            right_out.add(right)
             right += 1
         elif line.startswith("-") and not line.startswith("---"):
-            # Removed line — not on RIGHT.
-            continue
+            # Removed line — LEFT only.
+            left_out.add(left)
+            left += 1
         elif line.startswith("\\"):
             # "\ No newline at end of file" meta — not a real line.
             continue
         else:
             # Context line (leading space, or a blank line inside a hunk).
-            out.add(right)
+            right_out.add(right)
+            left_out.add(left)
             right += 1
-    return out
+            left += 1
+    return {"RIGHT": right_out, "LEFT": left_out}
 
 
 def get_diff_anchors(
     repo: str, pr: str, env: dict[str, str] | None = None
-) -> dict[str, set[int]]:
-    """Return `{filename: {anchorable RIGHT line, ...}}` for this PR's diff.
+) -> dict[str, dict[str, set[int]]]:
+    """Return `{filename: {"RIGHT": {lines}, "LEFT": {lines}}}` per PR file.
 
     The formal Reviews API is atomic on POST: one inline comment whose
-    `path:line` is outside the diff 422s the WHOLE review, dropping the
-    verdict (including any REQUEST_CHANGES the merge-gate depends on). We
-    fetch the PR files listing, parse each `patch` field, and hand the
-    result to `partition_findings` so we can drop bad anchors before POST
-    instead of losing the review to a single hallucinated file:line.
+    `path:line` is outside the diff — OR whose `side` doesn't match the
+    side the line actually lives on — 422s the WHOLE review, dropping the
+    verdict (including any REQUEST_CHANGES the merge-gate depends on).
+
+    Codex P1 round 2: an earlier fix only tracked RIGHT-side lines, so a
+    finding about a deleted line got posted as `side: RIGHT` and 422'd the
+    review. Return both sides so `partition_findings` can pick the correct
+    `side` per finding (RIGHT for additions, LEFT for deletions, either
+    for context lines — RIGHT preferred).
 
     Files without a `patch` (renames-only, binary, oversize) contribute no
-    anchors — findings against them will always route to the body.
+    anchors — findings against them always route to the body.
+
+    Legacy compatibility: some callers (tests, older callers) still pass
+    `dict[str, set[int]]` anchors. `partition_findings` accepts both
+    shapes so we don't break the world.
     """
     out = sh(
         [
@@ -361,31 +397,65 @@ def get_diff_anchors(
                     files.append(p)
             except json.JSONDecodeError:
                 continue
-    anchors: dict[str, set[int]] = {}
+    anchors: dict[str, dict[str, set[int]]] = {}
     for f in files:
         path = f.get("filename")
         patch = f.get("patch")
         if not path or not patch:
             continue
-        anchors.setdefault(path, set()).update(_parse_hunk_right_lines(patch))
+        sided = _parse_hunk_sided_lines(patch)
+        bucket = anchors.setdefault(path, {"RIGHT": set(), "LEFT": set()})
+        bucket["RIGHT"].update(sided["RIGHT"])
+        bucket["LEFT"].update(sided["LEFT"])
     return anchors
 
 
+def _resolve_side(
+    entry: object, line_int: int
+) -> str | None:
+    """Return "RIGHT", "LEFT", or None for a `(anchor entry, line)` pair.
+
+    `entry` is one file's anchor bucket. Two shapes are accepted:
+      - New shape: `{"RIGHT": {lines}, "LEFT": {lines}}` (both sides tracked).
+      - Legacy shape: `{lines}` — treated as RIGHT-only (pre-P1-round-2).
+
+    Preference is RIGHT: additions and context lines both live on RIGHT,
+    and reviewers overwhelmingly comment on those. LEFT is picked only
+    when the line exists on LEFT but not RIGHT (i.e. a removed line).
+    """
+    if isinstance(entry, dict):
+        right = entry.get("RIGHT") or set()
+        left = entry.get("LEFT") or set()
+        if line_int in right:
+            return "RIGHT"
+        if line_int in left:
+            return "LEFT"
+        return None
+    if isinstance(entry, set):
+        # Legacy: caller only knows RIGHT-side lines.
+        return "RIGHT" if line_int in entry else None
+    return None
+
+
 def partition_findings(
-    findings: list[dict], anchors: dict[str, set[int]]
+    findings: list[dict],
+    anchors: dict[str, dict[str, set[int]]] | dict[str, set[int]],
 ) -> tuple[list[dict], list[dict]]:
     """Split findings into (anchorable, un-anchorable) using the diff anchors.
 
     A finding is anchorable when it has a `file` + integer `line` AND the
-    `(file, line)` pair appears as a valid RIGHT-side anchor in the PR
-    diff. Everything else (no line, no file, hallucinated file, line beyond
-    the file's changed hunks) routes to the un-anchorable list so it can be
-    appended to the review body instead of 422'ing the POST or being
-    silently dropped.
+    `(file, line)` pair appears on either side of the PR diff. Anchorable
+    findings carry a `_side` key (`"RIGHT"` or `"LEFT"`) that
+    `format_review_comments` uses to build the Reviews-API `side` field.
 
-    Mirrors the truncation-guard intent in `main()`: the synthetic
-    `.github/reviewer` P1 always lands here because that path is never in
-    a real PR's diff — so it renders in the body, never inline.
+    Codex P1 round 2: routing a finding on a deleted line as `side: RIGHT`
+    422s the atomic POST. `_resolve_side` picks the side the line actually
+    lives on — RIGHT if it's an addition or a context line (the common
+    case), LEFT if it's only on the removed side.
+
+    Everything else (no line, no file, hallucinated file, line beyond the
+    file's changed hunks on either side) routes to un-anchorable so it
+    can be appended to the review body — never dropped, never inline.
     """
     inline: list[dict] = []
     unanchored: list[dict] = []
@@ -400,11 +470,15 @@ def partition_findings(
         except (TypeError, ValueError):
             unanchored.append(f)
             continue
-        valid = anchors.get(str(path))
-        if not valid or line_int not in valid:
+        entry = anchors.get(str(path))
+        if entry is None:
             unanchored.append(f)
             continue
-        inline.append({**f, "line": line_int})
+        side = _resolve_side(entry, line_int)
+        if side is None:
+            unanchored.append(f)
+            continue
+        inline.append({**f, "line": line_int, "_side": side})
     return inline, unanchored
 
 
@@ -412,9 +486,10 @@ def format_review_comments(inline_findings: list[dict]) -> list[dict]:
     """Build the `comments` array for the Reviews API.
 
     Accepts findings already partitioned by `partition_findings` — every
-    entry here IS anchorable. Each becomes a `path`+`line` inline comment
-    on the RIGHT side of the diff with the FINDING_MARKER so the audit
-    script can grep individual findings out of the review's comment list.
+    entry here IS anchorable and carries `_side` (RIGHT for additions and
+    context lines, LEFT for deletions). Each becomes a `path`+`line`+
+    `side` inline comment with the FINDING_MARKER so the audit script can
+    grep individual findings out of the review's comment list.
     """
     out: list[dict] = []
     for f in inline_findings:
@@ -423,6 +498,10 @@ def format_review_comments(inline_findings: list[dict]) -> list[dict]:
         if not path or line is None:
             # Belt-and-suspenders: partition should have filtered these.
             continue
+        # Default RIGHT for legacy callers that skipped partition_findings.
+        side = str(f.get("_side") or "RIGHT")
+        if side not in {"RIGHT", "LEFT"}:
+            side = "RIGHT"
         sev = _severity_of(f)
         title = (f.get("title") or f.get("claim") or "").strip()
         reasoning = (f.get("reasoning") or f.get("evidence") or "").strip()
@@ -437,7 +516,7 @@ def format_review_comments(inline_findings: list[dict]) -> list[dict]:
             {
                 "path": str(path),
                 "line": int(line),
-                "side": "RIGHT",
+                "side": side,
                 "body": "\n".join(body_parts),
             }
         )
@@ -483,20 +562,23 @@ def _format_unanchored_block(unanchored: list[dict]) -> list[str]:
 
 def format_review(
     review: dict, head_sha: str, truncated_bytes: int = 0,
-    anchors: dict[str, set[int]] | None = None,
+    anchors: dict[str, dict[str, set[int]]] | dict[str, set[int]] | None = None,
 ) -> dict:
     """Build the full Reviews-API payload: `{body, event, comments}`.
 
-    This is what `POST /repos/{o}/{r}/pulls/{N}/reviews` accepts as its JSON
-    body. Keep the return type a plain dict so callers can json.dumps it
-    straight into the API call or a test can inspect the shape without
-    parsing markdown.
+    `anchors` accepts the new sided shape
+    (`{filename: {"RIGHT": {lines}, "LEFT": {lines}}}`) or the legacy
+    RIGHT-only shape (`{filename: {lines}}`) for pre-P1-round-2 tests.
+    `partition_findings` disambiguates transparently.
 
-    `anchors` is `{filename: {RIGHT-line, ...}}` from `get_diff_anchors`.
-    When absent (unit test not exercising the API path, or the fetch
-    failed) we default to `{}` — every finding routes to un-anchored, no
-    inline comments. That's safer than trusting model-supplied `path:line`
-    against a diff we haven't checked: one bad anchor 422s the whole POST.
+    When `anchors` is absent (fetch failed) we default to `{}` — every
+    finding routes to un-anchored, no inline comments. Safer than
+    trusting model-supplied `path:line` (or `side`) against a diff we
+    haven't checked: one bad anchor 422s the whole POST.
+
+    Callers that want to include `commit_id` (Codex P1 round 2 — anchors
+    the Review to the exact SHA the reviewer read) should merge it into
+    the returned dict before POSTing; see `main()`.
     """
     anchors = anchors if anchors is not None else {}
     all_findings = review.get("findings") or []
@@ -692,6 +774,61 @@ def _post_failure_comment(
         print(f"could not post failure comment: {post_exc}", file=sys.stderr)
 
 
+def fetch_current_head_sha(
+    repo: str, pr: str, env: dict[str, str] | None = None
+) -> str:
+    """Return the current HEAD SHA of `pr` via `gh pr view`.
+
+    Codex P1 round 2: two review.yml runs can be in flight simultaneously
+    (rapid pushes or manual retrigger). If the older run finishes second,
+    it would dismiss the newer bot review and submit a verdict against
+    the OLDER diff. Call this immediately before POST and abort when the
+    fetched SHA differs from the SHA we've been reviewing — the newer
+    run will handle the current HEAD.
+
+    Returns an empty string on any error so callers can treat "unable to
+    verify" as "proceed" (a stale review is worse than an unverified one,
+    but a fetch-failure loop is worse still — log and continue).
+    """
+    try:
+        out = sh(
+            [
+                "gh", "pr", "view", pr,
+                "--repo", repo,
+                "--json", "commits",
+                "--jq", ".commits | last | .oid",
+            ],
+            env=env,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"::warning::could not fetch current PR HEAD for staleness check: {exc}",
+            file=sys.stderr,
+        )
+        return ""
+    return out.strip()
+
+
+def _assert_no_synthetic_paths_in_comments(comments: list[dict]) -> None:
+    """Raise if any comment carries a `.github/reviewer:*` synthetic anchor.
+
+    The truncation-guard P1 is built with `file=None, line=None` so it
+    routes to the body's Unanchored section. If a future refactor ever
+    re-introduces the old `.github/reviewer:1` anchor, the atomic POST
+    would 422 (path never in a real diff) and drop the entire verdict —
+    including the REQUEST_CHANGES ADR-0014 requires. This is the guard
+    that catches that regression before it reaches the API.
+    """
+    for c in comments:
+        path = str(c.get("path") or "")
+        if path.startswith(".github/reviewer"):
+            raise RuntimeError(
+                f"pre-POST safety check: synthetic path in comments — {path!r}. "
+                "A truncation-guard finding leaked past partition_findings; "
+                "this would 422 the whole Reviews-API POST."
+            )
+
+
 def _resolve_gh_env(repo: str) -> dict[str, str]:
     """Return the env to pass into every `gh` subprocess.
 
@@ -799,6 +936,40 @@ def main() -> int:
         anchors = {}
 
     payload = format_review(review, head_sha, truncated_bytes=omitted_bytes, anchors=anchors)
+
+    # Codex P1 round 2: pin the Review to the SHA we actually reviewed.
+    # `commit_id` tells GitHub "this Review applies to THIS specific commit".
+    # Without it, a stale run that finishes after a newer push would record
+    # its verdict against the current HEAD — approving code the reviewer
+    # never saw. The HEAD-recheck below is the primary defense; commit_id
+    # is defense-in-depth so the resulting Review row stays accurate even
+    # if the recheck races.
+    reviewed_sha = head_sha or os.environ.get("GITHUB_SHA", "")
+    if reviewed_sha:
+        payload["commit_id"] = reviewed_sha
+
+    # Pre-POST safety check: a synthetic `.github/reviewer:*` anchor would
+    # 422 the whole atomic review (path never in a real diff). This guards
+    # against future regressions of the truncation-P1 routing (Codex P1
+    # round 2 — the round-1 fix keeps `file=None, line=None`; this pins
+    # that invariant so a refactor can't silently un-do it).
+    _assert_no_synthetic_paths_in_comments(payload.get("comments") or [])
+
+    # Codex P1 round 2: reject stale runs. If HEAD has advanced since the
+    # reviewer started (rapid push or manual retrigger with the older run
+    # still in flight), abort NOW — the newer run will handle the current
+    # state. Exit 0 (not an error) because a stale-run abort is expected
+    # behavior, not a failure the merge-gate should punish.
+    if reviewed_sha:
+        current_sha = fetch_current_head_sha(repo, pr, env=gh_env)
+        if current_sha and current_sha != reviewed_sha:
+            print(
+                f"::warning::HEAD advanced during review "
+                f"(reviewed={reviewed_sha}, current={current_sha}); "
+                "another run will handle current state",
+                file=sys.stderr,
+            )
+            return 0
 
     # Dismiss any prior review authored by the bot BEFORE posting the new one.
     # Order matters: if a prior REQUEST_CHANGES review is still standing when
