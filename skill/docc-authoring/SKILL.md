@@ -1,206 +1,195 @@
 ---
 name: docc-authoring
-description: Swami DocC house style — which directives we use, sample-code page shape, gallery shape, naming conventions, resource organization. Load when writing anything under app/Swami/Swami.docc/.
+description: Output shape for a translated Origami pattern. Covers the emitted `.swift` file's layout, struct shape, DocC sample-code header, public API surface, naming rules, and the verification-host switch a reference project uses to select which pattern renders. Community-portable, sibling to `skill/pattern-translation`. Load whenever you're about to write a pattern's `.swift` file to disk.
 metadata:
   type: procedural
 ---
 
-# DocC authoring — Swami house style
+# DocC authoring: output shape for a translated pattern
 
-Rules for anything written under `app/Swami/Swami.docc/`. Directives, page shapes,
-file layout. Keep pages boring and consistent — the design lives in the pattern renders,
-not in prose.
+Sibling to `skill/pattern-translation`. That skill decides *what* the SwiftUI
+looks like (patch-to-construct mapping, ISAT staging, native-first). This skill
+decides *what the file on disk looks like*: filename, struct, DocC header,
+public API, verification switch.
 
-## Directives we use
+Community-portable. No repo-specific paths, PR flow, or issue numbers. Where a
+concrete path is unavoidable, framed as "the reference project" or "a
+Swami-shaped module".
 
-Only these. If you reach for something else, stop and check first.
+## One file per pattern
 
-### `@Metadata { … }`
+- **One `.swift` file per Origami pattern.** No shared multi-pattern files, no
+  helper spillover into a pattern file (helpers live in the Swami module).
+- **Filename = the Origami source stem.** `Interaction_Touch.origami` becomes
+  `Interaction_Touch.swift`. Category prefix and underscore separator preserved
+  from the source; do not rename, re-case, or resegment.
+- **Location.** In the reference project, pattern files sit in the same module
+  the Swami helpers ship from. Community ports place them wherever the
+  module's public sources live.
 
-Page-level config wrapper. Everything below sits inside it.
-
-```markdown
-@Metadata {
-    @PageKind(sampleCode)
-    @PageImage(purpose: card, source: "Interaction_Touch")
-    @CallToAction(url: "https://…/Interaction_Touch.zip", purpose: download, label: "Download")
-}
-```
-
-### `@PageKind(article)` / `@PageKind(sampleCode)`
-
-Page classification. `sampleCode` gives the page the sample-code chrome (download
-button slot, code-forward layout).
-
-**Caveat:** `@PageKind(sampleCode)` on a Swift *symbol* doc-comment has been
-inconsistent in earlier PRs — it sometimes renders as an article regardless.
-When you need `sampleCode` layout, author a **standalone `.md` file**, not a
-symbol comment. Article pages take `@PageKind(article)` and work reliably in
-both places.
-
-### `@PageImage(purpose: card, source: "<name>")`
-
-Preview image for gallery cards. `<name>` is the resource basename (no
-extension). Ships from `Resources/Patterns/<name>.png`.
-
-### `@CallToAction(url: "<zip-url>", purpose: download, label: "Download")`
-
-Download button on a pattern page. `url` points at the Xcode-project zip we
-publish alongside the site.
-
-### `@Links(visualStyle: detailedGrid)`
-
-Content-aware gallery cards. Give it a list of page links; each card pulls its
-preview from the linked page's own `@PageImage`. Do not hand-build the grid.
-
-```markdown
-@Links(visualStyle: detailedGrid) {
-    - <doc:Interaction_Touch>
-    - <doc:Interaction_Drag>
-}
-```
-
-### `@TabNavigator`
-
-Category grouping on gallery pages. One tab per Origami sidebar category
-(Featured, Interaction, Layer, …).
-
-```markdown
-@TabNavigator {
-    @Tab("Interaction") {
-        @Links(visualStyle: detailedGrid) {
-            - <doc:Interaction_Touch>
-            - <doc:Interaction_Drag>
-        }
-    }
-    @Tab("Layer") {
-        @Links(visualStyle: detailedGrid) {
-            - <doc:Layer_Frame>
-        }
-    }
-}
-```
-
-### `@Row` / `@Column`
-
-Finer layout only when `@Links` doesn't fit — for example, mixing prose with a
-single preview. Never use these to build the gallery.
-
-## File and resource conventions
-
-- **Sample-code pages**: `app/Swami/Swami.docc/Patterns/<Interaction_Touch>.md`.
-  One file per pattern. Filename = pattern ID = image basename = doc link.
-- **Preview images**: `app/Swami/Swami.docc/Resources/Patterns/<Interaction_Touch>.png`.
-  Same basename as the `.md`. Ships inside the DocC archive.
-- **Framework symbol docs**: `///` comments in Swift source. DocC auto-generates
-  the symbol pages. Do not shadow them with hand-written articles.
-- **Collection pages**: `app/Swami/Swami.docc/<Collection>.md`. One article per
-  Origami sidebar category (Animation, Interaction, Layer, …). These are the
-  gallery pages that host `@TabNavigator` + `@Links`.
-
-## Mapping tables
-
-On each collection page, ship a **GFM table** mapping Origami patches to their
-SwiftUI equivalents. Not `@Links` — a real table. One row per patch.
-
-```markdown
-| Origami patch                     | SwiftUI                              |
-|-----------------------------------|--------------------------------------|
-| `interaction.tap` — Tap           | ``onTapGesture(_:)`` (native)        |
-| `interaction.drag` — Drag         | ``drag(enable:momentum:bounds:position:translation:velocity:reset:)`` (helper) |
-| `layer.oval` — Oval               | `Circle()` (native)                  |
-```
-
-Symbol references go in double backticks so DocC auto-links them. Mark each
-right-hand cell `(native)` or `(helper)` so readers know whether it's stock
-SwiftUI or one of ours.
-
-## Sample-code page shape
-
-Image + code + minimal context. That is the whole page.
-
-```markdown
-# Interaction — Touch
-
-@Metadata {
-    @PageKind(sampleCode)
-    @PageImage(purpose: card, source: "Interaction_Touch")
-    @CallToAction(url: "https://patterns.swami.dev/downloads/Interaction_Touch.zip", purpose: download, label: "Download")
-}
-
-Tap the card to grow the hidden oval inside it. Uses ``interaction(onTap:)``
-with a `.animation(.easeInOut(duration: 0.5), value:)` modifier to interpolate
-the scale.
+## Struct shape
 
 ```swift
-struct InteractionTouch: View {
-    @State private var pressed = false
+public struct <PatternID>View: View {
+    public init() {}
+    public var body: some View {
+        // single expression; the artboard's layer tree, translated
+    }
+}
+```
 
+- **`PatternID`** = the Origami source stem, verbatim. `Interaction_Touch.origami`
+  produces `public struct Interaction_TouchView`. Keep the underscore. The 1:1
+  mapping from Origami's filename to the Swift type is deliberate; readers use
+  it to find one from the other.
+- **`View` suffix.** Every pattern struct ends in `View`. `Interaction_TouchView`,
+  not `Interaction_Touch`. The suffix disambiguates from Swami helpers that
+  share a patch name (`Interaction` the helper vs. `Interaction_TouchView` the
+  pattern).
+- **`public`.** The struct and its `init()` are public. A pattern that can't be
+  instantiated from outside the module can't be verified by the host and can't
+  be embedded from a downstream DocC.
+- **Single-expression body.** The body renders the Origami artboard and nothing
+  else. No `NavigationStack`, no `NavigationView`, no toolbar, no debug HUD, no
+  safe-area filler. The verification screenshot must be pixel-comparable to the
+  Origami artboard; host chrome would break the compare.
+
+## DocC sample-code header
+
+Every pattern file opens with a `///` doc-comment block on the public struct.
+That comment is the pattern's DocC symbol page.
+
+```swift
+/// # <Category> — <Pattern name>
+///
+/// @Metadata {
+///     @PageKind(sampleCode)
+///     @PageImage(purpose: card, source: "<PatternID>")
+/// }
+///
+/// <One or two sentences describing what the pattern does, matching how the
+/// Origami editor's canvas reads. Name the patches that drive it.>
+///
+/// - Origami source: <URL to the .origami file in the corpus, if hosted>
+/// - Translated: <YYYY-MM-DD>, when known
+public struct <PatternID>View: View { ... }
+```
+
+Rules:
+
+- **Title.** `# <Category> — <Pattern name>`, matching Origami's own naming
+  (e.g. `# Interaction — Touch`).
+- **`@PageKind(sampleCode)`.** Gives the page the sample-code chrome. `sampleCode`
+  on a Swift symbol comment has been unreliable in some DocC versions; when a
+  standalone sample-code page is authored in the DocC catalog, mirror the
+  metadata there and let the symbol comment stand as-is.
+- **`@PageImage(purpose: card, source: "<PatternID>")`.** `source` is the
+  basename (no extension) of the pattern's preview image, which ships from the
+  DocC catalog's `Resources/Patterns/` directory. Basename = `PatternID`;
+  keep them in lockstep so the gallery card resolves.
+- **Prose description.** One or two sentences. Names the patches driving the
+  pattern; matches what the Origami editor's canvas shows. Not a walkthrough.
+- **Origami source URL.** When the pattern's `.origami` is hosted (a corpus
+  release, a mirror), link it in a bullet under the prose. Skip if not hosted.
+- **Translation date.** `YYYY-MM-DD`, when known. Skip if not known; do not
+  fabricate a date.
+
+## Public API surface
+
+- **Pattern struct: `public`.** Always.
+- **Any helper the pattern calls must also be `public`.** The pattern lives in
+  the same module as the helpers today, but the DocC catalog and any downstream
+  embedder see only the public surface. A translator who needs a helper that
+  currently ships `internal` must promote it to `public` in the helper's own
+  file (its own commit), not paper over it with a local re-implementation in
+  the pattern file.
+- **No new private helpers in a pattern file.** Pattern files hold one struct
+  and its private computed properties. Reusable state or view logic is a helper
+  in the module.
+
+## Naming rules
+
+- **Origami PascalCase, verbatim.** `Interaction_Touch` in Origami stays
+  `Interaction_Touch` in Swift. Preserve the underscore separator. Preserve
+  case exactly.
+- **No marketing capitalization in identifiers.** `SwiftUI` is fine in prose
+  and in framework references. A struct or file named `SwiftUiView` (marketing
+  camel-case) is not. If the pattern's name contains a framework or brand,
+  spell the identifier the way Swift APIs do (`SwiftUI` when it appears, never
+  `SwiftUi`).
+- **No trailing category suffixes on filenames.** `Interaction_Touch.swift`,
+  not `Interaction_TouchPattern.swift` or `Interaction_TouchExample.swift`.
+  Only the `View` suffix goes on the struct.
+
+## Verification-host switch
+
+The reference project's verification host is a one-screen app whose
+`ContentView` switches on an environment variable to pick which pattern
+renders. A translator adds one case per pattern as it lands.
+
+Shape (naming and env-var name are the reference project's; a community port
+mirrors the shape, not the identifiers):
+
+```swift
+struct ContentView: View {
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color(red: 221/255, green: 112/255, blue: 223/255)) // Origami Purple #DD70DF
-                .frame(width: 100, height: 100)
-                .scaleEffect(pressed ? 5 : 0)
-        }
-        .frame(width: 300, height: 300)
-        .background(.white)
-        .cornerRadius(20)
-        .interaction(onTap: { pressed.toggle() })
-        .animation(.easeInOut(duration: 0.5), value: pressed)
-    }
-}
-```
-```
-
-## Gallery article shape
-
-`@TabNavigator` around one tab per category, `@Links(visualStyle: detailedGrid)`
-inside each. No hand-authored prose per card.
-
-```markdown
-# Patterns
-
-@Metadata {
-    @PageKind(article)
-    @PageImage(purpose: card, source: "Gallery")
-}
-
-Every Origami pattern, ported to SwiftUI.
-
-@TabNavigator {
-    @Tab("Featured") {
-        @Links(visualStyle: detailedGrid) {
-            - <doc:Interaction_Touch>
-            - <doc:Interaction_Drag>
-            - <doc:Layer_Frame>
-        }
-    }
-    @Tab("Interaction") {
-        @Links(visualStyle: detailedGrid) {
-            - <doc:Interaction_Touch>
-            - <doc:Interaction_Drag>
-            - <doc:Interaction_DoubleTap>
-            - <doc:Interaction_LongPress>
-        }
-    }
-    @Tab("Layer") {
-        @Links(visualStyle: detailedGrid) {
-            - <doc:Layer_Frame>
-            - <doc:Layer_Oval>
+        switch ProcessInfo.processInfo.environment["<PATTERN_SELECTOR_VAR>"] {
+        case "<pattern-slug>":  <PatternID>View()
+        // add cases as patterns land
+        default:                <SomeDefaultPatternView>()
         }
     }
 }
 ```
 
-## What not to do
+- **Slug.** Lowercase, hyphen-separated, derived from the pattern name (Origami
+  side, not Swift side). `Interaction_Touch` → `interaction-touch`.
+- **One case per pattern.** Do not fold multiple patterns behind one slug. Each
+  case renders exactly one pattern's view, with no host chrome around it.
+- **Body is a single expression.** Same rule as the pattern's own body: the
+  host renders the pattern and nothing else. No nav bar, no toolbar, no debug
+  overlays. The screenshot the host produces is what the compare runs against.
 
-- **No per-pattern prose articles.** Sample-code pages are image + code +
-  minimal context. If you catch yourself writing a walkthrough, delete it — the
-  code and the render are the walkthrough.
-- **No `@Row`/`@Column` for the gallery.** `@Links` auto-cards from
-  `@PageImage` metadata. Rows and columns are for one-off layouts, not the
-  main grid.
-- **No hand-added binaries.** `Resources/Patterns/*.png` come from
-  CI-composited renders. Don't drop a hand-cropped screenshot in and commit it
-  — regenerate through the render pipeline so the image matches the code.
+## What NOT to add
+
+- **No `print` / `debugPrint` / `os_log` in a pattern file.** Debug output has
+  no place in a shipped translation. If you needed it during translation,
+  strip it before commit.
+- **No `fatalError` on a release path.** `fatalError` is fine only inside a
+  branch that a type invariant makes unreachable, and only when the invariant
+  is obvious from the surrounding code. A `fatalError` reachable by any input
+  from the Origami graph is a bug; use the parser's flagging path (an
+  `// unsupported: <type>, <reason>` comment at the call site) instead.
+- **No color-hardcoded workarounds when the `.origami` has design tokens.**
+  Origami's ColorKit/TypeKit ships semantic names (a color has a `name`, a
+  `hex`, and a `colorUsages` list). The parser preserves those names in the
+  IR. Emit code that references the named color from the source (a named
+  constant, a semantic color lookup) rather than dropping a raw hex literal
+  into the view body. If the parser has not yet decoded a token's name, add a
+  `// TODO: parser-decoded token when available` comment beside the literal
+  so the follow-up is visible.
+- **No host chrome in the pattern's body.** `NavigationStack`, toolbars, tab
+  bars, safe-area fillers, backgrounds that come from the host. None of that
+  belongs in the pattern's body. The pattern renders its artboard.
+- **No re-declaration of Swami helpers inside the pattern file.** If a helper
+  is missing, ship the helper first (its own commit), then the pattern.
+
+## Cross-checks before you commit
+
+- Filename stem matches the `.origami` stem, verbatim.
+- Struct name = `<filename stem>View`, `public`, with `public init() {}`.
+- DocC header on the struct: title, `@Metadata { @PageKind(sampleCode);
+  @PageImage(source: "<filename stem>") }`, prose, source URL if known,
+  translation date if known.
+- Every helper the pattern calls is `public` in the module today.
+- Body is one expression. No host chrome. No debug output. No release-path
+  `fatalError`.
+- If the pattern is under a verification-host switch, one new case has been
+  added; the case renders `<PatternID>View()` and nothing else.
+
+## Where to read next
+
+- **`skill/pattern-translation/SKILL.md`**. The judgment half. What each patch
+  becomes in SwiftUI, how state, animation, and interpolation are staged. Read
+  before deciding *what* to emit; read this skill for *how the file is shaped*.
+- **`skill/unslop/SKILL.md`**. Style rules for the prose in the DocC header.
