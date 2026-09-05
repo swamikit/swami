@@ -245,10 +245,12 @@ class FormatReviewTruncationTests(unittest.TestCase):
     def test_synthetic_p1_forces_REQUEST_CHANGES_and_stays_in_body(self) -> None:
         # `main()` builds the synthetic P1 with `file: null, line: null` so
         # it MUST land in the body's `### Unanchored findings` section,
-        # never as an inline comment. Anchoring it against a fake path
-        # like `.github/reviewer:1` was the bug that 422'd every truncated-
-        # diff review — the whole POST failed atomically, dropping the
-        # REQUEST_CHANGES verdict along with it.
+        # never as an inline comment. Anchoring it against any non-diff
+        # path (an earlier draft used `.github/reviewer:1`) was the bug
+        # that 422'd every truncated-diff review — the whole POST failed
+        # atomically, dropping the REQUEST_CHANGES verdict along with it.
+        # The path is now `SYNTHETIC_TRUNCATION_PATH`, a URL-scheme sentinel
+        # that can't collide with real files like `.github/reviewers.yml`.
         review = {
             "approve": False,
             "findings": [
@@ -773,11 +775,18 @@ class PartitionSidedAnchorsTests(unittest.TestCase):
 class SyntheticPathAssertionTests(unittest.TestCase):
     """`_assert_no_synthetic_paths_in_comments` guards the truncation-P1 route."""
 
-    def test_raises_on_synthetic_dot_github_reviewer_path(self) -> None:
-        # This is the exact path that 422'd every truncated review before
-        # the round-1 fix routed the synthetic P1 to `file=None`.
+    def test_raises_on_synthetic_truncation_path(self) -> None:
+        # The exact sentinel we tell the model to use for the truncation P1.
+        # If it ever leaks into `comments` (should have routed to the body's
+        # Unanchored section) the atomic POST would 422 — this is what the
+        # assertion catches before the API sees it.
         comments = [
-            {"path": ".github/reviewer", "line": 1, "side": "RIGHT", "body": "x"},
+            {
+                "path": mod.SYNTHETIC_TRUNCATION_PATH,
+                "line": 1,
+                "side": "RIGHT",
+                "body": "x",
+            },
         ]
         with self.assertRaises(RuntimeError):
             mod._assert_no_synthetic_paths_in_comments(comments)
@@ -787,6 +796,39 @@ class SyntheticPathAssertionTests(unittest.TestCase):
             {"path": "scripts/x.py", "line": 5, "side": "RIGHT", "body": "y"},
         ]
         mod._assert_no_synthetic_paths_in_comments(comments)  # no raise
+
+    def test_ok_on_real_dot_github_reviewers_yml(self) -> None:
+        # Regression: an earlier `startswith(".github/reviewer")` prefix
+        # check tripped on the legitimate new file `.github/reviewers.yml`
+        # (added by PR #76 for the CODEOWNERS-style reviewer roster),
+        # blocking every review that flagged it. The sentinel is now a
+        # distinct string matched exactly, so real repo paths that happen
+        # to share the old prefix pass cleanly.
+        comments = [
+            {
+                "path": ".github/reviewers.yml",
+                "line": 3,
+                "side": "RIGHT",
+                "body": "flag",
+            },
+            {"path": ".github/reviewers", "line": 1, "side": "RIGHT", "body": "b"},
+            {
+                "path": ".github/reviewer-config",
+                "line": 1,
+                "side": "RIGHT",
+                "body": "c",
+            },
+        ]
+        mod._assert_no_synthetic_paths_in_comments(comments)  # no raise
+
+    def test_sentinel_is_not_a_valid_filesystem_path(self) -> None:
+        # Sanity: the sentinel we ship must be structurally impossible for
+        # anyone to introduce as a real file, or the collision that caused
+        # PR #76's outage comes right back. `//` inside the path is not a
+        # filename most tooling will ever produce; the URL-scheme prefix is
+        # not a legal path component on any real filesystem.
+        self.assertIn("://", mod.SYNTHETIC_TRUNCATION_PATH)
+        self.assertFalse(mod.SYNTHETIC_TRUNCATION_PATH.startswith("."))
 
 
 class HeadRecheckTests(unittest.TestCase):

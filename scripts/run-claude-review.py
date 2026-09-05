@@ -51,6 +51,16 @@ FINDING_MARKER = "<!-- reviewer:claude:finding -->"
 # Reviews API call fails after retries. Refactor B: the merge-gate needs to
 # tell "review failed, retry" apart from "review succeeded with no P1s".
 FAILURE_MARKER = "<!-- reviewer:claude-failure -->"
+# Sentinel `path` we tell the model to use when it wants to file a P1 that
+# isn't tied to a real file in the diff (currently only the truncation P1).
+# URL-scheme-style so it can't collide with any real repo path — an earlier
+# form (`.github/reviewer`) collided with the real file `.github/reviewers.yml`
+# once that was added, tripping `_assert_no_synthetic_paths_in_comments` and
+# blocking every review on PRs that touched it. Any comment carrying this
+# exact path is a routing bug (it should have landed in the body's
+# `### Unanchored findings` section, not in `comments`); the assertion below
+# catches that regression before it reaches the Reviews API.
+SYNTHETIC_TRUNCATION_PATH = "quibble-review://truncation"
 # GitHub App login the App identifies as when it authors reviews. Used to
 # filter prior reviews for dismissal — we ONLY ever dismiss reviews authored
 # by the bot; human reviews are never touched.
@@ -107,8 +117,9 @@ def build_system(context: str, truncated_bytes: int = 0) -> str:
             "the diff. You have NOT seen the whole PR. Per ADR-0014 (Reviewer "
             "approval is the merge gate) you MUST NOT return `approve=true`. "
             "Return `approve=false` with a P1 finding at "
-            "`.github/reviewer` line 1 explaining that the PR must be split or "
-            "reviewed manually because the diff exceeds the review cap.\n"
+            f"`{SYNTHETIC_TRUNCATION_PATH}` line 1 explaining that the PR must "
+            "be split or reviewed manually because the diff exceeds the review "
+            "cap.\n"
         )
     return (
         "You are the Reviewer GA for the swami repository. Follow the Reviewer skill "
@@ -144,8 +155,8 @@ def call_claude(system: str, diff: str, sticky: str, truncated_bytes: int = 0) -
             f"The diff below was truncated at {MAX_DIFF_BYTES} bytes "
             f"({truncated_bytes} bytes omitted). You have NOT seen the whole "
             "PR. Per ADR-0014 you MUST return `approve=false` with a P1 "
-            "finding at `.github/reviewer:1` saying the PR must be split or "
-            "reviewed manually."
+            f"finding at `{SYNTHETIC_TRUNCATION_PATH}:1` saying the PR must "
+            "be split or reviewed manually."
         )
     user_parts.append("## PR diff\n\n```diff\n" + diff + "\n```")
     if sticky.strip():
@@ -834,18 +845,23 @@ def fetch_current_head_sha(
 
 
 def _assert_no_synthetic_paths_in_comments(comments: list[dict]) -> None:
-    """Raise if any comment carries a `.github/reviewer:*` synthetic anchor.
+    """Raise if any comment carries the `SYNTHETIC_TRUNCATION_PATH` anchor.
 
     The truncation-guard P1 is built with `file=None, line=None` so it
     routes to the body's Unanchored section. If a future refactor ever
-    re-introduces the old `.github/reviewer:1` anchor, the atomic POST
+    re-anchors it to `SYNTHETIC_TRUNCATION_PATH:1`, the atomic POST
     would 422 (path never in a real diff) and drop the entire verdict —
     including the REQUEST_CHANGES ADR-0014 requires. This is the guard
     that catches that regression before it reaches the API.
+
+    Match is EXACT against the sentinel string, not a prefix — an earlier
+    `startswith(".github/reviewer")` check collided with the real file
+    `.github/reviewers.yml` once that landed, tripping the assertion on
+    every legitimate finding against that file.
     """
     for c in comments:
         path = str(c.get("path") or "")
-        if path.startswith(".github/reviewer"):
+        if path == SYNTHETIC_TRUNCATION_PATH:
             raise RuntimeError(
                 f"pre-POST safety check: synthetic path in comments — {path!r}. "
                 "A truncation-guard finding leaked past partition_findings; "
@@ -912,11 +928,14 @@ def main() -> int:
     # `file: null, line: null` deliberately: the truncation P1 is a review-
     # meta finding, not tied to any file in the diff, so it MUST land in
     # the body's `### Unanchored findings` section — never as an inline
-    # comment. An earlier draft anchored it to `.github/reviewer:1`, a
-    # path that was never in the diff; the Reviews API 422'd the whole
-    # POST for that reason, dropping the very REQUEST_CHANGES verdict
-    # ADR-0014 says must block. Keep line=None to preserve body-routing
-    # even if the anchor lookup later returns something unexpected.
+    # comment. An earlier draft anchored it to a real-looking path like
+    # `.github/reviewer:1`, a path that was never in the diff; the
+    # Reviews API 422'd the whole POST for that reason, dropping the very
+    # REQUEST_CHANGES verdict ADR-0014 says must block. Keep line=None to
+    # preserve body-routing even if the anchor lookup later returns
+    # something unexpected. `SYNTHETIC_TRUNCATION_PATH` above is the
+    # sentinel we tell the model to use — the assertion below catches
+    # any leak of that exact path into `comments`.
     if omitted_bytes > 0 and bool(review.get("approve")):
         review["approve"] = False
         synthetic = {
@@ -972,10 +991,10 @@ def main() -> int:
     if reviewed_sha:
         payload["commit_id"] = reviewed_sha
 
-    # Pre-POST safety check: a synthetic `.github/reviewer:*` anchor would
-    # 422 the whole atomic review (path never in a real diff). This guards
-    # against future regressions of the truncation-P1 routing (Codex P1
-    # round 2 — the round-1 fix keeps `file=None, line=None`; this pins
+    # Pre-POST safety check: a synthetic `SYNTHETIC_TRUNCATION_PATH` anchor
+    # would 422 the whole atomic review (path never in a real diff). This
+    # guards against future regressions of the truncation-P1 routing (Codex
+    # P1 round 2 — the round-1 fix keeps `file=None, line=None`; this pins
     # that invariant so a refactor can't silently un-do it).
     _assert_no_synthetic_paths_in_comments(payload.get("comments") or [])
 
