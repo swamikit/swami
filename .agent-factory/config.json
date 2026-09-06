@@ -29,7 +29,7 @@
     "base_branch": "main",
     "runner": "macos-15",
     "fallback_provider": "nvidia",
-    "fallback_model": "poolside/laguna-xs-2.1",
+    "fallback_model": "nvidia/nemotron-3-ultra-550b-a55b",
     "max_model_requests": 160
   },
   "review": {
