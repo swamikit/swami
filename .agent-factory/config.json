@@ -30,7 +30,7 @@
     "runner": "macos-15",
     "fallback_provider": "nvidia",
     "fallback_model": "poolside/laguna-xs-2.1",
-    "max_model_requests": 40
+    "max_model_requests": 160
   },
   "review": {
     "marker": "<!-- reviewer:agent-factory -->",
