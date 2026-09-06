@@ -29,7 +29,7 @@
     "base_branch": "main",
     "runner": "macos-15",
     "fallback_provider": "nvidia",
-    "fallback_model": "moonshotai/kimi-k3",
+    "fallback_model": "poolside/laguna-xs-2.1",
     "max_model_requests": 40
   },
   "review": {
