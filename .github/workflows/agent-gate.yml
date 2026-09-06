@@ -10,7 +10,7 @@ on:
       pr:
         description: Pull request number
         required: true
-        type: number
+        type: string
 
 permissions:
   contents: read
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   gate:
-    uses: samuelalake/agent-factory/.github/workflows/gate.yml@43a522943d0a587684e48d933491d3690a3388a1
+    uses: samuelalake/agent-factory/.github/workflows/gate.yml@f7f29c784ad843e1774a36401e6979f466ac0e0c
     with:
-      pr: ${{ github.event.pull_request.number || inputs.pr }}
-      factory_ref: 43a522943d0a587684e48d933491d3690a3388a1
+      pr: ${{ format('{0}', github.event.pull_request.number || inputs.pr) }}
+      factory_ref: f7f29c784ad843e1774a36401e6979f466ac0e0c
