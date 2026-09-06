@@ -1,0 +1,22 @@
+name: NVIDIA tool-loop probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/nvidia-tool-loop-probe.yml
+      - .github/scripts/nvidia_tool_loop_probe.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tool-loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Prove Kimi can request and consume an allow-listed tool
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: python3 .github/scripts/nvidia_tool_loop_probe.py
