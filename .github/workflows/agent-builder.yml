@@ -16,10 +16,10 @@ permissions:
 jobs:
   builder:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'agent:builder'
-    uses: samuelalake/agent-factory/.github/workflows/builder.yml@codex/steward-builder-runtime
+    uses: samuelalake/agent-factory/.github/workflows/builder.yml@3f2d0d6232c665bd351e64eee971c703b728597e
     with:
       issue: ${{ github.event.issue.number || inputs.issue }}
-      factory_ref: codex/steward-builder-runtime
+      factory_ref: 3f2d0d6232c665bd351e64eee971c703b728597e
       runner: macos-15
       base_ref: main
       gemini_cli_version: 0.55.1

@@ -1,6 +1,6 @@
 ---
 name: triage
-description: How to take feedback/observations and produce/update issues without spam. G-doc-style lifecycle. Read before writing, update-first heuristic, consolidate related, split accumulated, close on evidence. Loaded by the Triage GA (on `issues` events) but any agent processing feedback can invoke it directly. Load whenever a chat log, meeting notes, review batch, or raw user complaint has to become issues that a human wants to be able to track a week later without a duplicate-hunting cleanup pass.
+description: How to take feedback/observations and produce/update issues without spam. G-doc-style lifecycle. Read before writing, update-first heuristic, consolidate related, split accumulated, close on evidence. Available to Agent Factory Steward and any agent processing feedback. Load whenever a chat log, meeting notes, review batch, or raw user complaint has to become issues that a human wants to be able to track a week later without a duplicate-hunting cleanup pass.
 metadata:
   type: procedural
 ---

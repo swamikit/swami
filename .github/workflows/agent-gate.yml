@@ -20,8 +20,7 @@ permissions:
 
 jobs:
   gate:
-    uses: samuelalake/agent-factory/.github/workflows/gate.yml@codex/steward-builder-runtime
+    uses: samuelalake/agent-factory/.github/workflows/gate.yml@3f2d0d6232c665bd351e64eee971c703b728597e
     with:
       pr: ${{ github.event.pull_request.number || inputs.pr }}
-      factory_ref: codex/steward-builder-runtime
-    secrets: inherit
+      factory_ref: 3f2d0d6232c665bd351e64eee971c703b728597e

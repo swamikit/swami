@@ -55,9 +55,9 @@ agent — the cloud loop does not write there.
   withAnimation → interpolation` stack. Live example per stage.
 
 ## Housekeeping
-- **Revoke retired review secrets** — remove the repository's unused
-  `GEMINI_API_KEY` and `OPENROUTER_API_KEY` Actions secrets after PR #93 lands;
-  ADR-0016 removed their final workflow consumer.
+- **Revoke retired review secrets** — `GEMINI_API_KEY` is active again through
+  Agent Factory's Builder and Reviewer callers. Remove only
+  `OPENROUTER_API_KEY` if no configured Factory provider uses it.
 - **swami-private/references/ deletion** — cache is now dead weight per ADR-0013. Delete
   the directory in a follow-up swami-private commit; keep `scripts/render-references.sh`
   (still useful for local troubleshooting).
@@ -78,6 +78,13 @@ agent — the cloud loop does not write there.
 ## Infra self-healing loop (V4 prerequisites)
 - **`.github/ISSUE_TEMPLATE/infra-blocker.md`** (landed in PR #24) — structured evidence template for when a Builder or Review GA hits a runner-level failure (Origami install broken, sim boot fails, ImageMagick not available, etc.). Template auto-applies `label: infra-blocker` so downstream queries are label-based.
 - **`skill/troubleshooting/`** (landed in PR #24) — living runbook of known infra issues and their fixes. Each entry: symptom, evidence signature, workaround, verification. Referenced by both Builder and Review skills as a pre-flight check.
-- **Builder pre-flight step** (blocked on Builder GA — PR #27) — before real work, `gh issue list --label infra-blocker --state open --limit 100` and check for matches against current environment. Apply workaround or escalate.
-- **Triage GA** (in-flight — PR #22) — fires on `on: issues: [opened, edited]`. Runs on ubuntu-latest (Claude API). Categorize, dedupe, route (label 'ready' / 'needs-info' / 'translate' / etc.). Closes the loop Codex findings → issues → routed to Builder or human.
-- **Triage on PRs** (not yet scheduled) — extend triage.yml to also fire on `pull_request: [opened, edited]` so it can proactively skim new PRs for cross-ADR contradictions and stale assumptions. Gap surfaced 2026-09-04.
+- **Builder pre-flight step** — Agent Factory Builder must query open
+  `infra-blocker` issues before real work and apply a known workaround or
+  return a concrete blocker to Steward. The old in-repository Builder GA item
+  from PR #27 is superseded by the reusable Builder role.
+- **Issue qualification and routing** — Agent Factory Steward supersedes the
+  in-repository Triage GA from PR #22. It admits well-formed `ready` work,
+  dispatches Builder, and owns blocker routing without creating issue spam.
+- **Steward PR intake** (not yet scheduled) — consider letting Steward skim
+  new PRs for cross-ADR contradictions and stale assumptions. Keep this
+  separate from the required independent Reviewer verdict.

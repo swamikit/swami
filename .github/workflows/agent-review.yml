@@ -14,10 +14,15 @@ permissions:
 
 jobs:
   review:
-    uses: samuelalake/agent-factory/.github/workflows/review.yml@codex/steward-builder-runtime
+    # Secrets are withheld from fork pull requests. Keep those safely pending
+    # until a maintainer brings the head into this repository or explicitly
+    # supplies a trusted review path; never run secret-bearing model review on
+    # untrusted fork code via pull_request_target.
+    if: github.event.pull_request.head.repo.fork == false
+    uses: samuelalake/agent-factory/.github/workflows/review.yml@3f2d0d6232c665bd351e64eee971c703b728597e
     with:
       pr: ${{ github.event.pull_request.number }}
-      factory_ref: codex/steward-builder-runtime
+      factory_ref: 3f2d0d6232c665bd351e64eee971c703b728597e
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -26,10 +31,10 @@ jobs:
 
   integration:
     needs: review
-    uses: samuelalake/agent-factory/.github/workflows/integration.yml@codex/steward-builder-runtime
+    uses: samuelalake/agent-factory/.github/workflows/integration.yml@3f2d0d6232c665bd351e64eee971c703b728597e
     with:
       pr: ${{ github.event.pull_request.number }}
-      factory_ref: codex/steward-builder-runtime
+      factory_ref: 3f2d0d6232c665bd351e64eee971c703b728597e
       timeout_seconds: 1800
     secrets:
       AGENT_FACTORY_STEWARD_APP_ID: ${{ secrets.AGENT_FACTORY_STEWARD_APP_ID }}
