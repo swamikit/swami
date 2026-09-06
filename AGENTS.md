@@ -154,17 +154,11 @@ file to this repo.
 ### What "done" means
 
 A compile is necessary, never sufficient. A patch translation is only *done*
-when the Reviewer has read the swami / origami / diff triplet from the runner
-and Samuel has spot-checked flagged cases. SSIM is evidence in that read, not
-the verdict (ADR-0014). Your job here is to make the code correct enough to
-reach that gate; the gate itself is Mac-side. See `BACKLOG.md` for what's
-queued and what's earned.
-
-**Interim (until Reviewer GA ships):** the Reviewer skill (skill/review) is
-in flight on PR #11 and hasn't landed yet, so *today's* visual gate is Sam
-reading the same evidence triplet by hand. The workflow shape is the same
-either way — the sticky PR comment is the Reviewer's input surface — so the
-flip is a one-line target change, not a re-plumb.
+when the current head has one independent Reviewer verdict and the macOS
+runner has published the swami / origami / diff triplet. SSIM is evidence,
+not the verdict (ADR-0014). Interaction uncertainty must be named explicitly;
+human acceptance is required only when repository policy marks that risk
+class for review. See `BACKLOG.md` for what's queued and what's earned.
 
 ### Learned rules — Origami rendering
 
@@ -211,13 +205,11 @@ Names borrowed from `michaelshimeles/skills`; content is swami-specific.
    flat-color subject matter and has repeatedly greenlit obvious mismatches
    (ADR-0014, supersedes ADR-0013's implicit SSIM-as-gate). Sticky PR comment
    posts swami / origami / diff side by side so the visual gate can read them.
-4. **Ship** — merge on Reviewer approval + Sam's spot-check on flagged cases
-   (ADR-0014). The Reviewer skill (skill/review) reads the swami / origami /
-   diff triplet and calls state match, alignment, chrome, semantic correctness
-   — that's the visual gate. Human sign-off remains for interactions
-   (gesture-driven behavior). Resolve the matching `BACKLOG.md` item on
-   merge. *Until Reviewer GA lands (PR #11), that read is Sam's by hand on the
-   same posted evidence — same surface, same criteria, just not yet automated.*
+4. **Ship** — Steward admits the current head to integration after Reviewer
+   approval and deterministic repository checks (ADR-0014). The evidence
+   triplet remains directly readable on the PR. Human acceptance is an
+   explicit risk policy, not a default hold on every delivery. Resolve the
+   matching `BACKLOG.md` item on merge.
 
 Cross-cutting: **`unslop`** (`skill/unslop/`) is a pass on anything a human
 will read — commit messages, PR titles/bodies, ADRs, `BACKLOG.md`
@@ -245,120 +237,43 @@ entries. Run it before you push.
 
 ---
 
-## Architecture — the agent factory
+## Architecture — Agent Factory consumer
 
-Two orchestrators as peers (Human, Claude session) drive three workers
-(Builder GA, Review GA, Triage GA) around a shared GitHub substrate. Learning
-surfaces sit under the loop and each hold one kind of durable knowledge; work
-rolls through intent → triage → build (with self-verify) → review → merge →
-post-merge.
+Swami delegates judgment and implementation to three role-specific GitHub
+Apps while keeping repository verification deterministic:
 
 ```mermaid
-flowchart TB
-    subgraph Orchestrators["Orchestrators (peers)"]
-        direction LR
-        H[Human]
-        C[Claude session]
-    end
-
-    subgraph Workers["Workers (GitHub Actions)"]
-        direction LR
-        T["Triage GA (ubuntu)"]
-        B["Builder + Verify GA (macos-15)"]
-        R["Review GA (ubuntu)"]
-    end
-
-    subgraph Substrate["GitHub substrate"]
-        direction LR
-        IS[Issues / labels]
-        PR[PRs + sticky evidence comment]
-        GP[gh-pages evidence store]
-    end
-
-    subgraph Loop["The loop"]
-        direction LR
-        I[Intent] --> TR[Triage: label + route]
-        TR --> BLD[Build + self-verify]
-        BLD --> PRO[PR opened with evidence]
-        PRO --> REV[Review reads evidence]
-        REV --> M[Merge on double-green]
-        M --> PM[Post-merge: docs + learning write-back]
-    end
-
-    subgraph Learning["Learning surfaces (knowledge kinds)"]
-        direction TB
-        S["structural<br/>→ parser (tool/src/parser)"]
-        F["functional<br/>→ helpers (Swami package)"]
-        D["documentation<br/>→ DocC (Swami.docc)"]
-        PRC["procedural<br/>→ skill: pattern-translation"]
-        PW["process<br/>→ skill: workflow"]
-        E["evaluative<br/>→ skill: review"]
-        CX["contextual<br/>→ AGENTS.md"]
-        FA["factual<br/>→ CLAUDE.md (pointer to AGENTS.md)"]
-        RA["rationale<br/>→ ADRs (docs/decisions)"]
-    end
-
-    Orchestrators --> Loop
-    Loop --> Workers
-    Workers --> Substrate
-    B -->|PR + evidence| R
-    R -.review comment.-> B
-    Substrate -.evidence read.-> Loop
-    Loop -.writes-back.-> Learning
-    Learning -.loads on next turn.-> Orchestrators
+flowchart LR
+    I[Issue] --> S[Steward]
+    S --> B[Builder]
+    B --> PR[Pull request]
+    PR --> V[macOS Verify + DocC]
+    PR --> R[Reviewer]
+    V --> G[merge-gate]
+    R --> G
+    G --> S2[Steward integration decision]
+    S2 --> L[Deterministic landing]
 ```
 
-Build ↔ Review cycles on the same PR until Review approves; merge on Reviewer
-approval plus Sam's spot-check on flagged cases (ADR-0014). Rebuttal via
-verified-delivery's evidence-required-claims principle — reviews are testable
-against HEAD, not authoritative pronouncements.
+- **Steward** is the engineering manager and integration orchestrator. It
+  qualifies ready work, dispatches Builder, routes blockers or findings, and
+  admits reviewed work to the configured integration lane. It does not edit
+  product source or review its own work.
+- **Builder** starts from `main`, discovers repository context and relevant
+  skills, implements the issue, and leaves publication to the harness. The
+  Builder App owns the commit and pull request identity.
+- **Reviewer** independently judges the current pull-request head and posts a
+  formal verdict through the Reviewer App. It does not implement fixes.
+- **Deterministic automation** owns Origami acquisition, simulator rendering,
+  the evidence triplet, DocC preview, Gate computation, and protected landing.
+  These are repository facts rather than agent opinions.
+- **Integration** defaults to the pull request's synthetic merge ref. A
+  persistent development branch is an optional consumer policy when several
+  compatible changes need combined testing; it is not mandatory ceremony.
+- **Human review** is reserved for explicitly configured risk classes. It is
+  not a default hold after every successful review and verification run.
 
-- **Orchestrators (peers).** Human and Claude session both drive the loop;
-  either can initiate intent, delegate, or take a spot-check pass. Neither
-  owns the other.
-- **Workers.**
-  - **Triage GA** (planned, ubuntu) reads a new issue or PR, labels it, and
-    routes it to the right lane (pattern / parser / harness / docs) so the
-    orchestrators don't hand-shuffle inbox.
-  - **Builder + Verify GA** is live today (`.github/workflows/verify.yml` —
-    Path B per ADR-0013). It runs on macos-15 and does everything in one job:
-    installs Origami from the Sparkle appcast, generates SwiftUI from the
-    parser IR, builds SwamiHost, renders both sides, SSIM-diffs, and posts
-    the evidence triplet. Docs-only PRs skip this via `paths-filter`.
-  - **Review GA** is in flight on PR #11 (skeleton) + PR #12 (skill/review).
-    It runs on cheap ubuntu-latest, reads Builder's posted evidence
-    (screenshots, SSIM score, IR diff), and applies the review skill; it does
-    not re-render. Until it lands, Sam reads the same posted evidence by
-    hand — same surface, same criteria.
-- **GitHub substrate.** Issues carry intent + labels; PRs carry the sticky
-  evidence comment (swami / origami / diff); `gh-pages` (per PR + on merge,
-  per PR #13) holds the durable renders + DocC.
-- **Learning surfaces.** Each knowledge kind writes into exactly one place,
-  so a new agent boots by reading the surface and the pointer is unambiguous:
-  - **structural** — the parser's model of `.origami` (fields, tags, layouts).
-  - **functional** — patch-matched helpers in the Swift package.
-  - **documentation** — human-facing prose via DocC.
-  - **procedural** — the "how to translate one pattern" skill.
-  - **process** — the "how the loop moves" skill.
-  - **evaluative** — the "how to review a PR against evidence" skill.
-  - **contextual** — this file: what the project is, how to work here.
-  - **factual** — durable oracle values and format facts (in Domain above);
-    the on-disk file (`CLAUDE.md`) is a pointer to AGENTS.md so agents that
-    only read CLAUDE.md still land here.
-  - **rationale** — ADRs. Why a call was made, not what to do next.
-- **The loop.** Intent lands. Triage labels + routes. Builder produces a
-  change and self-verifies on the same macOS runner; only a passing build
-  opens a PR, with the evidence triplet attached. Review reads the evidence
-  on ubuntu (no re-render), and either approves or posts findings that must
-  be testable against HEAD. Build ↔ Review cycles until double-green; merge
-  then; post-merge writes back to the relevant learning surface so the next
-  turn starts smarter.
-- **Reviewers wired (2026-09-05).** One thorough reviewer posts as
-  `quibble-review[bot]` (GitHub App) via the Reviews API — per-line inline
-  comments plus a formal APPROVE / REQUEST_CHANGES / COMMENT verdict.
-  External Codex reviews independently in its own posts.
-  `.github/workflows/merge-gate.yml` reads both via `.github/reviewers.yml`
-  (config-driven, not name-hardcoded), applies the priority-ordered rules
-  (mergeability → checks → reviewer freshness → P1 count → P2/P3 orphans),
-  and posts a `merge-gate` commit status. Branch protection on main requires
-  that status.
+Knowledge remains project-owned: parser facts in `tool/src/parser`, reusable
+behavior in the Swami package, human-facing explanation in DocC, procedures
+and evaluation criteria in `skill/`, durable context here, and rationale in
+ADRs. Agent Factory selects and uses those surfaces; it does not replace them.

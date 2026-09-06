@@ -1,0 +1,34 @@
+name: agent-builder
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  builder:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'agent:builder'
+    # Builder publishes with its GitHub App installation token, not
+    # GITHUB_TOKEN. App-authored PR creation emits the pull_request event that
+    # wakes Verify, DocC, Reviewer, and Gate; every one also retains an
+    # explicit workflow_dispatch recovery path.
+    uses: samuelalake/agent-factory/.github/workflows/builder.yml@43a522943d0a587684e48d933491d3690a3388a1
+    with:
+      issue: ${{ github.event.issue.number || inputs.issue }}
+      factory_ref: 43a522943d0a587684e48d933491d3690a3388a1
+      runner: macos-15
+      base_ref: main
+      gemini_cli_version: 0.55.1
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      AGENT_FACTORY_BUILDER_APP_ID: ${{ secrets.AGENT_FACTORY_BUILDER_APP_ID }}
+      AGENT_FACTORY_BUILDER_APP_PRIVATE_KEY: ${{ secrets.AGENT_FACTORY_BUILDER_APP_PRIVATE_KEY }}
