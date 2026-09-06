@@ -21,16 +21,20 @@
   },
   "builder": {
     "marker": "<!-- builder:agent-factory -->",
-    "harness": "gemini-cli",
-    "model": "gemini-3.6-flash",
+    "provider": "minimax",
+    "harness": "openai-compatible",
+    "model": "MiniMax-M2.7",
     "cli_version": "0.55.1",
     "timeout_seconds": 1800,
     "branch_prefix": "agent-factory/issue-",
     "base_branch": "main",
     "runner": "macos-15",
-    "fallback_provider": "nvidia",
-    "fallback_model": "poolside/laguna-xs-2.1",
-    "max_model_requests": 160
+    "fallback_provider": "openrouter",
+    "fallback_model": "qwen/qwen3-coder-next",
+    "max_model_requests": 60,
+    "max_model_cost_usd": 3.0,
+    "input_cost_per_million": 0.3,
+    "output_cost_per_million": 1.2
   },
   "review": {
     "marker": "<!-- reviewer:agent-factory -->",
