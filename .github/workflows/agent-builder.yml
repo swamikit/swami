@@ -20,10 +20,10 @@ jobs:
     # GITHUB_TOKEN. App-authored PR creation emits the pull_request event that
     # wakes Verify, DocC, Reviewer, and Gate; every one also retains an
     # explicit workflow_dispatch recovery path.
-    uses: samuelalake/agent-factory/.github/workflows/builder.yml@43a522970a7370cc855c682f96cc0549f6398f2e
+    uses: samuelalake/agent-factory/.github/workflows/builder.yml@43a522943d0a587684e48d933491d3690a3388a1
     with:
       issue: ${{ github.event.issue.number || inputs.issue }}
-      factory_ref: 43a522970a7370cc855c682f96cc0549f6398f2e
+      factory_ref: 43a522943d0a587684e48d933491d3690a3388a1
       runner: macos-15
       base_ref: main
       gemini_cli_version: 0.55.1
