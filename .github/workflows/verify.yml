@@ -32,7 +32,7 @@ env:
   SCHEME: SwamiHost
   # Each entry: <slug>:<origami-file-stem>. slug drives SWAMI_PATTERN + our screenshot
   # naming; stem resolves to https://origami.design/public/origami_files/patterns/<stem>.origami.
-  PATTERNS: "touch:Interaction_Touch"
+  PATTERNS: "drag:Interaction_Drag"
 
 jobs:
   # Always runs. Cheap ubuntu check that classifies the PR's touched paths so we
