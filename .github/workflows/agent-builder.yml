@@ -1,0 +1,30 @@
+name: agent-builder
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  builder:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'agent:builder'
+    uses: samuelalake/agent-factory/.github/workflows/builder.yml@codex/steward-builder-runtime
+    with:
+      issue: ${{ github.event.issue.number || inputs.issue }}
+      factory_ref: codex/steward-builder-runtime
+      runner: macos-15
+      base_ref: main
+      gemini_cli_version: 0.55.1
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      AGENT_FACTORY_BUILDER_APP_ID: ${{ secrets.AGENT_FACTORY_BUILDER_APP_ID }}
+      AGENT_FACTORY_BUILDER_APP_PRIVATE_KEY: ${{ secrets.AGENT_FACTORY_BUILDER_APP_PRIVATE_KEY }}

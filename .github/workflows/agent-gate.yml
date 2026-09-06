@@ -1,0 +1,27 @@
+name: agent-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  statuses: write
+
+jobs:
+  gate:
+    uses: samuelalake/agent-factory/.github/workflows/gate.yml@codex/steward-builder-runtime
+    with:
+      pr: ${{ github.event.pull_request.number || inputs.pr }}
+      factory_ref: codex/steward-builder-runtime
+    secrets: inherit

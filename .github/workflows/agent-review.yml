@@ -1,0 +1,36 @@
+name: agent-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  issues: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  review:
+    uses: samuelalake/agent-factory/.github/workflows/review.yml@codex/steward-builder-runtime
+    with:
+      pr: ${{ github.event.pull_request.number }}
+      factory_ref: codex/steward-builder-runtime
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      AGENT_FACTORY_REVIEWER_APP_ID: ${{ secrets.AGENT_FACTORY_REVIEWER_APP_ID }}
+      AGENT_FACTORY_REVIEWER_APP_PRIVATE_KEY: ${{ secrets.AGENT_FACTORY_REVIEWER_APP_PRIVATE_KEY }}
+
+  integration:
+    needs: review
+    uses: samuelalake/agent-factory/.github/workflows/integration.yml@codex/steward-builder-runtime
+    with:
+      pr: ${{ github.event.pull_request.number }}
+      factory_ref: codex/steward-builder-runtime
+      timeout_seconds: 1800
+    secrets:
+      AGENT_FACTORY_STEWARD_APP_ID: ${{ secrets.AGENT_FACTORY_STEWARD_APP_ID }}
+      AGENT_FACTORY_STEWARD_APP_PRIVATE_KEY: ${{ secrets.AGENT_FACTORY_STEWARD_APP_PRIVATE_KEY }}

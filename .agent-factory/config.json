@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "project": {
+    "name": "Swami",
+    "context_files": [
+      "AGENTS.md",
+      "BACKLOG.md"
+    ],
+    "skill_dirs": [
+      "skill"
+    ],
+    "max_skills": 3
+  },
+  "steward": {
+    "marker": "<!-- steward:agent-factory -->",
+    "ready_labels": [
+      "ready"
+    ],
+    "dispatch_label": "agent:builder",
+    "retry_label": "agent:retry"
+  },
+  "builder": {
+    "marker": "<!-- builder:agent-factory -->",
+    "harness": "gemini-cli",
+    "model": "gemini-3.6-flash",
+    "cli_version": "0.55.1",
+    "timeout_seconds": 1800,
+    "branch_prefix": "agent-factory/issue-",
+    "base_branch": "main",
+    "runner": "macos-15",
+    "fallback_provider": "nvidia",
+    "fallback_model": "moonshotai/kimi-k3",
+    "max_model_requests": 40
+  },
+  "review": {
+    "marker": "<!-- reviewer:agent-factory -->",
+    "failure_marker": "<!-- reviewer:agent-factory-failure -->",
+    "required": true,
+    "max_diff_bytes": 200000,
+    "provider": "gemini",
+    "model": "gemini-3.6-flash",
+    "fallback_provider": "nvidia",
+    "fallback_model": "moonshotai/kimi-k3"
+  },
+  "integration": {
+    "marker": "<!-- steward:agent-factory-integration -->",
+    "status_context": "agent-factory/integration",
+    "environment": "development",
+    "mode": "pull_request_merge_ref",
+    "automatic_promotion": true
+  },
+  "gate": {
+    "context": "merge-gate",
+    "required_checks": [
+      "changes",
+      "pixel-gate",
+      "build-and-publish"
+    ],
+    "allow_followup_issues": true
+  }
+}
