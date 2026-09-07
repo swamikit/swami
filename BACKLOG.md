@@ -20,19 +20,21 @@ agent — the cloud loop does not write there.
   Momentum/rubber-band CONSTANTS are placeholders (iOS-standard), not Origami's real defaults
   (see parser TODO). Drive: fling → momentum decay matches Origami feel; over-drag past bounds →
   rubber-band resists then settles; release at rest → clamps; velocity reset on fresh touch.
-- **Interaction_Drag** — **ITEM 1 OF 69 ✓** (2026-09-07): Artboard 888×1212, tan card #B0E0B27B,
-  220×140 centered, corner radius 20, drag with momentum + rubber-band bounds, snap-to-center.
-  Parser generalized via `placed_root_offset()` (ADR-0013 structural walk). GALLERY VERIFIED:
-  first corpus entry shipped.
+- **Interaction_Drag** — **ITEM 2 OF 69** (2026-09-07): Artboard 888×1212, tan card
+  #B0E0B27B, 220×140 centered, corner radius 20, drag with momentum + rubber-band bounds,
+  snap-to-center. Parser generalized via `placed_root_offset()` (ADR-0013 structural walk).
+  TRANSLATION COMPLETE — pending runner verification (pixel triplet + Reviewer verdict).
+  Card color channel order unproven; marked as TODO in source until parser confirms.
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
 - **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches
   Origami's Sparkle appcast, installs the app, opens each pattern from origami.design's
   public URL, drives `View → Take Screenshot`, then diffs against SwamiHost's sim render.
   No cross-repo dep, no secrets.
-- **PATTERNS growth**: `touch:Interaction_Touch drag:Interaction_Drag` (2 of 69). Add one line per
-  translated pattern (`<slug>:<origami-filename-stem>`) as the corpus grows; the ContentView
-  switch in `app/SwamiHost/ContentView.swift` gets a matching case.
+- **PATTERNS growth**: `touch:Interaction_Touch drag:Interaction_Drag` (2 of 69 registered).
+  Registry drives the verify gate: `.github/patterns.txt` lists slugs → stems; the `changes`
+  job reads it and passes `PATTERNS` to the pixel-gate. Each new pattern adds one entry to
+  the registry AND one `case` to the ContentView switch — both in the same commit.
 - **Parser generalization** — ✅ landed with Interaction_Drag. `placed_root_offset()` now
   structurally isolates the placed graph from embedded component internals. Pattern N+1
   ready for translation.
@@ -93,6 +95,8 @@ agent — the cloud loop does not write there.
 
 The parser now successfully uses `placed_root_offset()` to structurally isolate the placed graph from embedded component internals. However, the following gaps remain:
 
-**Unresolved**: Exact drag physics constants (Momentum Friction, Rubber Band Friction, decel rate) are still placeholders from iOS defaults. These live as port default *values* inside origami.DragSettings — reading them needs FlatBuffers port-value decoding, which the parser doesn't implement yet.
+**Unresolved (port values)**: Exact drag physics constants (Momentum Friction, Rubber Band Friction, decel rate) are still placeholders from iOS defaults. These live as port default *values* inside origami.DragSettings — reading them needs FlatBuffers port-value decoding, which the parser doesn't implement yet.
+
+**Unresolved (color channels)**: Card fill `#B0E0B27B` decoded as ARGB (alpha-first, yielding tan rgb 224,178,123). The RRGGBBAA reading would yield pale green rgba(176,224,178,123). Both interpretations are structurally valid; neither has parser-IR evidence. Locking in requires either: (a) extending the parser to emit color value objects with known channel order, or (b) an Origami Inspector AX readout confirming the hex. Until then, the literal in `Interaction_Drag.swift` is marked TODO.
 
 **Not expanded** (per issue scope): This issue focused on delivering Interaction_Drag as the first corpus entry. Parser, codegen, and DocC improvements are by-products recorded here, but not expanded to a second pattern.

@@ -16,7 +16,7 @@ cleanly, Swami uses it. Where Origami's semantics need a helper — for example 
 Interaction patch's four discrete output ports, or Drag's momentum + rubber-band
 physics — Swami ships a helper named after the Origami patch and shaped like it.
 
-## Corpus (69 patterns)
+## Corpus (in progress — 2 of 69)
 
 The translated corpus is the gallery and the training set. Each entry is a
 verified SwiftUI translation of an Origami pattern.

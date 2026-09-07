@@ -25,9 +25,6 @@ permissions:
 env:
   APP_PROJECT: app/Swami.xcodeproj
   SCHEME: SwamiHost
-  # Each entry: <slug>:<origami-file-stem>. slug drives SWAMI_PATTERN + our screenshot
-  # naming; stem resolves to https://origami.design/public/origami_files/patterns/<stem>.origami.
-  PATTERNS: "touch:Interaction_Touch"
 
 jobs:
   # Always runs. Cheap ubuntu check that classifies the PR's touched paths so we
@@ -38,8 +35,29 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      patterns: ${{ steps.registry.outputs.patterns }}
     steps:
       - uses: actions/checkout@v4
+      - name: Validate pattern registry
+        id: registry
+        shell: bash
+        run: |
+          patterns=""
+          while IFS= read -r pair || [ -n "$pair" ]; do
+            case "$pair" in
+              ""|\#*) continue ;;
+            esac
+            if [[ ! "$pair" =~ ^[a-z0-9_]+:[A-Za-z0-9_]+$ ]]; then
+              echo "Invalid pattern registry entry: $pair (expected [a-z0-9_]+:[A-Za-z0-9_]+)"
+              exit 1
+            fi
+            patterns="${patterns:+$patterns }$pair"
+          done < .github/patterns.txt
+          if [ -z "$patterns" ]; then
+            echo "No entries in .github/patterns.txt"
+            exit 1
+          fi
+          echo "patterns=$patterns" >> "$GITHUB_OUTPUT"
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -48,6 +66,7 @@ jobs:
               - 'app/**'
               - 'tool/src/**'
               - 'tool/**/*.py'
+              - '.github/patterns.txt'
               - '.github/workflows/verify.yml'
               - '**/*.origami'
               - '**/*.origami-config'
@@ -59,6 +78,8 @@ jobs:
     # manufacturing a fake code change (Codex P2 catch).
     if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
+    env:
+      PATTERNS: ${{ needs.changes.outputs.patterns }}
     steps:
       - uses: actions/checkout@v4
 
