@@ -11,15 +11,15 @@ permissions:
   contents: read
 
 jobs:
-  nvidia:
-    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@33c7a7672d0a3d9ea4d6fb16b653c5066c196e7f
+  minimax:
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@d74be452b38e6d86891bf666b52b98a84c9f7281
     with:
-      factory_ref: 33c7a7672d0a3d9ea4d6fb16b653c5066c196e7f
-      provider: nvidia
-      models: moonshotai/kimi-k3
+      factory_ref: d74be452b38e6d86891bf666b52b98a84c9f7281
+      provider: minimax
+      models: MiniMax-M2.7
       max_candidates: 1
       builder_shape: true
       max_output_tokens: 2048
       prompt_bytes: 70000
     secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
