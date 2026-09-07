@@ -18,9 +18,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: verify-${{ github.event.pull_request.number || inputs.pr || github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write        # push renders to the evidence branch
-  pull-requests: write   # comment onto the PR
+  contents: read
 
 env:
   APP_PROJECT: app/Swami.xcodeproj
@@ -82,6 +85,18 @@ jobs:
       PATTERNS: ${{ needs.changes.outputs.patterns }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Mint Builder installation token
+        id: builder-token
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AGENT_FACTORY_BUILDER_APP_ID }}
+          private-key: ${{ secrets.AGENT_FACTORY_BUILDER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
 
       - name: Environment
         run: |
@@ -382,9 +397,9 @@ jobs:
         # `github.event_name == 'pull_request'`, so dispatched Verify runs
         # completed without posting the swami/origami/diff triplet.
         id: evidence
-        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.builder-token.outputs.token }}
           REPO: ${{ github.repository }}
         run: |
           set -eu
@@ -406,55 +421,100 @@ jobs:
               exit 0
             fi
           fi
+          CHANGED=""
+          changed_count=$(gh api "repos/${REPO}/pulls/${PR}" --jq '.changed_files')
+          if ! files=$(gh api "repos/${REPO}/pulls/${PR}/files" --paginate --jq '.[].filename'); then
+            echo "::error::could not enumerate changed PR files; refusing to publish incomplete evidence"
+            exit 1
+          fi
+          observed_count=$(printf '%s\n' "$files" | sed '/^$/d' | wc -l | tr -d ' ')
+          if [ "$observed_count" != "$changed_count" ]; then
+            echo "::error::GitHub returned ${observed_count} of ${changed_count} changed files (the API caps at 3,000); refusing to publish incomplete evidence"
+            exit 1
+          fi
+          for pair in $PATTERNS; do
+            slug="${pair%%:*}"
+            stem="${pair##*:}"
+            if printf '%s\n' "$files" | grep -Fxq "app/Swami/Patterns/${stem}.swift"; then
+              CHANGED="${CHANGED:+$CHANGED }$pair"
+            fi
+          done
           echo "pr=$PR" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "changed_patterns=$CHANGED" >> "$GITHUB_OUTPUT"
 
-      - name: Post evidence onto the PR
-        if: (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && steps.evidence.outputs.pr != ''
+      - name: Publish Builder evidence onto the PR
+        if: (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)) && steps.evidence.outputs.pr != '' && steps.evidence.outputs.changed_patterns != ''
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.builder-token.outputs.token }}
           PR: ${{ steps.evidence.outputs.pr }}
           REPO: ${{ github.repository }}
           SHA: ${{ steps.evidence.outputs.sha }}
+          CHANGED_PATTERNS: ${{ steps.evidence.outputs.changed_patterns }}
+          RESULTS: ${{ steps.verify.outputs.results }}
+          ORIGAMI_VERSION: ${{ steps.verify.outputs.origami_version }}
         run: |
+          set -euo pipefail
           BR="ci-screenshots"
-          git config user.name "swami-ci"
-          git config user.email "ci@swami.local"
-          # Two paths: (a) branch exists → checkout normally, wipe ONLY this PR's dir so a partial
-          # rerun doesn't reuse stale PNGs (Codex P1). (b) branch doesn't exist → checkout --orphan
-          # which retains the current PR checkout's index; must `git rm -rf .` to start empty
-          # (Codex P2). Never wipe the whole ci-screenshots tree when the branch already exists.
-          # `git fetch origin "$BR"` alone writes only FETCH_HEAD — no local ref for
-          # `git checkout "$BR"` to find, so it always fell through to --orphan and the
-          # push became non-fast-forward. Fetch into refs/remotes/origin/$BR explicitly,
-          # then create/reset a local branch tracking it.
+          DEST="pr-${PR}/${SHA}"
+          SITE_REPO="${REPO#*/}"
+          git config user.name "Builder"
+          git config user.email "builder@agent-factory.local"
+          gh auth setup-git
           if git fetch origin "$BR:refs/remotes/origin/$BR" 2>/dev/null; then
             git checkout -B "$BR" "origin/$BR"
-            rm -rf "pr-$PR"
           else
             git checkout --orphan "$BR"
             git rm -rf . >/dev/null 2>&1 || true
           fi
-          mkdir -p "pr-$PR"
-          cp -R out/* "pr-$PR/"
-          git add "pr-$PR"
+          # The PR has one current-head evidence surface, so retain only the
+          # directory referenced by that surface. A stale URL becomes a 404;
+          # it can never silently display media from a newer head.
+          if [ -d "pr-${PR}" ]; then
+            find "pr-${PR}" -mindepth 1 -maxdepth 1 -type d \
+              ! -name "$SHA" -exec rm -rf {} +
+          fi
+          mkdir -p "$DEST"
+          cp -R out/* "$DEST/"
+          git add "$DEST"
           git commit -m "evidence: PR #$PR @ ${SHA:0:7}" || true
           git push origin "$BR"
 
-          RAW="https://raw.githubusercontent.com/${REPO}/${BR}/pr-${PR}"
-          BODY="### 📸 Pixel evidence — \`${SHA:0:7}\`"$'\n\n'
-          BODY+="**Origami ${{ steps.verify.outputs.origami_version }}** — SSIM is informational (ADR-0014); the visual gate is Reviewer + spot-check reading the triplet below."$'\n\n'
-          BODY+="| pattern | SSIM |"$'\n'"|---|---|"$'\n'
-          BODY+="${{ steps.verify.outputs.results }}"$'\n\n'
-          for pair in $PATTERNS; do
+          RAW="https://raw.githubusercontent.com/${REPO}/${BR}/${DEST}"
+          MARKER="<!-- builder:current-head-evidence -->"
+          BODY="${MARKER}"$'\n\n'"## Builder · evidence"$'\n\n'
+          BODY+="Current head: \`${SHA:0:7}\` · [DocC preview](https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/documentation/swami/)"$'\n\n'
+          BODY+="Builder changed and verified only the pattern work listed below. Repository-wide regression renders remain available in the workflow artifact."$'\n\n'
+          for pair in $CHANGED_PATTERNS; do
             slug="${pair%%:*}"
-            BODY+="**${slug}**"$'\n\n'
+            stem="${pair##*:}"
+            score=$(printf '%s\n' "$RESULTS" | awk -F'|' -v wanted="$slug" '$2 ~ "^[[:space:]]*" wanted "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $3); print $3; exit}')
+            BODY+="### ${stem}"$'\n\n'
+            BODY+="Changed: \`app/Swami/Patterns/${stem}.swift\` · Origami ${ORIGAMI_VERSION} · SSIM ${score:-unavailable}"$'\n\n'
             BODY+="| Swami | Origami | Diff |"$'\n'"|---|---|---|"$'\n'
             BODY+="| ![swami](${RAW}/swami/${slug}.png) | ![origami](${RAW}/origami/${slug}.png) | ![diff](${RAW}/diff/${slug}.png) |"$'\n\n'
           done
-          BODY+="_Static layout only. Interaction gate (drive gesture, compare response) is separate — ADR-0013 follow-up._"
-          gh pr comment "$PR" --repo "$REPO" --edit-last --body "$BODY" 2>/dev/null \
-            || gh pr comment "$PR" --repo "$REPO" --body "$BODY"
+          BODY+="_Static evidence. Interaction recordings appear here when the pattern harness produces them._"$'\n'
+          printf '%s' "$BODY" > /tmp/builder-evidence.md
+          comment_id=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            --jq '.[] | select(.body | contains("<!-- builder:current-head-evidence -->")) | .id' \
+            | head -1)
+          jq -n --rawfile body /tmp/builder-evidence.md '{body:$body}' > /tmp/builder-evidence.json
+          if [ -n "$comment_id" ]; then
+            gh api "repos/${REPO}/issues/comments/${comment_id}" -X PATCH --input /tmp/builder-evidence.json
+          else
+            gh api "repos/${REPO}/issues/${PR}/comments" -X POST --input /tmp/builder-evidence.json
+          fi
+
+      - name: Explain fork evidence policy
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
+        run: |
+          echo "::notice::Builder evidence publication is withheld for fork-authored code because GitHub App secrets are unavailable to untrusted pull requests. Maintainers can inspect the workflow artifact and re-run the trusted path after bringing the head into this repository."
+          {
+            echo "## Fork evidence policy"
+            echo
+            echo "Builder evidence and the PR DocC publication are withheld because this pull request originates from a fork. The verification artifact remains available to maintainers. Bring the head into this repository, then dispatch the trusted workflow to publish attributed evidence."
+          } >> "$GITHUB_STEP_SUMMARY"
 
 # NEXT (per ADR-0013): (a) parser-verification step that reads Origami's Inspector via AX
 # attributes and diffs against the parser's IR; (b) interaction gate — XCUITest-drives-both-sides
