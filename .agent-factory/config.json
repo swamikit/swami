@@ -26,21 +26,21 @@
   },
   "builder": {
     "marker": "<!-- builder:agent-factory -->",
-    "provider": "minimax",
+    "provider": "openrouter",
     "harness": "openai-compatible",
-    "model": "MiniMax-M2.7",
+    "model": "openrouter/free",
     "cli_version": "0.55.1",
     "timeout_seconds": 1800,
     "branch_prefix": "agent-factory/issue-",
     "base_branch": "development",
     "runner": "macos-15",
-    "fallback_provider": "openrouter",
-    "fallback_model": "qwen/qwen3-coder-next",
+    "fallback_provider": "nvidia",
+    "fallback_model": "moonshotai/kimi-k3",
     "max_model_requests": 60,
     "max_revision_attempts": 3,
     "max_model_cost_usd": 3.0,
-    "input_cost_per_million": 0.3,
-    "output_cost_per_million": 1.2
+    "input_cost_per_million": 0.0,
+    "output_cost_per_million": 0.0
   },
   "review": {
     "marker": "<!-- reviewer:agent-factory -->",
