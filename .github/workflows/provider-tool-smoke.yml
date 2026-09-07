@@ -1,0 +1,25 @@
+name: provider-tool-smoke
+
+on:
+  pull_request:
+    branches: [development]
+    paths:
+      - .github/workflows/provider-tool-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nvidia:
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@c16883cf1410ed4c2ec49e863a83c4710a62bdf2
+    with:
+      factory_ref: c16883cf1410ed4c2ec49e863a83c4710a62bdf2
+      provider: nvidia
+      models: moonshotai/kimi-k3
+      max_candidates: 1
+      builder_shape: true
+      max_output_tokens: 2048
+      prompt_bytes: 70000
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
