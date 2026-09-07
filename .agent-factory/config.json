@@ -47,10 +47,10 @@
     "failure_marker": "<!-- reviewer:agent-factory-failure -->",
     "required": true,
     "max_diff_bytes": 200000,
-    "provider": "openrouter",
-    "model": "openrouter/free",
-    "fallback_provider": "nvidia",
-    "fallback_model": "moonshotai/kimi-k3"
+    "provider": "gemini",
+    "model": "gemini-3.6-flash",
+    "fallback_provider": "openrouter",
+    "fallback_model": "openrouter/free"
   },
   "integration": {
     "marker": "<!-- steward:agent-factory-integration -->",
