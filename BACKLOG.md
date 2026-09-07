@@ -30,9 +30,10 @@ agent — the cloud loop does not write there.
   Origami's Sparkle appcast, installs the app, opens each pattern from origami.design's
   public URL, drives `View → Take Screenshot`, then diffs against SwamiHost's sim render.
   No cross-repo dep, no secrets.
-- **PATTERNS growth**: current single entry `touch:Interaction_Touch`. Add one line per
-  translated pattern (`<slug>:<origami-filename-stem>`) as the corpus grows; the ContentView
-  switch in `app/SwamiHost/ContentView.swift` gets a matching case.
+- **PATTERNS growth**: current single entry `touch:Interaction_Touch` in
+  `.github/patterns.txt`. Add one registry line per translated pattern
+  (`<slug>:<origami-filename-stem>`) as the corpus grows; the ContentView switch in
+  `app/SwamiHost/ContentView.swift` gets a matching case.
 - **Parser generalization** — biggest live blocker. Currently only Touch-sized files parse
   cleanly (placed-vs-library fixed tail offset). Interaction_Drag over-includes the embedded
   Drag component. Until this generalizes, we can't feed the loop pattern N+1.
