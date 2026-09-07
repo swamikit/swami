@@ -5,9 +5,9 @@ name: verify
 # each pattern to render Origami's reference, then boots SwamiHost's sim to render
 # ours, then SSIM-compares. No cross-repo dep, no cached references.
 #
-# SSIM is posted as evidence, not a verdict (ADR-0014 supersedes ADR-0013's
-# implicit gate). The visual gate is Reviewer + Sam's spot-check reading the
-# swami / origami / diff triplet.
+# SSIM remains evidence rather than a pixel-perfect verdict (ADR-0014), but a
+# catastrophic mismatch is a deterministic failure. Reviewer then judges the
+# current-head media and documentation summarized in Builder's PR description.
 #
 # Assumes: Xcode project at app/Swami.xcodeproj, shared `SwamiHost` scheme,
 # SwamiHost's ContentView switching on the `SWAMI_PATTERN` env var.
@@ -28,6 +28,9 @@ permissions:
 env:
   APP_PROJECT: app/Swami.xcodeproj
   SCHEME: SwamiHost
+  FACTORY_REF: fa215887363a4e6e7a9fe93ef2e3992475f59a37
+  MAESTRO_VERSION: 2.7.0
+  VISUAL_SANITY_FLOOR: "0.50"
 
 jobs:
   # Always runs. Cheap ubuntu check that classifies the PR's touched paths so we
@@ -81,11 +84,20 @@ jobs:
     # manufacturing a fake code change (Codex P2 catch).
     if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
+    timeout-minutes: 40
     env:
       PATTERNS: ${{ needs.changes.outputs.patterns }}
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+
+      - name: Checkout pinned Builder delivery publisher
+        uses: actions/checkout@v4
+        with:
+          repository: samuelalake/agent-factory
+          ref: ${{ env.FACTORY_REF }}
+          path: factory-delivery
           persist-credentials: false
 
       - name: Mint Builder installation token
@@ -98,6 +110,49 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
 
+      - name: Resolve PR, source head, and changed patterns
+        id: evidence
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
+        env:
+          GH_TOKEN: ${{ steps.builder-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR="${{ github.event.number }}"
+            SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            BRANCH="${{ github.ref_name }}"
+            SHA="${{ github.sha }}"
+            PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
+                    --json number --jq '.[0].number // empty')
+            if [ -z "$PR" ]; then
+              echo "::warning::no open PR found for head=$BRANCH — delivery publication will be skipped"
+              echo "pr=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          CHANGED=""
+          changed_count=$(gh api "repos/${REPO}/pulls/${PR}" --jq '.changed_files')
+          if ! files=$(gh api "repos/${REPO}/pulls/${PR}/files" --paginate --jq '.[].filename'); then
+            echo "::error::could not enumerate changed PR files; refusing incomplete delivery"
+            exit 1
+          fi
+          observed_count=$(printf '%s\n' "$files" | sed '/^$/d' | wc -l | tr -d ' ')
+          if [ "$observed_count" != "$changed_count" ]; then
+            echo "::error::GitHub returned ${observed_count} of ${changed_count} changed files; refusing incomplete delivery"
+            exit 1
+          fi
+          for pair in $PATTERNS; do
+            stem="${pair##*:}"
+            if printf '%s\n' "$files" | grep -Fxq "app/Swami/Patterns/${stem}.swift"; then
+              CHANGED="${CHANGED:+$CHANGED }$pair"
+            fi
+          done
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "changed_patterns=$CHANGED" >> "$GITHUB_OUTPUT"
+
       - name: Environment
         run: |
           xcodebuild -version
@@ -108,6 +163,16 @@ jobs:
           # macos-15 runners don't ship with ImageMagick's `compare`; install it.
           brew install imagemagick --quiet
           compare -version | head -1
+
+      - name: Install pinned Maestro interaction driver
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/maestro.zip \
+            "https://github.com/mobile-dev-inc/Maestro/releases/download/cli-${MAESTRO_VERSION}/maestro.zip"
+          echo "a4ccab6b604617e7aef6db4f885666056eabe5cfa32befaa3bc994041b8fcbb5  /tmp/maestro.zip" \
+            | shasum -a 256 -c -
+          unzip -q /tmp/maestro.zip -d /tmp/maestro
+          echo "/tmp/maestro/maestro/bin" >> "$GITHUB_PATH"
 
       - name: Install Origami Studio (Sparkle appcast)
         id: origami
@@ -128,6 +193,8 @@ jobs:
 
       - name: Render Origami references (drives sim dims)
         id: origami-renders
+        env:
+          CHANGED_PATTERNS: ${{ steps.evidence.outputs.changed_patterns }}
         run: |
           # Render Origami's side of every pattern BEFORE picking the sim, so the sim
           # picker can size the SwiftUI runner to the exact pixel dimensions Origami
@@ -140,15 +207,14 @@ jobs:
           #   3. Sim-picker step keys off those dims (exact equality); tier ranking is
           #      the tiebreaker / fallback when the target is unknown or no sim matches.
           #
-          # Primary = the first pattern in $PATTERNS. Origami's default artboard is
-          # Pro-Max-sized (1290×2796 on iPhone 14/15 Pro Max, 1290×2796 on 15/16 Plus);
-          # `Interaction_Touch` is a portrait full-artboard render at that size today.
-          # If the primary render misses, we degrade to any pattern that did render;
-          # if none rendered, we omit the target dims and the sim picker falls back to
-          # pure tier ranking.
+          # Primary = the changed pattern for a one-pattern PR; registry order is the
+          # fallback for pushes and control-plane changes. If that render misses, we
+          # degrade to any pattern that did render. If none rendered, the sim picker
+          # falls back to pure tier ranking.
           mkdir -p out/origami
+          RUN_PATTERNS="${CHANGED_PATTERNS:-$PATTERNS}"
 
-          for pair in $PATTERNS; do
+          for pair in $RUN_PATTERNS; do
             slug="${pair%%:*}"
             stem="${pair##*:}"
             src_url="https://origami.design/public/origami_files/patterns/${stem}.origami"
@@ -188,11 +254,9 @@ jobs:
             sleep 0.5
           done
 
-          # Publish the primary pattern's dims (fall back to any rendered pattern) so
-          # the sim picker can match them exactly. Primary = first entry in $PATTERNS
-          # ("touch" today). %%:* is greedy so it strips ":Interaction_Touch <rest>"
-          # even when more pairs are added later.
-          first_slug="${PATTERNS%%:*}"
+          # A one-pattern delivery must use that pattern's reference dimensions.
+          # Registry order is only the fallback for pushes or control-plane PRs.
+          first_slug="${RUN_PATTERNS%%:*}"
           target_png="out/origami/${first_slug}.png"
           if [ ! -f "$target_png" ]; then
             target_png=$(ls out/origami/*.png 2>/dev/null | head -1 || true)
@@ -342,14 +406,17 @@ jobs:
 
       - name: Render SwamiHost + compare per pattern
         id: verify
+        env:
+          CHANGED_PATTERNS: ${{ steps.evidence.outputs.changed_patterns }}
         run: |
           # Origami's side is already rendered by the earlier "Render Origami references"
           # step (dims-first sim pick depends on it). This step handles the SwamiHost
           # side and the per-pattern SSIM compare.
           mkdir -p out/swami out/diff
           RESULTS=""
+          RUN_PATTERNS="${CHANGED_PATTERNS:-$PATTERNS}"
 
-          for pair in $PATTERNS; do
+          for pair in $RUN_PATTERNS; do
             slug="${pair%%:*}"
             stem="${pair##*:}"
             echo "==> ${slug} (${stem})"
@@ -368,11 +435,17 @@ jobs:
             sleep 3
             xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot "out/swami/${slug}.png"
 
-            # Perceptual SSIM (1.0 identical, closer to 0 = worse) — informational
-            # only per ADR-0014. No threshold, no pass/fail; posted as a data point.
-            score=$(compare -metric SSIM "out/swami/${slug}.png" "out/origami/${slug}.png" "out/diff/${slug}.png" 2>&1 || true)
-            echo "  SSIM $score"
-            RESULTS="${RESULTS}| ${slug} | ${score} |"$'\n'
+            # ImageMagick can emit an unnormalized value followed by normalized
+            # SSIM in parentheses. Publish and gate on the normalized 0...1 value.
+            raw_score=$(compare -metric SSIM "out/swami/${slug}.png" "out/origami/${slug}.png" "out/diff/${slug}.png" 2>&1 || true)
+            score=$(printf '%s' "$raw_score" | sed -nE 's/.*\(([0-9]+([.][0-9]+)?)\).*/\1/p')
+            if [ -z "$score" ]; then
+              score=$(printf '%s' "$raw_score" | grep -oE '[0-9]+([.][0-9]+)?' | tail -1 || true)
+            fi
+            score="${score:-0}"
+            sanity=$(awk -v score="$score" -v floor="$VISUAL_SANITY_FLOOR" 'BEGIN { print (score >= floor) ? "pass" : "fail" }')
+            echo "  normalized SSIM $score — catastrophic sanity $sanity"
+            RESULTS="${RESULTS}| ${slug} | ${score} | ${sanity} |"$'\n'
           done
 
           {
@@ -387,63 +460,51 @@ jobs:
         uses: actions/upload-artifact@v4
         with: { name: pixel-gate, path: out/, if-no-files-found: warn }
 
-      - name: Resolve PR + SHA for evidence
-        # `pull_request` payload carries both directly. Under `workflow_dispatch`
-        # (Builder GA's ready-path dispatch) the payload has neither, so resolve
-        # the PR from the dispatched ref (`gh pr list --head`) and use the
-        # dispatched SHA. Failing to resolve is not fatal — the pixel gate has
-        # still produced artifacts; we just skip the PR comment. Codex P1
-        # round 3: the previous "Post evidence" step was gated on
-        # `github.event_name == 'pull_request'`, so dispatched Verify runs
-        # completed without posting the swami/origami/diff triplet.
-        id: evidence
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
+      - name: Record changed interaction patterns
+        if: steps.evidence.outputs.pr != '' && contains(steps.evidence.outputs.changed_patterns, 'drag:Interaction_Drag')
         env:
-          GH_TOKEN: ${{ steps.builder-token.outputs.token }}
-          REPO: ${{ github.repository }}
+          APP_ID: ${{ steps.app.outputs.bid }}
+          UDID: ${{ steps.sim.outputs.udid }}
         run: |
-          set -eu
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            PR="${{ github.event.number }}"
-            SHA="${{ github.event.pull_request.head.sha }}"
-          else
-            # workflow_dispatch — resolve from the ref that was dispatched
-            # (e.g. `ready/issue-42`). If no open PR is found for that
-            # branch, emit a warning and skip posting; a follow-up rerun
-            # via `pull_request` will fill it in.
-            BRANCH="${{ github.ref_name }}"
-            SHA="${{ github.sha }}"
-            PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
-                    --json number --jq '.[0].number // empty')
-            if [ -z "$PR" ]; then
-              echo "::warning::no open PR found for head=$BRANCH — skipping evidence post."
-              echo "pr=" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-          CHANGED=""
-          changed_count=$(gh api "repos/${REPO}/pulls/${PR}" --jq '.changed_files')
-          if ! files=$(gh api "repos/${REPO}/pulls/${PR}/files" --paginate --jq '.[].filename'); then
-            echo "::error::could not enumerate changed PR files; refusing to publish incomplete evidence"
-            exit 1
-          fi
-          observed_count=$(printf '%s\n' "$files" | sed '/^$/d' | wc -l | tr -d ' ')
-          if [ "$observed_count" != "$changed_count" ]; then
-            echo "::error::GitHub returned ${observed_count} of ${changed_count} changed files (the API caps at 3,000); refusing to publish incomplete evidence"
-            exit 1
-          fi
-          for pair in $PATTERNS; do
-            slug="${pair%%:*}"
-            stem="${pair##*:}"
-            if printf '%s\n' "$files" | grep -Fxq "app/Swami/Patterns/${stem}.swift"; then
-              CHANGED="${CHANGED:+$CHANGED }$pair"
-            fi
-          done
-          echo "pr=$PR" >> "$GITHUB_OUTPUT"
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "changed_patterns=$CHANGED" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          mkdir -p out/recordings
+          cat > /tmp/interaction-drag.yaml <<EOF
+          appId: ${APP_ID}
+          ---
+          - swipe:
+              start: 50%, 50%
+              end: 82%, 28%
+              duration: 1200
+          - waitForAnimationToEnd
+          - swipe:
+              start: 50%, 50%
+              end: 18%, 72%
+              duration: 1200
+          - waitForAnimationToEnd
+          EOF
+          xcrun simctl terminate "$UDID" "$APP_ID" 2>/dev/null || true
+          SIMCTL_CHILD_SWAMI_PATTERN=drag xcrun simctl launch "$UDID" "$APP_ID"
+          sleep 2
+          xcrun simctl io "$UDID" recordVideo --codec=h264 --force out/recordings/drag.mp4 &
+          recorder_pid=$!
+          trap 'kill -INT "$recorder_pid" 2>/dev/null || true; wait "$recorder_pid" 2>/dev/null || true' EXIT
+          python3 - "$UDID" <<'PY'
+          import subprocess
+          import sys
 
-      - name: Publish Builder evidence onto the PR
+          subprocess.run(
+              ["maestro", "--device", sys.argv[1], "test", "/tmp/interaction-drag.yaml"],
+              check=True,
+              timeout=300,
+          )
+          PY
+          kill -INT "$recorder_pid"
+          wait "$recorder_pid" || true
+          trap - EXIT
+          test -s out/recordings/drag.mp4
+
+      - name: Publish canonical Builder delivery into the PR description
+        id: builder-delivery
         if: (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)) && steps.evidence.outputs.pr != '' && steps.evidence.outputs.changed_patterns != ''
         env:
           GH_TOKEN: ${{ steps.builder-token.outputs.token }}
@@ -455,56 +516,61 @@ jobs:
           ORIGAMI_VERSION: ${{ steps.verify.outputs.origami_version }}
         run: |
           set -euo pipefail
-          BR="ci-screenshots"
-          DEST="pr-${PR}/${SHA}"
+          gh pr edit --help | grep -q -- '--attach' || {
+            echo "::error::This runner's GitHub CLI does not support native PR attachments"
+            exit 1
+          }
           SITE_REPO="${REPO#*/}"
-          git config user.name "Builder"
-          git config user.email "builder@agent-factory.local"
-          gh auth setup-git
-          if git fetch origin "$BR:refs/remotes/origin/$BR" 2>/dev/null; then
-            git checkout -B "$BR" "origin/$BR"
-          else
-            git checkout --orphan "$BR"
-            git rm -rf . >/dev/null 2>&1 || true
-          fi
-          # The PR has one current-head evidence surface, so retain only the
-          # directory referenced by that surface. A stale URL becomes a 404;
-          # it can never silently display media from a newer head.
-          if [ -d "pr-${PR}" ]; then
-            find "pr-${PR}" -mindepth 1 -maxdepth 1 -type d \
-              ! -name "$SHA" -exec rm -rf {} +
-          fi
-          mkdir -p "$DEST"
-          cp -R out/* "$DEST/"
-          git add "$DEST"
-          git commit -m "evidence: PR #$PR @ ${SHA:0:7}" || true
-          git push origin "$BR"
+          DOCC_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/documentation/swami/"
+          DOCC_HEAD_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/.agent-factory-head"
+          docc_status="failed"
+          for attempt in $(seq 1 180); do
+            published_head=$(curl -fsSL "$DOCC_HEAD_URL" 2>/dev/null || true)
+            if [ "$published_head" = "$SHA" ] && [ "$(curl -sL -o /dev/null -w '%{http_code}' "$DOCC_URL")" = "200" ]; then
+              docc_status="ready"
+              break
+            fi
+            sleep 10
+          done
 
-          RAW="https://raw.githubusercontent.com/${REPO}/${BR}/${DEST}"
-          MARKER="<!-- builder:current-head-evidence -->"
-          BODY="${MARKER}"$'\n\n'"## Builder · evidence"$'\n\n'
-          BODY+="Current head: \`${SHA:0:7}\` · [DocC preview](https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/documentation/swami/)"$'\n\n'
-          BODY+="Builder changed and verified only the pattern work listed below. Repository-wide regression renders remain available in the workflow artifact."$'\n\n'
+          BODY="Current head: \`${SHA:0:7}\` · [DocC preview](${DOCC_URL})"$'\n\n'
+          BODY+="Builder changed and verified only the current pattern work listed below. No unrelated pattern media is included."$'\n\n'
+          BODY+="- DocC: **${docc_status}**"$'\n'
+          overall="ready"
+          ATTACHMENTS=()
           for pair in $CHANGED_PATTERNS; do
             slug="${pair%%:*}"
             stem="${pair##*:}"
             score=$(printf '%s\n' "$RESULTS" | awk -F'|' -v wanted="$slug" '$2 ~ "^[[:space:]]*" wanted "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $3); print $3; exit}')
+            sanity=$(printf '%s\n' "$RESULTS" | awk -F'|' -v wanted="$slug" '$2 ~ "^[[:space:]]*" wanted "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $4); print $4; exit}')
+            [ "$sanity" = "pass" ] || overall="failed"
             BODY+="### ${stem}"$'\n\n'
-            BODY+="Changed: \`app/Swami/Patterns/${stem}.swift\` · Origami ${ORIGAMI_VERSION} · SSIM ${score:-unavailable}"$'\n\n'
+            BODY+="Changed: \`app/Swami/Patterns/${stem}.swift\` · Origami ${ORIGAMI_VERSION} · normalized SSIM ${score:-unavailable} · catastrophic sanity **${sanity:-failed}**"$'\n\n'
             BODY+="| Swami | Origami | Diff |"$'\n'"|---|---|---|"$'\n'
-            BODY+="| ![swami](${RAW}/swami/${slug}.png) | ![origami](${RAW}/origami/${slug}.png) | ![diff](${RAW}/diff/${slug}.png) |"$'\n\n'
+            BODY+="| ![Swami ${stem}](out/swami/${slug}.png) | ![Origami ${stem}](out/origami/${slug}.png) | ![Difference for ${stem}](out/diff/${slug}.png) |"$'\n\n'
+            ATTACHMENTS+=(--attach "out/swami/${slug}.png" --attach "out/origami/${slug}.png" --attach "out/diff/${slug}.png")
+            if [ -s "out/recordings/${slug}.mp4" ]; then
+              BODY+="#### Interaction recording"$'\n\n'"![](out/recordings/${slug}.mp4)"$'\n\n'
+              ATTACHMENTS+=(--attach "out/recordings/${slug}.mp4")
+            elif [ "$slug" = "drag" ]; then
+              BODY+="Interaction recording: **missing**"$'\n\n'
+              overall="failed"
+            fi
           done
-          BODY+="_Static evidence. Interaction recordings appear here when the pattern harness produces them._"$'\n'
-          printf '%s' "$BODY" > /tmp/builder-evidence.md
-          comment_id=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
-            --jq '.[] | select(.body | contains("<!-- builder:current-head-evidence -->")) | .id' \
-            | head -1)
-          jq -n --rawfile body /tmp/builder-evidence.md '{body:$body}' > /tmp/builder-evidence.json
-          if [ -n "$comment_id" ]; then
-            gh api "repos/${REPO}/issues/comments/${comment_id}" -X PATCH --input /tmp/builder-evidence.json
-          else
-            gh api "repos/${REPO}/issues/${PR}/comments" -X POST --input /tmp/builder-evidence.json
-          fi
+          [ "$docc_status" = "ready" ] || overall="failed"
+          printf '%s' "$BODY" > /tmp/builder-delivery.md
+          PYTHONPATH=factory-delivery/src python3 -m agent_factory.github_delivery \
+            --repo "$REPO" --pr "$PR" --head "$SHA" --status "$overall" \
+            --body-file /tmp/builder-delivery.md "${ATTACHMENTS[@]}"
+          echo "status=$overall" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce current-head delivery sanity
+        if: steps.evidence.outputs.pr != '' && steps.evidence.outputs.changed_patterns != ''
+        run: |
+          test "${{ steps.builder-delivery.outputs.status }}" = "ready" || {
+            echo "::error::Builder delivery is not reviewable; inspect the canonical PR description"
+            exit 1
+          }
 
       - name: Explain fork evidence policy
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
