@@ -11,9 +11,10 @@ from urllib.parse import urlsplit
 
 BASE_URL = re.compile(r"\bbaseUrl\s*=\s*['\"]([^'\"]+)['\"]")
 ASSET = re.compile(r"(?:src|href)=['\"]([^'\"]+)['\"]", re.IGNORECASE)
+REDIRECT = re.compile(r"data-docc-redirect=['\"]([^'\"]+)['\"]")
 
 
-def validate(site: Path, hosting_base: str) -> list[str]:
+def validate(site: Path, hosting_base: str, landing_path: str = "documentation/swami") -> list[str]:
     errors: list[str] = []
     if not hosting_base.startswith("/") or hosting_base.endswith("/"):
         errors.append("hosting base must start with '/' and omit the trailing slash")
@@ -21,11 +22,20 @@ def validate(site: Path, hosting_base: str) -> list[str]:
     index = site / "index.html"
     if not index.is_file():
         return ["site/index.html is missing"]
-    html = index.read_text(encoding="utf-8", errors="replace")
+    entrypoint = index.read_text(encoding="utf-8", errors="replace")
+    target = f"{hosting_base}/{landing_path.strip('/')}/"
+    redirect = REDIRECT.search(entrypoint)
+    if redirect is None or redirect.group(1) != target:
+        errors.append(f"root entrypoint does not redirect to {target}")
+    landing = site / landing_path.strip("/") / "index.html"
+    if not landing.is_file():
+        errors.append(f"landing page is missing: {landing_path.strip('/')}/index.html")
+        return errors
+    html = landing.read_text(encoding="utf-8", errors="replace")
     match = BASE_URL.search(html)
     if match is None:
         errors.append("index.html does not declare DocC baseUrl")
-    elif match.group(1) != hosting_base:
+    elif match.group(1).rstrip("/") != hosting_base:
         errors.append(f"baseUrl is {match.group(1)!r}; expected {hosting_base!r}")
 
     local_assets = 0
@@ -56,8 +66,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("site", type=Path)
     parser.add_argument("--hosting-base", required=True)
+    parser.add_argument("--landing-path", default="documentation/swami")
     args = parser.parse_args()
-    errors = validate(args.site, args.hosting_base)
+    errors = validate(args.site, args.hosting_base, args.landing_path)
     if errors:
         for error in errors:
             print(f"error: {error}")

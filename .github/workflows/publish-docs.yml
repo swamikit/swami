@@ -64,15 +64,15 @@ jobs:
             pr="${{ github.event.pull_request.number }}"
             echo "subpath=pr-${pr}" >> "$GITHUB_OUTPUT"
             echo "hosting_base=/${SITE_REPO}/pr-${pr}" >> "$GITHUB_OUTPUT"
-            echo "public_url=https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${pr}/" >> "$GITHUB_OUTPUT"
+            echo "public_url=https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${pr}/documentation/swami/" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.ref_name }}" = "development" ]; then
             echo "subpath=dev" >> "$GITHUB_OUTPUT"
             echo "hosting_base=/${SITE_REPO}/dev" >> "$GITHUB_OUTPUT"
-            echo "public_url=https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/dev/" >> "$GITHUB_OUTPUT"
+            echo "public_url=https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/dev/documentation/swami/" >> "$GITHUB_OUTPUT"
           else
             echo "subpath=" >> "$GITHUB_OUTPUT"
             echo "hosting_base=/${SITE_REPO}" >> "$GITHUB_OUTPUT"
-            echo "public_url=https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/" >> "$GITHUB_OUTPUT"
+            echo "public_url=https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/documentation/swami/" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build DocC archive
@@ -123,9 +123,13 @@ jobs:
 
       - name: Validate static site and hosting base
         if: steps.guard.outputs.skip != 'true'
-        run: >-
-          python3 scripts/validate_docc_site.py site
-          --hosting-base "${{ steps.target.outputs.hosting_base }}"
+        run: |
+          python3 scripts/prepare_docc_site.py site \
+            --hosting-base "${{ steps.target.outputs.hosting_base }}" \
+            --landing-path documentation/swami
+          python3 scripts/validate_docc_site.py site \
+            --hosting-base "${{ steps.target.outputs.hosting_base }}" \
+            --landing-path documentation/swami
 
       - name: Publish to gh-pages
         if: steps.guard.outputs.skip != 'true'

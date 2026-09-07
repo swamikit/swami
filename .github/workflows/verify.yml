@@ -462,7 +462,7 @@ jobs:
           RAW="https://raw.githubusercontent.com/${REPO}/${BR}/${DEST}"
           MARKER="<!-- builder:current-head-evidence -->"
           BODY="${MARKER}"$'\n\n'"## Builder · evidence"$'\n\n'
-          BODY+="Current head: \`${SHA:0:7}\` · [DocC preview](https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO:-swami}/pr-${PR}/)"$'\n\n'
+          BODY+="Current head: \`${SHA:0:7}\` · [DocC preview](https://${GITHUB_REPOSITORY_OWNER}.github.io/swami/pr-${PR}/documentation/swami/)"$'\n\n'
           BODY+="Builder changed and verified only the pattern work listed below. Repository-wide regression renders remain available in the workflow artifact."$'\n\n'
           for pair in $CHANGED_PATTERNS; do
             slug="${pair%%:*}"
