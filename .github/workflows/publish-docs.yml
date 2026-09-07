@@ -153,6 +153,8 @@ jobs:
 
           # Replace only the slice we own — PR dir on PRs, or root files on main.
           if [ -n "${SUBPATH}" ]; then
+            # Delete the whole prior slice before copying. This preserves
+            # deletions and renames; cp must never overlay a stale preview.
             rm -rf "gh-pages/${SUBPATH}"
             mkdir -p "gh-pages/${SUBPATH}"
             cp -R site/. "gh-pages/${SUBPATH}/"
