@@ -20,22 +20,22 @@ agent — the cloud loop does not write there.
   Momentum/rubber-band CONSTANTS are placeholders (iOS-standard), not Origami's real defaults
   (see parser TODO). Drive: fling → momentum decay matches Origami feel; over-drag past bounds →
   rubber-band resists then settles; release at rest → clamps; velocity reset on fresh touch.
-- **Interaction_Drag (examples/Interaction_Drag.draft.swift)** — STRUCTURAL DRAFT only. Geometry,
-  colors, bounds, layer count NOT read from the graph (parser tail heuristic over-includes the
-  embedded Drag component on this 534 KB file). Must: (a) generalize the parser to isolate the real
-  placed graph, (b) re-generate from true values, (c) drive-verify.
+- **Interaction_Drag** — **ITEM 1 OF 69 ✓** (2026-09-07): Artboard 888×1212, tan card #B0E0B27B,
+  220×140 centered, corner radius 20, drag with momentum + rubber-band bounds, snap-to-center.
+  Parser generalized via `placed_root_offset()` (ADR-0013 structural walk). GALLERY VERIFIED:
+  first corpus entry shipped.
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
 - **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches
   Origami's Sparkle appcast, installs the app, opens each pattern from origami.design's
   public URL, drives `View → Take Screenshot`, then diffs against SwamiHost's sim render.
   No cross-repo dep, no secrets.
-- **PATTERNS growth**: current single entry `touch:Interaction_Touch`. Add one line per
+- **PATTERNS growth**: `touch:Interaction_Touch drag:Interaction_Drag` (2 of 69). Add one line per
   translated pattern (`<slug>:<origami-filename-stem>`) as the corpus grows; the ContentView
   switch in `app/SwamiHost/ContentView.swift` gets a matching case.
-- **Parser generalization** — biggest live blocker. Currently only Touch-sized files parse
-  cleanly (placed-vs-library fixed tail offset). Interaction_Drag over-includes the embedded
-  Drag component. Until this generalizes, we can't feed the loop pattern N+1.
+- **Parser generalization** — ✅ landed with Interaction_Drag. `placed_root_offset()` now
+  structurally isolates the placed graph from embedded component internals. Pattern N+1
+  ready for translation.
 
 ## Follow-up ADRs on the same runner substrate (ADR-0013 enables)
 - **Parser verification via Origami Inspector** — osascript can read AX attributes of
@@ -88,3 +88,11 @@ agent — the cloud loop does not write there.
 - **Steward PR intake** (not yet scheduled) — consider letting Steward skim
   new PRs for cross-ADR contradictions and stale assumptions. Keep this
   separate from the required independent Reviewer verdict.
+
+## Generalization Gap (Issue #83 learning)
+
+The parser now successfully uses `placed_root_offset()` to structurally isolate the placed graph from embedded component internals. However, the following gaps remain:
+
+**Unresolved**: Exact drag physics constants (Momentum Friction, Rubber Band Friction, decel rate) are still placeholders from iOS defaults. These live as port default *values* inside origami.DragSettings — reading them needs FlatBuffers port-value decoding, which the parser doesn't implement yet.
+
+**Not expanded** (per issue scope): This issue focused on delivering Interaction_Drag as the first corpus entry. Parser, codegen, and DocC improvements are by-products recorded here, but not expanded to a second pattern.

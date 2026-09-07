@@ -16,6 +16,16 @@ cleanly, Swami uses it. Where Origami's semantics need a helper — for example 
 Interaction patch's four discrete output ports, or Drag's momentum + rubber-band
 physics — Swami ships a helper named after the Origami patch and shaped like it.
 
+## Corpus (69 patterns)
+
+The translated corpus is the gallery and the training set. Each entry is a
+verified SwiftUI translation of an Origami pattern.
+
+### Interaction
+
+- <doc:Interaction_Touch>
+- <doc:Interaction_Drag>
+
 ## Topics
 
 ### Reference
@@ -31,3 +41,4 @@ physics — Swami ships a helper named after the Origami patch and shaped like i
 ### Examples
 
 - ``TouchOrigamiExampleView``
+- ``Interaction_DragView``

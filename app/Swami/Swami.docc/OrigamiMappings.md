@@ -20,6 +20,7 @@ SwiftUI equivalent.
 |---|---|
 | Pure value patch (Add, Transition/interpolate, logic) | computed property / expression |
 | Interaction (Tap, Down/press, Double Tap, Long Press) | gesture + `@State` / `@GestureState` |
+| `origami.drag` — Drag | ``drag(enable:momentum:bounds:position:translation:velocity:reset:)`` (helper) |
 | State/memory (Switch, Sample and Hold) | `@State` + update logic |
 | Animation (Classic Animation, Pop/Spring) | `withAnimation` / `.animation(.spring)` |
 
