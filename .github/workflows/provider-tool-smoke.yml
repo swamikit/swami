@@ -12,11 +12,14 @@ permissions:
 
 jobs:
   nvidia:
-    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@16f81dc3ef19d5959a32a139b392f348df3b099b
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@c16883cf1410ed4c2ec49e863a83c4710a62bdf2
     with:
-      factory_ref: 16f81dc3ef19d5959a32a139b392f348df3b099b
+      factory_ref: c16883cf1410ed4c2ec49e863a83c4710a62bdf2
       provider: nvidia
       models: moonshotai/kimi-k3
-      max_candidates: 4
+      max_candidates: 1
+      builder_shape: true
+      max_output_tokens: 2048
+      prompt_bytes: 70000
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
