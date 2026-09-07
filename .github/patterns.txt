@@ -1,2 +1,3 @@
-# Each entry is <verification-slug>:<origami-file-stem>.
+# Format: <slug>:<origami-file-stem>. Slugs use lowercase letters, digits, and
+# underscores; stems use letters, digits, and underscores, matching current IDs.
 touch:Interaction_Touch

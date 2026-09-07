@@ -48,7 +48,7 @@ jobs:
               ""|\#*) continue ;;
             esac
             if [[ ! "$pair" =~ ^[a-z0-9_]+:[A-Za-z0-9_]+$ ]]; then
-              echo "Invalid pattern registry entry: $pair"
+              echo "Invalid pattern registry entry: $pair (expected [a-z0-9_]+:[A-Za-z0-9_]+)"
               exit 1
             fi
             patterns="${patterns:+$patterns }$pair"
