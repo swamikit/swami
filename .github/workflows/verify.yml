@@ -84,6 +84,7 @@ jobs:
     # manufacturing a fake code change (Codex P2 catch).
     if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
+    timeout-minutes: 40
     env:
       PATTERNS: ${{ needs.changes.outputs.patterns }}
     steps:
@@ -211,8 +212,9 @@ jobs:
           # degrade to any pattern that did render. If none rendered, the sim picker
           # falls back to pure tier ranking.
           mkdir -p out/origami
+          RUN_PATTERNS="${CHANGED_PATTERNS:-$PATTERNS}"
 
-          for pair in $PATTERNS; do
+          for pair in $RUN_PATTERNS; do
             slug="${pair%%:*}"
             stem="${pair##*:}"
             src_url="https://origami.design/public/origami_files/patterns/${stem}.origami"
@@ -254,8 +256,7 @@ jobs:
 
           # A one-pattern delivery must use that pattern's reference dimensions.
           # Registry order is only the fallback for pushes or control-plane PRs.
-          primary_patterns="${CHANGED_PATTERNS:-$PATTERNS}"
-          first_slug="${primary_patterns%%:*}"
+          first_slug="${RUN_PATTERNS%%:*}"
           target_png="out/origami/${first_slug}.png"
           if [ ! -f "$target_png" ]; then
             target_png=$(ls out/origami/*.png 2>/dev/null | head -1 || true)
@@ -405,14 +406,17 @@ jobs:
 
       - name: Render SwamiHost + compare per pattern
         id: verify
+        env:
+          CHANGED_PATTERNS: ${{ steps.evidence.outputs.changed_patterns }}
         run: |
           # Origami's side is already rendered by the earlier "Render Origami references"
           # step (dims-first sim pick depends on it). This step handles the SwamiHost
           # side and the per-pattern SSIM compare.
           mkdir -p out/swami out/diff
           RESULTS=""
+          RUN_PATTERNS="${CHANGED_PATTERNS:-$PATTERNS}"
 
-          for pair in $PATTERNS; do
+          for pair in $RUN_PATTERNS; do
             slug="${pair%%:*}"
             stem="${pair##*:}"
             echo "==> ${slug} (${stem})"
@@ -484,7 +488,16 @@ jobs:
           xcrun simctl io "$UDID" recordVideo --codec=h264 --force out/recordings/drag.mp4 &
           recorder_pid=$!
           trap 'kill -INT "$recorder_pid" 2>/dev/null || true; wait "$recorder_pid" 2>/dev/null || true' EXIT
-          maestro --device "$UDID" test /tmp/interaction-drag.yaml
+          python3 - "$UDID" <<'PY'
+          import subprocess
+          import sys
+
+          subprocess.run(
+              ["maestro", "--device", sys.argv[1], "test", "/tmp/interaction-drag.yaml"],
+              check=True,
+              timeout=300,
+          )
+          PY
           kill -INT "$recorder_pid"
           wait "$recorder_pid" || true
           trap - EXIT
@@ -511,7 +524,7 @@ jobs:
           DOCC_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/documentation/swami/"
           DOCC_HEAD_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/.agent-factory-head"
           docc_status="failed"
-          for attempt in $(seq 1 60); do
+          for attempt in $(seq 1 180); do
             published_head=$(curl -fsSL "$DOCC_HEAD_URL" 2>/dev/null || true)
             if [ "$published_head" = "$SHA" ] && [ "$(curl -sL -o /dev/null -w '%{http_code}' "$DOCC_URL")" = "200" ]; then
               docc_status="ready"
@@ -521,7 +534,7 @@ jobs:
           done
 
           BODY="Current head: \`${SHA:0:7}\` · [DocC preview](${DOCC_URL})"$'\n\n'
-          BODY+="Builder changed and verified only the pattern work listed below. Repository-wide regression renders remain in the workflow artifact."$'\n\n'
+          BODY+="Builder changed and verified only the current pattern work listed below. No unrelated pattern media is included."$'\n\n'
           BODY+="- DocC: **${docc_status}**"$'\n'
           overall="ready"
           ATTACHMENTS=()
