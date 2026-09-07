@@ -18,8 +18,8 @@
     ],
     "dispatch_label": "agent:builder",
     "retry_label": "agent:retry",
-    "provider": "gemini",
-    "model": "gemini-3.6-flash",
+    "provider": "openrouter",
+    "model": "openrouter/free",
     "fallback_provider": "nvidia",
     "fallback_model": "moonshotai/kimi-k3",
     "max_subtasks": 3
@@ -47,8 +47,8 @@
     "failure_marker": "<!-- reviewer:agent-factory-failure -->",
     "required": true,
     "max_diff_bytes": 200000,
-    "provider": "gemini",
-    "model": "gemini-3.6-flash",
+    "provider": "openrouter",
+    "model": "openrouter/free",
     "fallback_provider": "nvidia",
     "fallback_model": "moonshotai/kimi-k3"
   },
