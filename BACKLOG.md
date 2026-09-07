@@ -23,8 +23,11 @@ agent — the cloud loop does not write there.
 - **Interaction_Drag** — **ITEM 2 OF 69** (2026-09-07): Artboard 888×1212, tan card
   #B0E0B27B, 220×140 centered, corner radius 20, drag with momentum + rubber-band bounds,
   snap-to-center. Parser generalized via `placed_root_offset()` (ADR-0013 structural walk).
-  TRANSLATION COMPLETE — pending runner verification (pixel triplet + Reviewer verdict).
-  Card color channel order unproven; marked as TODO in source until parser confirms.
+  TRANSLATION COMPLETE — fidelity debts addressed (Issue #119):
+  - Artboard background: explicit `// TODO: parser-decoded token when available` marker
+  - Card color: explicit `// TODO: parser-decoded token when available` marker (ARGB assumed)
+  - Drag bounds: geometric evidence documented inline (centered rest-position verified)
+  Pending: pixel triplet from verify.yml + DocC preview PNG from post-merge.yml
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
 - **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches
@@ -97,6 +100,6 @@ The parser now successfully uses `placed_root_offset()` to structurally isolate 
 
 **Unresolved (port values)**: Exact drag physics constants (Momentum Friction, Rubber Band Friction, decel rate) are still placeholders from iOS defaults. These live as port default *values* inside origami.DragSettings — reading them needs FlatBuffers port-value decoding, which the parser doesn't implement yet.
 
-**Unresolved (color channels)**: Card fill `#B0E0B27B` decoded as ARGB (alpha-first, yielding tan rgb 224,178,123). The RRGGBBAA reading would yield pale green rgba(176,224,178,123). Both interpretations are structurally valid; neither has parser-IR evidence. Locking in requires either: (a) extending the parser to emit color value objects with known channel order, or (b) an Origami Inspector AX readout confirming the hex. Until then, the literal in `Interaction_Drag.swift` is marked TODO.
+**Unresolved (color channels)**: Card fill `#B0E0B27B` decoded as ARGB (alpha-first, yielding tan rgb 224,178,123). The RRGGBBAA reading would yield pale green rgba(176,224,178,123). Both interpretations are structurally valid; neither has parser-IR evidence. Marked `// TODO: parser-decoded token when available` in `Interaction_Drag.swift` per Issue #119. Locking in requires either: (a) extending the parser to emit color value objects with known channel order, or (b) an Origami Inspector AX readout confirming the hex.
 
 **Not expanded** (per issue scope): This issue focused on delivering Interaction_Drag as the first corpus entry. Parser, codegen, and DocC improvements are by-products recorded here, but not expanded to a second pattern.

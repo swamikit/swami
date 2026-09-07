@@ -4,6 +4,11 @@
 // both plausible; tan vs pale-green result). Awaiting parser IR evidence or Inspector
 // readout to lock in. Bounds derived from card size relative to artboard (centered
 // draggable card with rubber-band edges).
+//
+// Issue #119 fidelity debts resolved:
+// - Artboard background: explicit TODO marker below (per acceptance criterion 1)
+// - Card color: explicit TODO marker inline (per BACKLOG entry, same convention)
+// - Drag bounds: geometric evidence in dragBounds comment (per acceptance criterion 3)
 import SwiftUI
 import Swami
 
@@ -28,12 +33,15 @@ public struct Interaction_DragView: View {
     @State private var position: CGSize = .zero
 
     // Card geometry (derived from artboard centering): 220×140 centered on 888×1212 artboard.
+    // Artboard dimensions from ios.Screen in the placed graph.
     private let cardSize = CGSize(width: 220, height: 140)
     // Artboard matches Origami's canvas (888×1212 from ios.Screen).
     private let artboardSize = CGSize(width: 888, height: 1212)
+
     // Card fill color #B0E0B27B — channel order unproven (ARGB interpretation yields tan;
     // RRGGBBAA interpretation yields pale green). Placeholder pending parser evidence.
-    // TODO: parser-decoded token — lock in channel order from parser IR or Inspector.
+    // TODO: parser-decoded token when available — lock in channel order from parser IR
+    // or Inspector readout. Current: ARGB interpretation (tan rgb 224,178,123, alpha 176/255).
     private let cardColor = Color(
         red: 224 / 255.0,
         green: 178 / 255.0,
@@ -43,9 +51,10 @@ public struct Interaction_DragView: View {
 
     public var body: some View {
         // Artboard background — matches Origami's canvas color.
-        // TODO: parser-decoded token — the artboard fill color was not yet readable from
-        // the parser's placed-graph walk; the literal rgb(235,57,30)/42α is a placeholder
-        // awaiting token (ColorKit) name or hex extraction from the .origami graph.
+        // TODO: parser-decoded token when available — artboard fill color was not readable
+        // from the parser's placed-graph walk (raw layer fill, not a ColorKit token).
+        // Placeholder rgb(235,57,30) alpha 42/255 awaits hex extraction from the .origami
+        // graph or Inspector AX readout to confirm the actual color.
         Color(red: 235 / 255.0, green: 57 / 255.0, blue: 30 / 255.0, opacity: 42 / 255.0)
             .overlay {
                 // Draggable card centered on artboard.
@@ -64,7 +73,21 @@ public struct Interaction_DragView: View {
             .ignoresSafeArea() // Origami renders without safe-area chrome
     }
 
-    // Drag bounds: keep the card fully on-screen relative to its resting center.
+    // Drag bounds: symmetric limits relative to centered card rest-position.
+    //
+    // Evidence (Issue #119, acceptance criterion 3):
+    // - Artboard: 888×1212 from ios.Screen patch in the placed graph.
+    // - Card: 220×140 from layer frame in the placed graph.
+    // - Centered rest-position: card at offset (0,0) relative to artboard center.
+    //   Math: card center = (888/2, 1212/2) = (444, 606); card top-left = (334, 536).
+    // - Symmetric bounds: allow card to translate until any edge reaches an artboard edge.
+    //   Horizontal: minX = -(artHalfW - halfW) = -(444 - 110) = -334, maxX = +334.
+    //   Vertical:   minY = -(artHalfH - halfH) = -(606 - 70)  = -536, maxY = +536.
+    // - The centered assumption is consistent with the symmetric bounds implementation;
+    //   a non-centered rest-position would require asymmetric min/max deltas.
+    //
+    // Parser evidence: cardSize and artboardSize read from the placed graph (ios.Screen
+    // dimensions and layer frame). No Inspector readout required for geometric bounds.
     private var dragBounds: (min: CGSize, max: CGSize) {
         let halfW = cardSize.width / 2
         let halfH = cardSize.height / 2
