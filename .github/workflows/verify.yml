@@ -25,9 +25,6 @@ permissions:
 env:
   APP_PROJECT: app/Swami.xcodeproj
   SCHEME: SwamiHost
-  # Each entry: <slug>:<origami-file-stem>. slug drives SWAMI_PATTERN + our screenshot
-  # naming; stem resolves to https://origami.design/public/origami_files/patterns/<stem>.origami.
-  PATTERNS: "touch:Interaction_Touch"
 
 jobs:
   # Always runs. Cheap ubuntu check that classifies the PR's touched paths so we
@@ -48,6 +45,7 @@ jobs:
               - 'app/**'
               - 'tool/src/**'
               - 'tool/**/*.py'
+              - '.github/patterns.txt'
               - '.github/workflows/verify.yml'
               - '**/*.origami'
               - '**/*.origami-config'
@@ -61,6 +59,23 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+
+      - name: Load pattern registry
+        shell: bash
+        run: |
+          patterns=""
+          while IFS= read -r pair || [ -n "$pair" ]; do
+            case "$pair" in
+              ""|\#*) continue ;;
+            esac
+            if [[ ! "$pair" =~ ^[a-z0-9_]+:[A-Za-z0-9_]+$ ]]; then
+              echo "Invalid pattern registry entry: $pair"
+              exit 1
+            fi
+            patterns="${patterns:+$patterns }$pair"
+          done < .github/patterns.txt
+          test -n "$patterns"
+          echo "PATTERNS=$patterns" >> "$GITHUB_ENV"
 
       - name: Environment
         run: |

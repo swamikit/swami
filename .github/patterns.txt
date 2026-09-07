@@ -1,0 +1,2 @@
+# Each entry is <verification-slug>:<origami-file-stem>.
+touch:Interaction_Touch
