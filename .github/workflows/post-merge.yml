@@ -1,6 +1,6 @@
 name: post-merge
 
-# Runs after a PR touching app/Swami/Patterns/** lands on main.
+# Runs after a PR touching app/Swami/Patterns/** lands on development or main.
 # 1. Figure out which pattern the merge changed.
 # 2. Grab the PR's evidence PNGs from the ci-screenshots branch (or re-render
 #    if the cache is empty), copy them into the DocC catalog, and commit back
@@ -12,14 +12,14 @@ name: post-merge
 
 on:
   push:
-    branches: [main]
+    branches: [main, development]
     paths:
       # Pattern sources are flat *.swift files, one per pattern
       # (e.g. app/Swami/Patterns/Touch.swift). Trigger on those only.
       - 'app/Swami/Patterns/*.swift'
 
 permissions:
-  contents: write  # commit back to main; create/update releases
+  contents: read
 
 concurrency:
   # Serialize — every run commits to main, and two racing runs would collide.
@@ -34,11 +34,20 @@ jobs:
   renders-and-zip:
     runs-on: macos-15
     steps:
-      - name: Checkout main (full history)
+      - name: Mint Builder installation token
+        id: builder-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AGENT_FACTORY_BUILDER_APP_ID }}
+          private-key: ${{ secrets.AGENT_FACTORY_BUILDER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Checkout integration branch (full history)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.builder-token.outputs.token }}
 
       - name: Identify changed patterns
         id: patterns
@@ -70,7 +79,13 @@ jobs:
           # Merge commits from squash-merge PRs land as "… (#N)"; pull the N.
           msg=$(git log -1 --pretty=%s "${{ github.sha }}")
           pr=$(echo "$msg" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
+          head=""
+          if [ -n "$pr" ]; then
+            head=$(GH_TOKEN="${{ steps.builder-token.outputs.token }}" gh pr view "$pr" \
+              --repo "${{ github.repository }}" --json headRefOid --jq '.headRefOid')
+          fi
           echo "pr=${pr}" >> "$GITHUB_OUTPUT"
+          echo "head=${head}" >> "$GITHUB_OUTPUT"
           echo "merge commit PR: ${pr:-<none>}"
 
       - name: Fetch evidence PNGs from ci-screenshots
@@ -109,6 +124,7 @@ jobs:
             slug=$(echo "$name" | tr '[:upper:]' '[:lower:]')
             src=""
             for candidate in \
+              ".evidence/pr-${{ steps.pr.outputs.pr }}/${{ steps.pr.outputs.head }}/swami/${slug}.png" \
               ".evidence/pr-${{ steps.pr.outputs.pr }}/swami/${slug}.png" \
               ".evidence/swami/${slug}.png"; do
               if [ -f "$candidate" ]; then src="$candidate"; break; fi
@@ -124,19 +140,19 @@ jobs:
             cp "$src" "$dest"
           done
 
-      - name: Commit renders back to main
+      - name: Commit renders back to the integration branch
         if: steps.patterns.outputs.names != ''
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "Builder"
+          git config user.email "builder@agent-factory.local"
           git add "${DOCC_RESOURCES}" || true
           if git diff --cached --quiet; then
             echo "no render changes"
             exit 0
           fi
           git commit -m "docs(patterns): update renders for ${{ steps.patterns.outputs.names }} [skip verify]"
-          git push origin HEAD:main
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Build pattern .zip bundle
         id: bundle
