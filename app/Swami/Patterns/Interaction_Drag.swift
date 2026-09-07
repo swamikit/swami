@@ -39,6 +39,9 @@ public struct Interaction_DragView: View {
 
     public var body: some View {
         // Artboard background — matches Origami's canvas color.
+        // TODO: parser-decoded token — the artboard fill color was not yet readable from
+        // the parser's placed-graph walk; the literal rgb(235,57,30)/42α is a placeholder
+        // awaiting token (ColorKit) name or hex extraction from the .origami graph.
         Color(red: 235 / 255.0, green: 57 / 255.0, blue: 30 / 255.0, opacity: 42 / 255.0)
             .overlay {
                 // Draggable card centered on artboard.

@@ -13,4 +13,4 @@ card snaps back to its resting position.
 ## See Also
 
 - ``Interaction_DragView``
-- ``Drag``
+- ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)`` — the ``View`` extension method that ports `origami.Drag`'s momentum + rubber-band ports
