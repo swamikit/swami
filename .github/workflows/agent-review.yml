@@ -29,10 +29,10 @@ jobs:
     # supplies a trusted review path; never run secret-bearing model review on
     # untrusted fork code via pull_request_target.
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.fork == false
-    uses: samuelalake/agent-factory/.github/workflows/review.yml@db6df049e224e5ff6f5a47b72b4b385ddf54530c
+    uses: samuelalake/agent-factory/.github/workflows/review.yml@68b6984b7a1f070ea90e0af55d539936a5a56d29
     with:
       pr: ${{ format('{0}', github.event.pull_request.number || inputs.pr) }}
-      factory_ref: db6df049e224e5ff6f5a47b72b4b385ddf54530c
+      factory_ref: 68b6984b7a1f070ea90e0af55d539936a5a56d29
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -42,10 +42,10 @@ jobs:
 
   integration:
     needs: review
-    uses: samuelalake/agent-factory/.github/workflows/integration.yml@db6df049e224e5ff6f5a47b72b4b385ddf54530c
+    uses: samuelalake/agent-factory/.github/workflows/integration.yml@68b6984b7a1f070ea90e0af55d539936a5a56d29
     with:
       pr: ${{ format('{0}', github.event.pull_request.number || inputs.pr) }}
-      factory_ref: db6df049e224e5ff6f5a47b72b4b385ddf54530c
+      factory_ref: 68b6984b7a1f070ea90e0af55d539936a5a56d29
       timeout_seconds: 1800
     secrets:
       AGENT_FACTORY_STEWARD_APP_ID: ${{ secrets.AGENT_FACTORY_STEWARD_APP_ID }}
