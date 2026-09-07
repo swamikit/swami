@@ -448,6 +448,7 @@ jobs:
           set -euo pipefail
           BR="ci-screenshots"
           DEST="pr-${PR}/${SHA}"
+          SITE_REPO="${REPO#*/}"
           git config user.name "Builder"
           git config user.email "builder@agent-factory.local"
           gh auth setup-git
@@ -456,6 +457,13 @@ jobs:
           else
             git checkout --orphan "$BR"
             git rm -rf . >/dev/null 2>&1 || true
+          fi
+          # The PR has one current-head evidence surface, so retain only the
+          # directory referenced by that surface. A stale URL becomes a 404;
+          # it can never silently display media from a newer head.
+          if [ -d "pr-${PR}" ]; then
+            find "pr-${PR}" -mindepth 1 -maxdepth 1 -type d \
+              ! -name "$SHA" -exec rm -rf {} +
           fi
           mkdir -p "$DEST"
           cp -R out/* "$DEST/"
@@ -466,7 +474,7 @@ jobs:
           RAW="https://raw.githubusercontent.com/${REPO}/${BR}/${DEST}"
           MARKER="<!-- builder:current-head-evidence -->"
           BODY="${MARKER}"$'\n\n'"## Builder · evidence"$'\n\n'
-          BODY+="Current head: \`${SHA:0:7}\` · [DocC preview](https://${GITHUB_REPOSITORY_OWNER}.github.io/swami/pr-${PR}/documentation/swami/)"$'\n\n'
+          BODY+="Current head: \`${SHA:0:7}\` · [DocC preview](https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/documentation/swami/)"$'\n\n'
           BODY+="Builder changed and verified only the pattern work listed below. Repository-wide regression renders remain available in the workflow artifact."$'\n\n'
           for pair in $CHANGED_PATTERNS; do
             slug="${pair%%:*}"

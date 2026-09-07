@@ -9,6 +9,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
+# Derived from the Swift-DocC renderer shipped on GitHub's macos-15 runner.
+# The tests intentionally fail closed if a future Xcode changes these shells.
 BASE_URL = re.compile(r"\bbaseUrl\s*=\s*['\"]([^'\"]+)['\"]")
 ASSET = re.compile(r"(?:src|href)=['\"]([^'\"]+)['\"]", re.IGNORECASE)
 REDIRECT = re.compile(r"data-docc-redirect=['\"]([^'\"]+)['\"]")
