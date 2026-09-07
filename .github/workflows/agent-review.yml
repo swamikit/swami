@@ -10,6 +10,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: agent-review-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
 permissions:
   actions: read
   checks: read
