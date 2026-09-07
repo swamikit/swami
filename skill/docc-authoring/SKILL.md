@@ -149,26 +149,27 @@ struct ContentView: View {
   a category-stripping heuristic invented here. In the reference project,
   `builder.yml`'s "Resolve pattern name" step runs
   `sed -E 's/^Interaction_//' | tr '[:upper:]' '[:lower:]'`, which strips only
-  the literal `Interaction_` prefix before lowercasing; `verify.yml`'s
-  `PATTERNS` env pairs the same slug to the stem. So today:
+  the literal `Interaction_` prefix before lowercasing;
+  `.github/patterns.txt` pairs the same slug to the stem. So today:
   `Interaction_Touch` → `touch`, `Interaction_Drag` → `drag`, but
   `Layer_Frame` → `layer_frame` (underscore kept — the `Layer_` prefix is not
   stripped) and `Animation_ClassicAnimation` → `animation_classicanimation`.
-  Read the current `builder.yml` before adding a case; a case labelled
+  Read the current builder convention and pattern registry before adding a case; a case labelled
   `interaction-touch` or `frame` (guessing a broader strip than the builder
   actually does) is unreachable and the host renders the default view instead.
   A community port that wants a broader rule (strip every category, or a
-  hyphen-separated slug) changes builder + verify atomically in the same PR
+  hyphen-separated slug) changes builder + the registry atomically in the same PR
   and updates this bullet.
 - **One case per pattern.** Do not fold multiple patterns behind one slug. Each
   case renders exactly one pattern's view, with no host chrome around it.
 - **Register the slug where the verify workflow reads it, in the same commit.**
   The switch case alone is unreachable: the reference project's `verify.yml`
-  render + compare loops iterate only over the `PATTERNS` env
-  (`<slug>:<stem>` pairs), so a case with no matching `PATTERNS` entry never
-  gets launched and the PR produces no evidence for the new pattern. Add the
-  `<slug>:<stem>` pair to `PATTERNS` in `.github/workflows/verify.yml` in the
-  same commit that adds the switch case. A community port that discovers
+  render + compare loops load only the `<slug>:<stem>` pairs from
+  `.github/patterns.txt`, so a case with no matching registry entry never gets
+  launched and the PR produces no evidence for the new pattern. Add the pair
+  to `.github/patterns.txt` in the same commit that adds the switch case. This
+  keeps routine pattern registration outside the protected workflow control
+  plane. A community port that discovers
   patterns differently (glob, manifest file) still needs the equivalent
   registration on the workflow side, landed atomically with the case.
 - **Body is a single expression.** Same rule as the pattern's own body: the
@@ -211,8 +212,8 @@ struct ContentView: View {
   `fatalError`.
 - If the pattern is under a verification-host switch, one new case has been
   added AND the matching `<slug>:<stem>` pair is registered where the verify
-  workflow reads it (in the reference project, the `PATTERNS` env in
-  `.github/workflows/verify.yml`). The case renders `<PatternID>View()` and
+  workflow reads it (in the reference project, `.github/patterns.txt`). The
+  case renders `<PatternID>View()` and
   nothing else. Both edits ship in the same commit — a case without the
   registration is unreachable; a registration without the case renders the
   default view.
