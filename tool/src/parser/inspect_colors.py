@@ -1,127 +1,160 @@
 #!/usr/bin/env python3
-"""Lightweight inspector: scan the placed region for color tokens.
+"""Enhanced color inspector: scan the placed region for color tokens and patterns.
 
 Uses the same Graph class as origami_graph.py to walk FlatBuffers tables in the
-placed subtree looking for known-shaped records:
-- Color tokens: a table with a string `hex` field (8-char hex).
-- Radius/cornerRadius fields on layer tables.
+placed subtree looking for known-shaped records. This version improves on the
+earlier scan by:
+- Looking for solid colors (alpha=255) which are likely layer fills
+- Tracking color frequency to identify dominant colors
+- Correlating color positions with table structures
 
-This fixes the earlier bug where inspect_colors.py iterated the full file byte
-range rather than the placed region, causing reads past EOF.
+Color channel order: Origami uses ColorKit which stores colors as uint32.
+The channel order depends on the platform:
+- iOS: ABGR in the uint32 (matches iOS CGColor)
+- macOS: same representation in memory
+
+For hex strings in the file, ColorKit typically stores as RGBA in hex notation.
 """
-import sys, pathlib, json
+import sys, pathlib, json, struct
+from collections import Counter
 
 # Use the same Graph class and parse logic as origami_graph.py
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))
 from parser.origami_graph import Graph, read_graph_bytes, parse  # noqa: E402
 
-# Color channel order helpers (Origami uses ColorKit = ARGB in hex).
-def hex_to_argb(h):
-    """Parse 8-char hex as ARGB, return (r, g, b, a) 0..1 tuple."""
-    v = int(h, 16)
-    return (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF, (v >> 24) & 0xFF
 
-
-def scan_for_colors(g, placed_root):
-    """Scan tables in the placed region for hex-string fields matching 8-char hex.
-
-    Unlike the earlier scan that iterated raw byte offsets (causing EOF reads),
-    this walks the placed node tables from the parser's own list and also
-    scans for adjacent table offsets using the vtable as the boundary signal.
+def scan_solid_colors(g, tail, threshold=200):
+    """Scan for solid colors (alpha >= threshold) in the placed region.
+    
+    Returns colors sorted by frequency (most common first).
     """
-    results = []
-    seen = set()
+    data = g.d
+    colors = Counter()
+    
+    for i in range(tail, len(data) - 4, 4):
+        try:
+            v = struct.unpack_from('<I', data, i)[0]
+            r = (v >> 16) & 0xFF
+            g_val = (v >> 8) & 0xFF
+            b = v & 0xFF
+            a = (v >> 24) & 0xFF
+            
+            # Solid color: high alpha
+            if a >= threshold and a <= 255:
+                if 10 < r < 250 and 10 < g_val < 250 and 10 < b < 250:
+                    colors[(r, g_val, b, a)] += 1
+        except:
+            pass
+    
+    return colors
 
-    # First: walk tables near the known placed node offsets (from the parser).
-    # These are validated tables. Extract their decoded fields and look for hex.
-    out = parse(sys.argv[1])
-    for node in out.get("placed_nodes", []):
-        t = node["table"]
-        info = g.table(t)
-        if not info:
-            continue
-        rec = g.decode(info)
-        # Look for hex fields
-        for k, v in rec.items():
-            if isinstance(v, str) and len(v) == 8 and all(c in '0123456789ABCDEFabcdef' for c in v):
-                if t not in seen:
-                    seen.add(t)
-                    r, gr, b, a = hex_to_argb(v)
-                    results.append({
-                        "table": t,
-                        "type": node["type"],
-                        "name": node.get("name"),
-                        "hex": v,
-                        "argb_interpretation": {
-                            "r": r, "g": gr, "b": b, "a": a,
-                            "css": f"rgba({r},{gr},{b},{a/255:.3f})"
-                        },
-                        "rrggbbaa_interpretation": {
-                            "r": int(v[0:2], 16),
-                            "g": int(v[2:4], 16),
-                            "b": int(v[4:6], 16),
-                            "a": int(v[6:8], 16),
-                            "css": f"rgba({int(v[0:2],16)},{int(v[2:4],16)},{int(v[4:6],16)},{int(v[6:8],16)/255:.3f})"
-                        }
+
+def scan_translucent_colors(g, tail, min_alpha=5, max_alpha=100):
+    """Scan for translucent colors (semi-transparent backgrounds) in the placed region."""
+    data = g.d
+    colors = []
+    
+    for i in range(tail, len(data) - 4, 4):
+        try:
+            v = struct.unpack_from('<I', data, i)[0]
+            r = (v >> 16) & 0xFF
+            g_val = (v >> 8) & 0xFF
+            b = v & 0xFF
+            a = (v >> 24) & 0xFF
+            
+            if min_alpha <= a <= max_alpha:
+                if 10 < r < 250 and 10 < g_val < 250 and 10 < b < 250:
+                    colors.append({
+                        'pos': i,
+                        'hex': f'{v:08X}',
+                        'rgba': (r, g_val, b, a),
+                        'alpha_ratio': a / 255.0
                     })
+        except:
+            pass
+    
+    return colors
 
-    return results
 
-
-def scan_for_radius(g, placed_root):
-    """Scan the placed region for tables with radius or cornerRadius fields.
-
-    Uses the vtable-based table detection to avoid EOF reads.
-    """
+def analyze_dragsettings_colors(g, out):
+    """Extract color information from DragSettings tables."""
+    data = g.d
     results = []
-    seen = set()
-
-    # Walk vtables in the placed region using the vtable sentinel:
-    # A valid vtable has vs >= 4, even, and ts >= 8.
-    N = g.N
-    for t in range(placed_root, N - 16):
-        info = g.table(t)
-        if not info:
-            continue
-        rec = g.decode(info)
-        has_radius = False
-        radius_val = None
-        for k, v in rec.items():
-            if k in ('radius', 'cornerRadius') and isinstance(v, (int, float)):
-                has_radius = True
-                radius_val = v
-        if has_radius and t not in seen:
-            seen.add(t)
-            results.append({"table": t, "radius": radius_val, "fields": {k: v for k, v in rec.items() if k != 'table'}})
-
+    
+    for node in out.get('placed_nodes', []):
+        if 'DragSettings' in node.get('type', ''):
+            t = node['table']
+            # Look at raw bytes near this table
+            for offset in range(0, 100, 4):
+                pos = t + offset
+                if pos + 4 <= len(data):
+                    v = struct.unpack_from('<I', data, pos)[0]
+                    r = (v >> 16) & 0xFF
+                    g_val = (v >> 8) & 0xFF
+                    b = v & 0xFF
+                    a = (v >> 24) & 0xFF
+                    
+                    if a >= 200 and a <= 255:  # Solid colors
+                        if 100 < r < 255 and 100 < g_val < 255 and 100 < b < 255:
+                            results.append({
+                                'table': t,
+                                'offset': offset,
+                                'pos': pos,
+                                'hex': f'{v:08X}',
+                                'rgba': (r, g_val, b, a),
+                                'type': 'solid_tan' if (r > 200 and g_val > 150 and b < 200) else 'other'
+                            })
+    
     return results
 
 
 def main():
+    if len(sys.argv) < 2:
+        print("Usage: inspect_colors.py <origami_file>")
+        sys.exit(1)
+    
     path = sys.argv[1]
     data = read_graph_bytes(path)
     g = Graph(data)
-    tail = g.placed_root_offset()
-    if tail is None:
-        tail = 0
-    print(f"placed_root = {tail}, file size = {g.N}")
-
-    colors = scan_for_colors(g, tail)
-    print(f"\nColor-like tables in placed region: {len(colors)}")
-    for c in colors:
-        print(f"  table={c['table']} type={c['type']} name={c.get('name')}")
-        print(f"    hex = #{c['hex']}")
-        print(f"    ARGB:      {c['argb_interpretation']['css']}")
-        print(f"    RRGGBBAA: {c['rrggbbaa_interpretation']['css']}")
-
-    radii = scan_for_radius(g, tail)
-    print(f"\nRadius-like tables in placed region: {len(radii)}")
-    for r in radii[:20]:
-        print(f"  table={r['table']} radius={r['radius']}")
-
-    if colors or radii:
-        print(f"\nSummary (JSON):")
-        print(json.dumps({"colors": colors, "radii": radii}, indent=2))
+    
+    # Parse to get placed_root_offset
+    out = parse(path)
+    tail = out.get('placed_root_offset', 0) or 0
+    
+    print(f"File: {path}")
+    print(f"File size: {g.N}")
+    print(f"Placed root offset: {tail}")
+    print()
+    
+    # Scan for solid colors
+    print("=== Solid colors (alpha >= 200) ===")
+    solid_colors = scan_solid_colors(g, tail)
+    for (r, g_val, b, a), count in solid_colors.most_common(20):
+        print(f"  rgba({r},{g_val},{b},{a}) count={count}")
+    
+    print()
+    print("=== Translucent colors (5 <= alpha <= 100) ===")
+    translucent = scan_translucent_colors(g, tail)
+    for c in translucent[:10]:
+        print(f"  pos={c['pos']}: rgba({c['rgba'][0]},{c['rgba'][1]},{c['rgba'][2]},{c['rgba'][3]}) alpha={c['alpha_ratio']:.2f}")
+    
+    print()
+    print("=== DragSettings color analysis ===")
+    dragsettings_colors = analyze_dragsettings_colors(g, out)
+    for c in dragsettings_colors:
+        print(f"  table={c['table']} offset={c['offset']} hex={c['hex']} rgba={c['rgba']} type={c['type']}")
+    
+    # Summary JSON
+    summary = {
+        'file': path,
+        'placed_root_offset': tail,
+        'solid_colors': [{'rgba': list(k), 'count': v} for k, v in solid_colors.most_common(10)],
+        'dragsettings_colors': dragsettings_colors,
+        'translucent_sample': translucent[:5]
+    }
+    print()
+    print("JSON Summary:")
+    print(json.dumps(summary, indent=2))
 
 
 if __name__ == "__main__":

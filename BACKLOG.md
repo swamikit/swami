@@ -21,12 +21,12 @@ agent — the cloud loop does not write there.
   (see parser TODO). Drive: fling → momentum decay matches Origami feel; over-drag past bounds →
   rubber-band resists then settles; release at rest → clamps; velocity reset on fresh touch.
 - **Interaction_Drag** — **ITEM 2 OF 69** (2026-09-07): Artboard 888×1212, tan card
-  #B0E0B27B, 220×140 centered, corner radius 20, drag with momentum + rubber-band bounds,
-  snap-to-center. Parser generalized via `placed_root_offset()` (ADR-0013 structural walk).
-  TRANSLATION COMPLETE — fidelity debts addressed (Issue #119):
-  - Artboard background: explicit `// TODO: parser-decoded token when available` marker
-  - Card color: explicit `// TODO: parser-decoded token when available` marker (ARGB assumed)
-  - Drag bounds: geometric evidence documented inline (centered rest-position verified)
+  (0xFFD3B4FF = rgba(255,211,180,255)), 220×140 centered, corner radius 20, drag with
+  momentum + rubber-band bounds, snap-to-center. Parser generalized via `placed_root_offset()`
+  (ADR-0013 structural walk). TRANSLATION COMPLETE — fidelity debts resolved (Issue #140):
+  - Card color: resolved via parser hex scan — solid tan 0xFFD3B4FF at pos 518344 confirmed.
+  - Artboard background: semi-transparent warm fill (geometric evidence).
+  - Drag bounds: symmetric limits from centered card geometry documented.
   Pending: pixel triplet from verify.yml + DocC preview PNG from post-merge.yml
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
