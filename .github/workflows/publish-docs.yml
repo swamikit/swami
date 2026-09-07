@@ -2,7 +2,7 @@ name: publish-docs
 
 # DocC publishing to GitHub Pages.
 # - On trusted PRs: builds DocC and publishes it under gh-pages/pr-<N>/.
-#   Builder carries the preview URL in its single current-head evidence comment.
+#   Builder carries the preview URL in its canonical current-head PR description.
 # - On push to development: publishes the cumulative candidate under /dev/.
 # - On push to main: builds DocC and publishes to gh-pages/ (root = production).
 # - workflow_dispatch: manual re-publish for the current ref.
@@ -131,6 +131,12 @@ jobs:
           python3 scripts/validate_docc_site.py site \
             --hosting-base "${{ steps.target.outputs.hosting_base }}" \
             --landing-path documentation/swami
+
+      - name: Bind the published site to its source head
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: printf '%s\n' "$SOURCE_SHA" > site/.agent-factory-head
 
       - name: Publish to gh-pages
         if: steps.guard.outputs.skip != 'true'
