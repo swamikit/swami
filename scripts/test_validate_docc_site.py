@@ -18,6 +18,7 @@ class ValidateDocCSiteTests(unittest.TestCase):
             (site / "documentation/swami/index.html").write_text(
                 '<script>var baseUrl = "/swami/pr-7"</script>'
                 '<script src="/swami/pr-7/js/app.js"></script>'
+                '<a href="/swami/pr-7/documentation/swami/">Home</a>'
             )
             prepare(site, "/swami/pr-7", "documentation/swami")
             self.assertEqual(validate(site, "/swami/pr-7"), [])

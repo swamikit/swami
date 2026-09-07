@@ -54,8 +54,13 @@ def validate(site: Path, hosting_base: str, landing_path: str = "documentation/s
             relative = path[len(prefix):]
         else:
             relative = path
+        if not relative:
+            continue
         local_assets += 1
-        if not (site / relative).is_file():
+        target_path = site / relative
+        if target_path.is_dir():
+            target_path = target_path / "index.html"
+        if not target_path.is_file():
             errors.append(f"referenced asset is missing: {relative}")
     if local_assets == 0:
         errors.append("index.html references no local assets")
