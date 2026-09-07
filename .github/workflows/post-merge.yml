@@ -6,9 +6,8 @@ name: post-merge
 #    if the cache is empty), copy them into the DocC catalog, and commit back
 #    to main. publish-docs then picks the commit up and re-publishes to
 #    gh-pages/.
-# 3. Package a mini Xcode project .zip for the pattern (Option A CTA on the
-#    doc page) and attach it — as a release asset when there is a tagged
-#    release, or as a workflow artifact otherwise.
+# 3. Package the pattern source as a workflow artifact. Release publishing is
+#    intentionally outside this workflow's current authority.
 
 on:
   push:
@@ -22,7 +21,8 @@ permissions:
   contents: read
 
 concurrency:
-  # Serialize — every run commits to main, and two racing runs would collide.
+  # Serialize — every run commits to an integration branch, and two racing
+  # runs on the same branch would collide.
   group: post-merge
   cancel-in-progress: false
 
@@ -180,7 +180,3 @@ jobs:
           name: pattern-bundles
           path: dist/*.zip
           if-no-files-found: ignore
-
-      # TODO: promote artifacts to release assets once we tag a release
-      # (softprops/action-gh-release, upload dist/*.zip against the tag that
-      # names the pattern set).

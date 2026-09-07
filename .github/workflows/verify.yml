@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: verify-${{ github.event.pull_request.number || github.ref }}
+  group: verify-${{ github.event.pull_request.number || inputs.pr || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -422,7 +422,16 @@ jobs:
             fi
           fi
           CHANGED=""
-          files=$(gh api "repos/${REPO}/pulls/${PR}/files" --paginate --jq '.[].filename')
+          changed_count=$(gh api "repos/${REPO}/pulls/${PR}" --jq '.changed_files')
+          if ! files=$(gh api "repos/${REPO}/pulls/${PR}/files" --paginate --jq '.[].filename'); then
+            echo "::error::could not enumerate changed PR files; refusing to publish incomplete evidence"
+            exit 1
+          fi
+          observed_count=$(printf '%s\n' "$files" | sed '/^$/d' | wc -l | tr -d ' ')
+          if [ "$observed_count" != "$changed_count" ]; then
+            echo "::error::GitHub returned ${observed_count} of ${changed_count} changed files (the API caps at 3,000); refusing to publish incomplete evidence"
+            exit 1
+          fi
           for pair in $PATTERNS; do
             slug="${pair%%:*}"
             stem="${pair##*:}"
@@ -496,6 +505,16 @@ jobs:
           else
             gh api "repos/${REPO}/issues/${PR}/comments" -X POST --input /tmp/builder-evidence.json
           fi
+
+      - name: Explain fork evidence policy
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
+        run: |
+          echo "::notice::Builder evidence publication is withheld for fork-authored code because GitHub App secrets are unavailable to untrusted pull requests. Maintainers can inspect the workflow artifact and re-run the trusted path after bringing the head into this repository."
+          {
+            echo "## Fork evidence policy"
+            echo
+            echo "Builder evidence and the PR DocC publication are withheld because this pull request originates from a fork. The verification artifact remains available to maintainers. Bring the head into this repository, then dispatch the trusted workflow to publish attributed evidence."
+          } >> "$GITHUB_STEP_SUMMARY"
 
 # NEXT (per ADR-0013): (a) parser-verification step that reads Origami's Inspector via AX
 # attributes and diffs against the parser's IR; (b) interaction gate — XCUITest-drives-both-sides

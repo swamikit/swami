@@ -1,8 +1,8 @@
 name: publish-docs
 
 # DocC publishing to GitHub Pages.
-# - On PR (opened/synchronize/ready_for_review): builds DocC for this PR and
-#   publishes it under gh-pages/pr-<N>/, then leaves a sticky comment with the URL.
+# - On trusted PRs: builds DocC and publishes it under gh-pages/pr-<N>/.
+#   Builder carries the preview URL in its single current-head evidence comment.
 # - On push to development: publishes the cumulative candidate under /dev/.
 # - On push to main: builds DocC and publishes to gh-pages/ (root = production).
 # - workflow_dispatch: manual re-publish for the current ref.
@@ -47,6 +47,7 @@ env:
 
 jobs:
   build-and-publish:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
     runs-on: macos-15
     steps:
       - name: Checkout source
@@ -173,3 +174,16 @@ jobs:
           fi
           git commit -m "docs: publish ${SUBPATH:-root} from ${GITHUB_SHA::7}"
           git push origin gh-pages
+
+  fork-policy:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain trusted publication boundary
+        run: |
+          echo "::notice::PR DocC publication is withheld for fork-authored code because repository write credentials are unavailable to untrusted pull requests."
+          {
+            echo "## Fork DocC policy"
+            echo
+            echo "The documentation archive is not published from untrusted fork code. A maintainer can bring the head into this repository and dispatch the trusted workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
