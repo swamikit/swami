@@ -7,15 +7,15 @@ import SwiftUI
 /// - card: 220×140, centered, rounded radius 20, white fill
 /// - interaction: press, drag, momentum, rubber-band bounds, release, reset to center
 ///
-/// This pattern intentionally keeps the composition explicit instead of hiding it behind the
-/// generic `drag()` helper so the deliverable matches the exact Origami reference layout.
+/// The view composes the reference as an explicit artboard/canvas, a centered card, and a
+/// drag state machine that restores to center on release.
 public struct InteractionDragView: View {
     public init() {}
 
     @State private var position: CGSize = .zero
     @State private var velocity: CGSize = .zero
+    @State private var pressScale: CGFloat = 0.96
     @State private var isDragging = false
-    @State private var resetToken = false
 
     private let artboardColor = Color(hex: "#DD70DF")
     private let cardColor = Color.white
@@ -29,28 +29,15 @@ public struct InteractionDragView: View {
         }
         .frame(width: 888, height: 1212)
         .background(artboardColor)
-        .clipped()
     }
 
     private var card: some View {
         RoundedRectangle(cornerRadius: 20, style: .continuous)
             .fill(cardColor)
             .frame(width: cardSize.width, height: cardSize.height)
-            .overlay(alignment: .topLeading) { dragMetrics }
+            .scaleEffect(pressScale)
             .offset(position)
             .gesture(dragGesture)
-            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 4)
-    }
-
-    private var dragMetrics: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Interaction Drag")
-                .font(.system(size: 18, weight: .semibold))
-            Text(isDragging ? "press + drag" : "release + reset")
-                .font(.system(size: 13, weight: .medium))
-        }
-        .foregroundStyle(Color.black.opacity(0.18))
-        .padding(16)
     }
 
     private var dragGesture: some Gesture {
@@ -58,26 +45,40 @@ public struct InteractionDragView: View {
             .onChanged { value in
                 if !isDragging {
                     isDragging = true
-                    resetToken.toggle()
+                    pressScale = 0.96
                 }
-                position = clamped(CGSize(width: value.translation.width,
-                                          height: value.translation.height))
+                let proposed = CGSize(width: value.translation.width, height: value.translation.height)
+                position = rubberBand(proposed)
                 velocity = CGSize(width: value.velocity.width, height: value.velocity.height)
             }
             .onEnded { value in
                 let projected = CGSize(width: position.width + value.predictedEndTranslation.width - value.translation.width,
                                        height: position.height + value.predictedEndTranslation.height - value.translation.height)
-                position = clamped(projected)
+                let clamped = clamp(projected)
+                velocity = .zero
                 withAnimation(.interpolatingSpring(stiffness: 170, damping: 20)) {
                     position = .zero
+                    pressScale = 1
                 }
+                position = clamped
                 isDragging = false
             }
     }
 
-    private func clamped(_ s: CGSize) -> CGSize {
+    private func clamp(_ s: CGSize) -> CGSize {
         CGSize(width: min(max(s.width, -bounds.width), bounds.width),
                height: min(max(s.height, -bounds.height), bounds.height))
+    }
+
+    private func rubberBand(_ s: CGSize) -> CGSize {
+        let c: CGFloat = 0.15
+        func band(_ x: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat {
+            if x < lo { return lo - (1 - 1 / (((lo - x) * c / max(hi - lo, 1)) + 1)) * max(hi - lo, 1) }
+            if x > hi { return hi + (1 - 1 / (((x - hi) * c / max(hi - lo, 1)) + 1)) * max(hi - lo, 1) }
+            return x
+        }
+        return CGSize(width: band(s.width, -bounds.width, bounds.width),
+                      height: band(s.height, -bounds.height, bounds.height))
     }
 }
 
