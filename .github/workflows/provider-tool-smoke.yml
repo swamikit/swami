@@ -23,3 +23,16 @@ jobs:
       prompt_bytes: 70000
     secrets:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+
+  openrouter:
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@d74be452b38e6d86891bf666b52b98a84c9f7281
+    with:
+      factory_ref: d74be452b38e6d86891bf666b52b98a84c9f7281
+      provider: openrouter
+      models: cohere/north-mini-code:free
+      max_candidates: 1
+      builder_shape: true
+      max_output_tokens: 2048
+      prompt_bytes: 70000
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
