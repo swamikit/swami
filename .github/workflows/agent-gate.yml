@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   gate:
-    uses: samuelalake/agent-factory/.github/workflows/gate.yml@aa17556afab5edc49700063570bef6f206545b11
+    uses: samuelalake/agent-factory/.github/workflows/gate.yml@1f72a5c791c3781dcaa83d92d047e12b6f7fdf00
     with:
       pr: ${{ format('{0}', github.event.pull_request.number || inputs.pr) }}
-      factory_ref: aa17556afab5edc49700063570bef6f206545b11
+      factory_ref: 1f72a5c791c3781dcaa83d92d047e12b6f7fdf00
