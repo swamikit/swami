@@ -32,6 +32,7 @@ env:
   GH_ATTACHMENT_CLI_VERSION: 2.100.0
   GH_ATTACHMENT_CLI_SHA256: 45f9a62da2f6e641a7fad57e2ce39656dfd7ef331372d80a2a2aed65abb01642
   MAESTRO_VERSION: 2.7.0
+  MAESTRO_INTERACTION_TIMEOUT_SECONDS: "300"
   VISUAL_SANITY_FLOOR: "0.50"
 
 jobs:
@@ -490,14 +491,14 @@ jobs:
           xcrun simctl io "$UDID" recordVideo --codec=h264 --force out/recordings/drag.mp4 &
           recorder_pid=$!
           trap 'kill -INT "$recorder_pid" 2>/dev/null || true; wait "$recorder_pid" 2>/dev/null || true' EXIT
-          python3 - "$UDID" <<'PY'
+          python3 - "$UDID" "$MAESTRO_INTERACTION_TIMEOUT_SECONDS" <<'PY'
           import subprocess
           import sys
 
           subprocess.run(
               ["maestro", "--device", sys.argv[1], "test", "/tmp/interaction-drag.yaml"],
               check=True,
-              timeout=300,
+              timeout=int(sys.argv[2]),
           )
           PY
           kill -INT "$recorder_pid"
