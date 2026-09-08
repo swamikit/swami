@@ -27,7 +27,7 @@
   "builder": {
     "marker": "<!-- builder:agent-factory -->",
     "provider": "minimax",
-    "harness": "openai-compatible-tool-loop",
+    "harness": "openai-compatible",
     "model": "MiniMax-M2.7",
     "cli_version": "0.55.1",
     "timeout_seconds": 1800,
