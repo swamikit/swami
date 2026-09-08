@@ -32,8 +32,8 @@ public struct Interaction_DragView: View {
     @State private var position: CGSize = .zero
     private let cardSize = CGSize(width: 220, height: 140)
     private let artboardSize = CGSize(width: 888, height: 1212)
-    private let cardColor = Color(red: 255/255.0, green: 211/255.0, blue: 180/255.0, opacity: 1.0)
-    private let artboardBackground = Color(red: 248/255.0, green: 214/255.0, blue: 184/255.0, opacity: 1.0)
+    private let cardColor = Color(red: 255/255.0, green: 255/255.0, blue: 255/255.0, opacity: 1.0)
+    private let artboardBackground = Color(red: 211/255.0, green: 180/255.0, blue: 255/255.0, opacity: 1.0)
 
     public var body: some View {
         ZStack {

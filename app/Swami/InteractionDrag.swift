@@ -17,8 +17,8 @@ public struct InteractionDragView: View {
     @State private var pressScale: CGFloat = 1
     @State private var isDragging = false
 
-    private let artboardColor = Color(red: 248/255, green: 214/255, blue: 184/255)
-    private let cardColor = Color(red: 255/255, green: 211/255, blue: 180/255)
+    private let artboardColor = Color(red: 211/255, green: 180/255, blue: 255/255)
+    private let cardColor = Color.white
     private let cardSize = CGSize(width: 220, height: 140)
     private let bounds = CGSize(width: 334, height: 536)
 
@@ -38,6 +38,7 @@ public struct InteractionDragView: View {
             .scaleEffect(pressScale)
             .offset(position)
             .gesture(dragGesture)
+            .onTapGesture { pressScale = 5; withAnimation(.interpolatingSpring(stiffness: 180, damping: 22)) { pressScale = 1 } }
     }
 
     private var dragGesture: some Gesture {
@@ -45,7 +46,7 @@ public struct InteractionDragView: View {
             .onChanged { value in
                 if !isDragging {
                     isDragging = true
-                    pressScale = 0.98
+                    pressScale = 5
                 }
                 let proposed = CGSize(width: value.translation.width, height: value.translation.height)
                 position = rubberBand(proposed)
