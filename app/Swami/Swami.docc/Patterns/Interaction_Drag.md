@@ -38,4 +38,3 @@ The artifact path is: `app/Swami/Swami.docc/Resources/Patterns/Interaction_Drag.
 ## See Also
 
 - ``Interaction_DragView``
-- ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)`` — the ``View`` extension method that ports `origami.Drag`'s momentum + rubber-band ports
