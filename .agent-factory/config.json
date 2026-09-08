@@ -70,7 +70,9 @@
     "required_checks": [
       "changes",
       "pixel-gate",
-      "build-and-publish"
+      "build-and-publish",
+      "minimax / tool-smoke",
+      "openrouter / tool-smoke"
     ],
     "allow_followup_issues": true
   }
