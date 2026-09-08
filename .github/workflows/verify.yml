@@ -56,6 +56,8 @@ jobs:
           persist-credentials: false
       - name: Validate pinned Factory and consumer config
         run: |
+          actual_ref=$(git -C factory-contract rev-parse HEAD)
+          test "$actual_ref" = "$FACTORY_REF"
           PYTHONPATH=factory-contract/src python3 -c \
             'from agent_factory.config import load_config; load_config(".agent-factory/config.json")'
       - name: Validate pattern registry
