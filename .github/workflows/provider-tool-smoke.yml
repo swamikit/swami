@@ -3,8 +3,6 @@ name: provider-tool-smoke
 on:
   pull_request:
     branches: [development]
-    paths:
-      - .github/workflows/provider-tool-smoke.yml
   workflow_dispatch:
 
 permissions:

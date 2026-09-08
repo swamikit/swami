@@ -40,8 +40,8 @@
     "max_output_tokens": 2048,
     "max_revision_attempts": 3,
     "max_model_cost_usd": 0.5,
-    "input_cost_per_million": 0.2,
-    "output_cost_per_million": 0.88,
+    "input_cost_per_million": 0.3,
+    "output_cost_per_million": 1.9,
     "visual_revision_context": true,
     "fallback_visual_revision_context": false
   },
