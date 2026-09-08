@@ -102,6 +102,6 @@ The parser successfully uses `placed_root_offset()` to structurally isolate the 
 
 **Resolved (color channels)**: Card fill `0xFFD3B4FF` confirmed as ARGB → rgba(255,211,180,255) via parser hex scan at pos 518344. The earlier `#B0E0B27B` reading was from the wrong byte region.
 
-**Pattern delivery complete** (per issue scope): Interaction_Drag is the first corpus entry. Parser, codegen, and DocC improvements are by-products recorded here.
+**Pattern delivery complete** (per issue scope): Interaction_Drag is the first corpus entry. Parser, codegen, and DocC improvements are by-products recorded here.-products recorded here.
 
 **Supersession**: Issue #140 supersedes #119 for Interaction_Drag. Verified merge: <merged PR link TBD>, verify run: <run link TBD>.-products recorded here.
