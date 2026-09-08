@@ -55,6 +55,11 @@
     "fallback_model": "gemini-2.5-flash-lite",
     "visual_evidence": true,
     "fallback_visual_evidence": true,
+    "visual_evidence_paths": [
+      "app/**",
+      "**/*.origami",
+      "**/*.origami-config"
+    ],
     "require_builder_delivery": true,
     "delivery_wait_seconds": 1800
   },
