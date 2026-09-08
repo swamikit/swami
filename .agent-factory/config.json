@@ -20,8 +20,8 @@
     "retry_label": "agent:retry",
     "provider": "minimax",
     "model": "MiniMax-M2.7",
-    "fallback_provider": "nvidia",
-    "fallback_model": "moonshotai/kimi-k3",
+    "fallback_provider": "openrouter",
+    "fallback_model": "cohere/north-mini-code:free",
     "max_subtasks": 3
   },
   "builder": {
