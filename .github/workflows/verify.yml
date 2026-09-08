@@ -38,7 +38,9 @@ jobs:
   # Always runs. Cheap ubuntu check that classifies the PR's touched paths so we
   # only pay for macos-15 minutes when the pixel gate can actually catch something.
   # Also gives branch protection something to require on every PR without forcing
-  # the expensive job on docs-only changes.
+  # the expensive job on docs- or control-plane-only changes. A verify workflow
+  # change is syntax-checked by GitHub and can request an explicit full rerun with
+  # workflow_dispatch; it must not implicitly publish every corpus pattern.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -75,7 +77,6 @@ jobs:
               - 'tool/src/**'
               - 'tool/**/*.py'
               - '.github/patterns.txt'
-              - '.github/workflows/verify.yml'
               - '**/*.origami'
               - '**/*.origami-config'
 
