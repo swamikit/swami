@@ -20,8 +20,8 @@
     "retry_label": "agent:retry",
     "provider": "minimax",
     "model": "MiniMax-M2.7",
-    "fallback_provider": "nvidia",
-    "fallback_model": "moonshotai/kimi-k3",
+    "fallback_provider": "openrouter",
+    "fallback_model": "cohere/north-mini-code:free",
     "max_subtasks": 3
   },
   "builder": {
@@ -34,8 +34,8 @@
     "branch_prefix": "agent-factory/issue-",
     "base_branch": "development",
     "runner": "macos-15",
-    "fallback_provider": "nvidia",
-    "fallback_model": "moonshotai/kimi-k3",
+    "fallback_provider": "openrouter",
+    "fallback_model": "cohere/north-mini-code:free",
     "max_model_requests": 60,
     "max_output_tokens": 2048,
     "max_revision_attempts": 3,
@@ -46,6 +46,7 @@
   "review": {
     "marker": "<!-- reviewer:agent-factory -->",
     "failure_marker": "<!-- reviewer:agent-factory-failure -->",
+    "app_login": "agent-factory-reviewer[bot]",
     "required": true,
     "max_diff_bytes": 200000,
     "provider": "minimax",

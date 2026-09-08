@@ -28,7 +28,7 @@ permissions:
 env:
   APP_PROJECT: app/Swami.xcodeproj
   SCHEME: SwamiHost
-  FACTORY_REF: d74be452b38e6d86891bf666b52b98a84c9f7281
+  FACTORY_REF: 1e0d83f8a673e5477b2dabaf644dd2aee81d170c
   GH_ATTACHMENT_CLI_VERSION: 2.100.0
   GH_ATTACHMENT_CLI_SHA256: 45f9a62da2f6e641a7fad57e2ce39656dfd7ef331372d80a2a2aed65abb01642
   MAESTRO_VERSION: 2.7.0
@@ -517,7 +517,7 @@ jobs:
           printf '%s  %s\n' "$GH_ATTACHMENT_CLI_SHA256" "$archive" | shasum -a 256 -c -
           unzip -q "$archive" -d "$install_root"
           cli_dir="$install_root/gh_${GH_ATTACHMENT_CLI_VERSION}_macOS_arm64/bin"
-          "$cli_dir/gh" pr edit --help | grep -q -- '--attach'
+          "$cli_dir/gh" pr edit --help | grep -- '--attach' >/dev/null
           echo "$cli_dir" >> "$GITHUB_PATH"
 
       - name: Publish canonical Builder delivery into the PR description
@@ -533,7 +533,6 @@ jobs:
           ORIGAMI_VERSION: ${{ steps.verify.outputs.origami_version }}
         run: |
           set -euo pipefail
-          gh pr edit --help | grep -q -- '--attach'
           SITE_REPO="${REPO#*/}"
           DOCC_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/documentation/swami/"
           DOCC_HEAD_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/.agent-factory-head"
