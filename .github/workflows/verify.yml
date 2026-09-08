@@ -48,6 +48,8 @@ jobs:
       patterns: ${{ steps.registry.outputs.patterns }}
     steps:
       - uses: actions/checkout@v4
+      - name: Validate verification workflow contract
+        run: python3 .github/scripts/validate_verify_contract.py
       - name: Validate pattern registry
         id: registry
         shell: bash
