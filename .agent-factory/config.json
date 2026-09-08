@@ -27,7 +27,7 @@
   "builder": {
     "marker": "<!-- builder:agent-factory -->",
     "provider": "openrouter",
-    "harness": "openai-compatible-tool-loop",
+    "harness": "openai-compatible",
     "model": "z-ai/glm-5.3-flash",
     "cli_version": "0.55.1",
     "timeout_seconds": 1800,
