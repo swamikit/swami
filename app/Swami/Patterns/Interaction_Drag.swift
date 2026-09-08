@@ -32,7 +32,7 @@ public struct Interaction_DragView: View {
     private let cardSize = CGSize(width: 220, height: 140)
     private let artboardSize = CGSize(width: 888, height: 1212)
     private let cardColor = Color(red: 255/255.0, green: 211/255.0, blue: 180/255.0, opacity: 1.0)
-    private let artboardBackground = Color(red: 213/255.0, green: 180/255.0, blue: 255/255.0, opacity: 1.0)
+    private let artboardBackground = Color(red: 248/255.0, green: 214/255.0, blue: 184/255.0, opacity: 1.0)
 
     public var body: some View {
         ZStack {
@@ -42,10 +42,11 @@ public struct Interaction_DragView: View {
                 .frame(width: cardSize.width, height: cardSize.height)
                 .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
                 .offset(position)
-                .drag(momentum: true, bounds: dragBounds, position: $position)
+                .drag(momentum: true, bounds: dragBounds, position: $position, reset: position == .zero)
         }
         .frame(width: artboardSize.width, height: artboardSize.height)
         .ignoresSafeArea(.all)
+        .onAppear { position = .zero }
     }
 
     private var dragBounds: (min: CGSize, max: CGSize) {
