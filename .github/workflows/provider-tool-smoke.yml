@@ -12,9 +12,9 @@ permissions:
 
 jobs:
   minimax:
-    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@5b450d9f419345a7eb79f3a0ff619f88ce0ec757
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@1fdf9a96a6ff394231ecd5a609ea4e664cbb3adc
     with:
-      factory_ref: 5b450d9f419345a7eb79f3a0ff619f88ce0ec757
+      factory_ref: 1fdf9a96a6ff394231ecd5a609ea4e664cbb3adc
       provider: minimax
       models: MiniMax-M2.7
       max_candidates: 1
@@ -25,9 +25,9 @@ jobs:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
 
   openrouter:
-    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@5b450d9f419345a7eb79f3a0ff619f88ce0ec757
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@1fdf9a96a6ff394231ecd5a609ea4e664cbb3adc
     with:
-      factory_ref: 5b450d9f419345a7eb79f3a0ff619f88ce0ec757
+      factory_ref: 1fdf9a96a6ff394231ecd5a609ea4e664cbb3adc
       provider: openrouter
       models: z-ai/glm-5.3-flash
       max_candidates: 1
