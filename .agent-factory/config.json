@@ -46,6 +46,7 @@
   "review": {
     "marker": "<!-- reviewer:agent-factory -->",
     "failure_marker": "<!-- reviewer:agent-factory-failure -->",
+    "app_login": "agent-factory-reviewer[bot]",
     "required": true,
     "max_diff_bytes": 200000,
     "provider": "minimax",
