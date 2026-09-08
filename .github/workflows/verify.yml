@@ -47,6 +47,17 @@ jobs:
       patterns: ${{ steps.registry.outputs.patterns }}
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned Agent Factory contract
+        uses: actions/checkout@v4
+        with:
+          repository: samuelalake/agent-factory
+          ref: ${{ env.FACTORY_REF }}
+          path: factory-contract
+          persist-credentials: false
+      - name: Validate pinned Factory and consumer config
+        run: |
+          PYTHONPATH=factory-contract/src python3 -c \
+            'from agent_factory.config import load_config; load_config(".agent-factory/config.json")'
       - name: Validate pattern registry
         id: registry
         shell: bash
