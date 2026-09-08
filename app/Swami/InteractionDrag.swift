@@ -4,6 +4,7 @@ public struct InteractionDragView: View {
     public init() {}
 
     @State private var position: CGSize = .zero
+    @State private var restingPosition: CGSize = .zero
     private let artboardSize = CGSize(width: 888, height: 1212)
     private let cardSize = CGSize(width: 220, height: 140)
     private let artboardColor = Color(red: 255/255.0, green: 43/255.0, blue: 79/255.0)
@@ -31,18 +32,20 @@ public struct InteractionDragView: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
                 let projected = CGSize(
-                    width: position.width + value.translation.width,
-                    height: position.height + value.translation.height
+                    width: restingPosition.width + value.translation.width,
+                    height: restingPosition.height + value.translation.height
                 )
                 position = clamp(projected)
             }
             .onEnded { value in
                 let projected = CGSize(
-                    width: position.width + value.predictedEndTranslation.width,
-                    height: position.height + value.predictedEndTranslation.height
+                    width: restingPosition.width + value.predictedEndTranslation.width,
+                    height: restingPosition.height + value.predictedEndTranslation.height
                 )
+                let settled = clamp(projected)
                 withAnimation(.interpolatingSpring(stiffness: 180, damping: 22)) {
-                    position = clamp(projected)
+                    position = settled
+                    restingPosition = settled
                 }
             }
     }

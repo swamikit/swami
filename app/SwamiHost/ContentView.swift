@@ -11,6 +11,7 @@ struct ContentView: View {
         case "touch", nil: TouchOrigamiExampleView()
         case "drag": Interaction_DragView()
         case "interaction-drag": Interaction_DragView()
+        case "interaction_drag": Interaction_DragView()
         default: TouchOrigamiExampleView()
         }
     }

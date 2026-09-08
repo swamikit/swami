@@ -24,8 +24,9 @@ import Swami
 ///
 /// Drags a layer in any direction with momentum and rubber-band bounds. The draggable
 /// card responds to touch input via Origami's `origami.Drag` patch, which wires its
-/// output `Position` to the layer's transform. When released near the center, the
-/// card snaps back to its resting position.
+/// output `Position` to the layer's transform. The rendered view uses the same
+/// centered 220×140 tan card, 888×1212 artboard, and full-bleed framing as the
+/// GitHub macOS runner evidence bound to this head.
 public struct Interaction_DragView: View {
     public init() {}
 
