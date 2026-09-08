@@ -32,10 +32,12 @@ public struct Drag: ViewModifier {
 
     @State private var origin: CGSize = .zero      // Position at the start of the current drag
     @State private var current: CGSize = .zero     // live Position output
+    @GestureState private var isPressing = false
 
     public func body(content: Content) -> some View {
         content
             .offset(current)
+            .scaleEffect(isPressing ? 1.01 : 1.0)
             .gesture(dragGesture, isEnabled: enable)
             .onChange(of: reset) { _, r in if r { settle(to: .zero) } }
     }

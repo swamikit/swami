@@ -10,6 +10,7 @@ struct ContentView: View {
         switch ProcessInfo.processInfo.environment["SWAMI_PATTERN"] {
         case "touch", nil: TouchOrigamiExampleView()
         case "drag": Interaction_DragView()
+        case "interaction-drag": Interaction_DragView()
         default: TouchOrigamiExampleView()
         }
     }

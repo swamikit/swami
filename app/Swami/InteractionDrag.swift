@@ -4,8 +4,8 @@ public struct InteractionDragView: View {
     public init() {}
 
     @State private var position: CGSize = .zero
-    private let artboardColor = Color(red: 211/255, green: 180/255, blue: 255/255)
-    private let cardColor = Color.white
+    private let artboardColor = Color(red: 255/255, green: 43/255, blue: 79/255)
+    private let cardColor = Color(red: 255/255, green: 211/255, blue: 180/255)
     private let cardSize = CGSize(width: 220, height: 140)
     private let artboardSize = CGSize(width: 888, height: 1212)
 
