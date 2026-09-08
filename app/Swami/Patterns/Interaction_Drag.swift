@@ -33,7 +33,7 @@ public struct Interaction_DragView: View {
     private let cardSize = CGSize(width: 220, height: 140)
     private let artboardSize = CGSize(width: 888, height: 1212)
     private let cardColor = Color(red: 255/255.0, green: 211/255.0, blue: 180/255.0)
-    private let artboardBackground = Color(red: 255/255.0, green: 43/255.0, blue: 79/255.0, opacity: 1.0)
+    private let artboardBackground = Color(red: 255/255.0, green: 43/255.0, blue: 79/255.0)
 
     public var body: some View {
         ZStack {
@@ -41,8 +41,8 @@ public struct Interaction_DragView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(cardColor)
                 .frame(width: cardSize.width, height: cardSize.height)
-                .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
                 .offset(position)
+                .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
                 .drag(momentum: true, bounds: dragBounds, position: $position, reset: position == .zero)
         }
         .frame(width: artboardSize.width, height: artboardSize.height)

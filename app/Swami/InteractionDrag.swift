@@ -4,7 +4,7 @@ public struct InteractionDragView: View {
     public init() {}
 
     @State private var position: CGSize = .zero
-    private let artboardColor = Color(red: 255/255, green: 43/255, blue: 79/255)
+    private let artboardColor = Color(red: 255/255.0, green: 43/255.0, blue: 79/255.0)
     private let cardColor = Color(red: 255/255, green: 211/255, blue: 180/255)
     private let cardSize = CGSize(width: 220, height: 140)
     private let artboardSize = CGSize(width: 888, height: 1212)
@@ -15,8 +15,8 @@ public struct InteractionDragView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(cardColor)
                 .frame(width: cardSize.width, height: cardSize.height)
-                .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
                 .offset(position)
+                .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
                 .drag(momentum: true, bounds: dragBounds, position: $position, reset: position == .zero)
         }
         .frame(width: artboardSize.width, height: artboardSize.height)
