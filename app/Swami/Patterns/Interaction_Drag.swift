@@ -44,7 +44,7 @@ public struct Interaction_DragView: View {
 
     // Card fill color: solid tan extracted from parser hex scan.
     // Parser evidence: 0xFFD3B4FF at pos 518344 (DragSettings region).
-    // As ARGB: rgba(255, 211, 180, 255) — solid salmon/tan color.
+    // As ARGB: rgba(255, 211, 180, 255) — solid tan color.
     // This matches Origami's Drag demo card appearance.
     private let cardColor = Color(
         red: 255 / 255.0,
@@ -65,10 +65,13 @@ public struct Interaction_DragView: View {
                     .drag(
                         momentum: true,
                         bounds: dragBounds,
-                        position: $position
+                        position: $position,
+                        translation: nil,
+                        velocity: nil,
+                        reset: false
                     )
             }
-            .ignoresSafeArea()
+            .ignoresSafeArea(.all)
     }
 
     // Drag bounds: symmetric limits relative to centered card rest-position.
