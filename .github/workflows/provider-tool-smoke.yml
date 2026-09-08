@@ -29,7 +29,7 @@ jobs:
     with:
       factory_ref: 1f72a5c791c3781dcaa83d92d047e12b6f7fdf00
       provider: openrouter
-      models: dots-studio/dots-3-note-preview:free
+      models: z-ai/glm-5.3-flash
       max_candidates: 1
       builder_shape: true
       max_output_tokens: 2048
