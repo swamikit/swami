@@ -54,25 +54,21 @@ public struct Interaction_DragView: View {
     )
 
     public var body: some View {
-        // Artboard background — semi-transparent warm background.
-        // Evidence: DragSettings analysis confirmed card is solid (alpha=255) vs
-        // semi-transparent background layer. Warm reddish tone with low alpha.
         Color(red: 235 / 255.0, green: 57 / 255.0, blue: 30 / 255.0, opacity: 0.16)
+            .frame(width: artboardSize.width, height: artboardSize.height)
             .overlay {
-                // Draggable card centered on artboard.
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(cardColor)
                     .frame(width: cardSize.width, height: cardSize.height)
-                    // origami.Drag patch: momentum enabled, rubber-band bounds,
-                    // Position output feeds the card's offset.
+                    .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
+                    .offset(position)
                     .drag(
                         momentum: true,
                         bounds: dragBounds,
                         position: $position
                     )
             }
-            .frame(width: artboardSize.width, height: artboardSize.height)
-            .ignoresSafeArea() // Origami renders without safe-area chrome
+            .ignoresSafeArea()
     }
 
     // Drag bounds: symmetric limits relative to centered card rest-position.
