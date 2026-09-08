@@ -17,6 +17,7 @@ card snaps back to its resting position.
 - Diff: published alongside the captures for the same head
 - Recording: H.264 interaction video from the same head
 - Verification: runner executes the drag flow end-to-end, including Maestro
+- This page is generated from the same reviewed head that produced the artifacts above.
 
 ## Preview
 

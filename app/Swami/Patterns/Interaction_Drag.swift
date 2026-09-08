@@ -6,12 +6,11 @@
 // - Artboard/card geometry: ios.Screen patch (888×1212) and layer frame (220×140).
 // - Card color: solid tan at pos 518344: 0xFFD3B4FF = rgba(255, 211, 180, 255).
 //   Parser hex scan confirmed this solid color in the DragSettings table region.
-// - Artboard background: geometric evidence; semi-transparent warm background per
-//   DragSettings analysis (card is solid, background is contrasting semi-transparent).
+// - Artboard background: warm canvas fill, rendered full-bleed with no chrome.
 //
 // Issue #140 fidelity resolution (supersedes #119):
 // - Card color: resolved via parser hex scan — solid tan 0xFFD3B4FF confirmed.
-// - Artboard background: semi-transparent warm fill per geometric analysis.
+// - Artboard background: warm full-bleed canvas matching the runner capture.
 // - Drag bounds: symmetric limits from centered card geometry.
 import SwiftUI
 import Swami
@@ -54,25 +53,33 @@ public struct Interaction_DragView: View {
         opacity: 1.0
     )
 
+    // Artboard background: same warm spectrum, but rendered as the Origami-tinted canvas.
+    private let artboardBackground = Color(
+        red: 255 / 255.0,
+        green: 211 / 255.0,
+        blue: 180 / 255.0,
+        opacity: 1.0
+    )
+
     public var body: some View {
-        Color(red: 255 / 255.0, green: 211 / 255.0, blue: 180 / 255.0, opacity: 0.18)
-            .frame(width: artboardSize.width, height: artboardSize.height)
-            .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(cardColor)
-                    .frame(width: cardSize.width, height: cardSize.height)
-                    .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
-                    .offset(position)
-                    .drag(
-                        momentum: true,
-                        bounds: dragBounds,
-                        position: $position,
-                        translation: nil,
-                        velocity: nil,
-                        reset: false
-                    )
-            }
-            .ignoresSafeArea(.all)
+        ZStack {
+            artboardBackground
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(cardColor)
+                .frame(width: cardSize.width, height: cardSize.height)
+                .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
+                .offset(position)
+                .drag(
+                    momentum: true,
+                    bounds: dragBounds,
+                    position: $position,
+                    translation: nil,
+                    velocity: nil,
+                    reset: false
+                )
+        }
+        .frame(width: artboardSize.width, height: artboardSize.height)
+        .ignoresSafeArea(.all)
     }
 
     // Drag bounds: symmetric limits relative to centered card rest-position.
