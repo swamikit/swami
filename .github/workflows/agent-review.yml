@@ -24,6 +24,11 @@ permissions:
 
 jobs:
   review:
+    # The immutable reusable workflow is the enforcement implementation, not
+    # merely a dispatcher: it loads this consumer's config, classifies every
+    # changed path, and blocks scoped visual changes without canonical Builder
+    # evidence. Keep this call unconditional for eligible same-repository PRs;
+    # duplicating its policy in the consumer wrapper would drift.
     # Secrets are withheld from fork pull requests. Keep those safely pending
     # until a maintainer brings the head into this repository or explicitly
     # supplies a trusted review path; never run secret-bearing model review on
