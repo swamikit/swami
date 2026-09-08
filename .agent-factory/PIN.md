@@ -3,9 +3,9 @@
 Swami's Steward, Builder, Reviewer, Gate, and integration workflows must use the
 same immutable Agent Factory commit.
 
-- Current: `57381f903da08ad8935429046423516a8d0d09ef`
-- Previous: `f109e8800a3e07389bb65c14e2566786f9386ec9`
-- Upstream evidence: https://github.com/samuelalake/agent-factory/compare/f109e8800a3e07389bb65c14e2566786f9386ec9...57381f903da08ad8935429046423516a8d0d09ef
+- Current: `cf28b0fb011e84c2eda85b3d6a7da7222962691e`
+- Previous: `57381f903da08ad8935429046423516a8d0d09ef`
+- Upstream evidence: https://github.com/samuelalake/agent-factory/compare/57381f903da08ad8935429046423516a8d0d09ef...cf28b0fb011e84c2eda85b3d6a7da7222962691e
 - First consumer target: Swami Interaction Drag PR #150. This pin configures
   Reviewer to require authenticated current-head evidence for Swami app and
   Origami changes, including failed deterministic evidence. Runtime observation
