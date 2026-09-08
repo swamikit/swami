@@ -16,10 +16,10 @@ permissions:
 jobs:
   steward:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready' || github.event.label.name == 'agent:steward' || github.event.label.name == 'agent:retry'
-    uses: samuelalake/agent-factory/.github/workflows/steward.yml@1f72a5c791c3781dcaa83d92d047e12b6f7fdf00
+    uses: samuelalake/agent-factory/.github/workflows/steward.yml@5b450d9f419345a7eb79f3a0ff619f88ce0ec757
     with:
       issue: ${{ format('{0}', github.event.issue.number || inputs.issue) }}
-      factory_ref: 1f72a5c791c3781dcaa83d92d047e12b6f7fdf00
+      factory_ref: 5b450d9f419345a7eb79f3a0ff619f88ce0ec757
     secrets:
       AGENT_FACTORY_STEWARD_APP_ID: ${{ secrets.AGENT_FACTORY_STEWARD_APP_ID }}
       AGENT_FACTORY_STEWARD_APP_PRIVATE_KEY: ${{ secrets.AGENT_FACTORY_STEWARD_APP_PRIVATE_KEY }}

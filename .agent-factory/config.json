@@ -41,7 +41,9 @@
     "max_revision_attempts": 3,
     "max_model_cost_usd": 0.5,
     "input_cost_per_million": 0.075,
-    "output_cost_per_million": 0.25
+    "output_cost_per_million": 0.25,
+    "visual_revision_context": true,
+    "fallback_visual_revision_context": false
   },
   "review": {
     "marker": "<!-- reviewer:agent-factory -->",
