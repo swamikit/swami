@@ -28,7 +28,7 @@
     "marker": "<!-- builder:agent-factory -->",
     "provider": "openrouter",
     "harness": "openai-compatible-tool-loop",
-    "model": "meta/muse-spark-1.3-contributor",
+    "model": "z-ai/glm-5.3-flash",
     "cli_version": "0.55.1",
     "timeout_seconds": 1800,
     "branch_prefix": "agent-factory/issue-",
@@ -40,8 +40,8 @@
     "max_output_tokens": 2048,
     "max_revision_attempts": 3,
     "max_model_cost_usd": 0.5,
-    "input_cost_per_million": 0.1,
-    "output_cost_per_million": 0.2
+    "input_cost_per_million": 0.075,
+    "output_cost_per_million": 0.25
   },
   "review": {
     "marker": "<!-- reviewer:agent-factory -->",
