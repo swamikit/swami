@@ -9,8 +9,8 @@ struct ContentView: View {
     var body: some View {
         switch ProcessInfo.processInfo.environment["SWAMI_PATTERN"] {
         case "touch", nil: TouchOrigamiExampleView()
-        case "drag":       Interaction_DragView()
-        default:           TouchOrigamiExampleView()   // add cases as patterns land
+        case "drag": InteractionDragView()
+        default: TouchOrigamiExampleView()
         }
     }
 }
