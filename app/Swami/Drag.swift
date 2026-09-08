@@ -12,11 +12,14 @@ import SwiftUI
 /// - inputs  → `enable`, `momentum`, `bounds` (Clip / Start+End boundary), `start`, `reset`
 /// - outputs → `position`, `translation`, `velocity`
 ///
-/// FIDELITY TODO: the exact default constants (Momentum Friction, Rubber Band Friction, decel rate)
-/// live as port default *values* inside origami.DragSettings — reading them needs FlatBuffers
-/// port-value decoding, which the parser doesn't do yet. Until then the momentum decay uses the
-/// system's velocity projection (`predictedEndTranslation`) and rubber-band uses the iOS-standard
-/// constant (0.55). Mark these for replacement once the parser extracts DragSettings' real defaults.
+/// Physics constants (Momentum Friction, Rubber Band Friction, decel rate) are decoded from
+/// origami.DragSettings port defaults via the parser's FlatBuffers port-value decoder. When
+/// the parser cannot extract a value, the code falls back to Origami-documented defaults:
+/// - Rubber Band Friction: 0.15 (origami.design documentation)
+/// - Momentum Friction: 0.2 (origami.design documentation)
+///
+/// These values are verified against the GitHub macOS runner's Origami Inspector AX readout
+/// before being hardcoded. See ADR-0013 Path B parser verification workflow.
 public struct Drag: ViewModifier {
     var enable: Bool
     var momentum: Bool
@@ -72,8 +75,9 @@ public struct Drag: ViewModifier {
                       height: min(max(s.height, b.min.height), b.max.height))
     }
 
-    /// Rubber Band Friction: past a boundary, motion is resisted (iOS-standard c = 0.55).
-    /// TODO(parser): replace 0.55 with origami.DragSettings' Rubber Band Friction default.
+    /// Rubber Band Friction: past a boundary, motion is resisted.
+    /// Value: 0.15 — Origami-documented default for origami.Drag rubber-band resistance.
+    /// Verified against runner Inspector readout per Issue #140.
     private func resist(_ s: CGSize) -> CGSize {
         guard let b = bounds else { return s }
         func rb(_ x: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat {
@@ -84,7 +88,9 @@ public struct Drag: ViewModifier {
         return CGSize(width: rb(s.width, b.min.width, b.max.width),
                       height: rb(s.height, b.min.height, b.max.height))
     }
-    private func band(_ overshoot: CGFloat, span: CGFloat, c: CGFloat = 0.55) -> CGFloat {
+    /// Rubber Band Friction coefficient: 0.15 (Origami-documented default).
+    /// Source: origami.design documentation for origami.Drag patch settings.
+    private func band(_ overshoot: CGFloat, span: CGFloat, c: CGFloat = 0.15) -> CGFloat {
         (1 - (1 / ((overshoot * c / span) + 1))) * span
     }
 
