@@ -35,7 +35,7 @@
     "base_branch": "development",
     "runner": "macos-15",
     "fallback_provider": "openrouter",
-    "fallback_model": "poolside/laguna-s-2.1:free",
+    "fallback_model": "dots-studio/dots-3-note-preview:free",
     "max_model_requests": 60,
     "max_output_tokens": 2048,
     "max_revision_attempts": 3,
