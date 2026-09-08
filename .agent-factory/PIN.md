@@ -3,10 +3,11 @@
 Swami's Steward, Builder, Reviewer, Gate, and integration workflows must use the
 same immutable Agent Factory commit.
 
-- Current: `001eecfa14680de5c25040513bb92b7df5e0d596`
-- Previous: `d4c7299d93181d67d6af23664f324d3e140be479`
-- Upstream evidence: https://github.com/samuelalake/agent-factory/compare/d4c7299d93181d67d6af23664f324d3e140be479...001eecfa14680de5c25040513bb92b7df5e0d596
-- First consumer: Swami PR #111, whose next Builder revision exercises protected-path reconciliation.
+- Current: `1e0d83f8a673e5477b2dabaf644dd2aee81d170c`
+- Previous: `d74be452b38e6d86891bf666b52b98a84c9f7281`
+- Upstream evidence: https://github.com/samuelalake/agent-factory/compare/d74be452b38e6d86891bf666b52b98a84c9f7281...1e0d83f8a673e5477b2dabaf644dd2aee81d170c
+- First consumer: Swami Interaction Drag PR #150, whose next Builder revision
+  exercises deterministic current-base evidence regeneration.
 - Rollback: revert the pin-bump commit so all five workflow references return to
   the previous SHA atomically.
 
