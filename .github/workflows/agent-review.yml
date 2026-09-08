@@ -24,15 +24,20 @@ permissions:
 
 jobs:
   review:
+    # The immutable reusable workflow is the enforcement implementation, not
+    # merely a dispatcher: it loads this consumer's config, classifies every
+    # changed path, and blocks scoped visual changes without canonical Builder
+    # evidence. Keep this call unconditional for eligible same-repository PRs;
+    # duplicating its policy in the consumer wrapper would drift.
     # Secrets are withheld from fork pull requests. Keep those safely pending
     # until a maintainer brings the head into this repository or explicitly
     # supplies a trusted review path; never run secret-bearing model review on
     # untrusted fork code via pull_request_target.
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.fork == false
-    uses: samuelalake/agent-factory/.github/workflows/review.yml@1e0d83f8a673e5477b2dabaf644dd2aee81d170c
+    uses: samuelalake/agent-factory/.github/workflows/review.yml@cf28b0fb011e84c2eda85b3d6a7da7222962691e
     with:
       pr: ${{ format('{0}', github.event.pull_request.number || inputs.pr) }}
-      factory_ref: 1e0d83f8a673e5477b2dabaf644dd2aee81d170c
+      factory_ref: cf28b0fb011e84c2eda85b3d6a7da7222962691e
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
@@ -43,10 +48,10 @@ jobs:
 
   integration:
     needs: review
-    uses: samuelalake/agent-factory/.github/workflows/integration.yml@1e0d83f8a673e5477b2dabaf644dd2aee81d170c
+    uses: samuelalake/agent-factory/.github/workflows/integration.yml@cf28b0fb011e84c2eda85b3d6a7da7222962691e
     with:
       pr: ${{ format('{0}', github.event.pull_request.number || inputs.pr) }}
-      factory_ref: 1e0d83f8a673e5477b2dabaf644dd2aee81d170c
+      factory_ref: cf28b0fb011e84c2eda85b3d6a7da7222962691e
       timeout_seconds: 1800
     secrets:
       AGENT_FACTORY_STEWARD_APP_ID: ${{ secrets.AGENT_FACTORY_STEWARD_APP_ID }}
