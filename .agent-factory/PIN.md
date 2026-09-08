@@ -3,9 +3,9 @@
 Swami's Steward, Builder, Reviewer, Gate, and integration workflows must use the
 same immutable Agent Factory commit.
 
-- Current: `1fdf9a96a6ff394231ecd5a609ea4e664cbb3adc`
-- Previous: `5b450d9f419345a7eb79f3a0ff619f88ce0ec757`
-- Upstream evidence: https://github.com/samuelalake/agent-factory/compare/5b450d9f419345a7eb79f3a0ff619f88ce0ec757...1fdf9a96a6ff394231ecd5a609ea4e664cbb3adc
+- Current: `451fb7683249376ad5fb5a01e04ce09f5c200279`
+- Previous: `1fdf9a96a6ff394231ecd5a609ea4e664cbb3adc`
+- Upstream evidence: https://github.com/samuelalake/agent-factory/compare/1fdf9a96a6ff394231ecd5a609ea4e664cbb3adc...451fb7683249376ad5fb5a01e04ce09f5c200279
 - First consumer: Swami Interaction Drag PR #150, whose next Builder revision
   receives its rejected-head Swami, Origami, and diff images through bounded,
   authenticated visual context.
