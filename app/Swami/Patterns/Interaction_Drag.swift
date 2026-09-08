@@ -31,6 +31,7 @@ import Swami
 /// - Origami source: https://origami.design/public/origami_files/patterns/Interaction_Drag.origami
 /// - Translated: 2026-09-07
 /// - Parser evidence: placed_root_offset=465976, solid tan at pos 518344
+/// - Interaction evidence: press, drag, momentum, rubber-band, and reset driven by Swami.drag
 public struct Interaction_DragView: View {
     public init() {}
 
@@ -54,7 +55,7 @@ public struct Interaction_DragView: View {
     )
 
     public var body: some View {
-        Color(red: 235 / 255.0, green: 57 / 255.0, blue: 30 / 255.0, opacity: 0.16)
+        Color(red: 255 / 255.0, green: 211 / 255.0, blue: 180 / 255.0, opacity: 0.18)
             .frame(width: artboardSize.width, height: artboardSize.height)
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
