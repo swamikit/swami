@@ -3,8 +3,8 @@ import SwiftUI
 /// SwiftUI equivalent of Origami's **Interaction Drag** pattern.
 ///
 /// Faithful composition from the runner-produced reference:
-/// - artboard: 888×1212, saturated purple background
-/// - card: 220×140, centered, rounded radius 20, white fill
+/// - artboard: 888×1212, warm tan canvas
+/// - card: 220×140, centered, rounded radius 20, tan fill
 /// - interaction: press, drag, momentum, rubber-band bounds, release, reset to center
 ///
 /// The view composes the reference as an explicit artboard/canvas, a centered card, and a
@@ -14,11 +14,11 @@ public struct InteractionDragView: View {
 
     @State private var position: CGSize = .zero
     @State private var velocity: CGSize = .zero
-    @State private var pressScale: CGFloat = 0.96
+    @State private var pressScale: CGFloat = 1
     @State private var isDragging = false
 
-    private let artboardColor = Color(hex: "#DD70DF")
-    private let cardColor = Color.white
+    private let artboardColor = Color(red: 248/255, green: 214/255, blue: 184/255)
+    private let cardColor = Color(red: 255/255, green: 211/255, blue: 180/255)
     private let cardSize = CGSize(width: 220, height: 140)
     private let bounds = CGSize(width: 334, height: 536)
 
@@ -45,7 +45,7 @@ public struct InteractionDragView: View {
             .onChanged { value in
                 if !isDragging {
                     isDragging = true
-                    pressScale = 0.96
+                    pressScale = 0.98
                 }
                 let proposed = CGSize(width: value.translation.width, height: value.translation.height)
                 position = rubberBand(proposed)
@@ -56,11 +56,10 @@ public struct InteractionDragView: View {
                                        height: position.height + value.predictedEndTranslation.height - value.translation.height)
                 let clamped = clamp(projected)
                 velocity = .zero
-                withAnimation(.interpolatingSpring(stiffness: 170, damping: 20)) {
-                    position = .zero
+                withAnimation(.interpolatingSpring(stiffness: 180, damping: 22)) {
+                    position = clamped
                     pressScale = 1
                 }
-                position = clamped
                 isDragging = false
             }
     }
