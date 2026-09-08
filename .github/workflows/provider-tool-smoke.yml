@@ -29,8 +29,8 @@ jobs:
     with:
       factory_ref: 1f72a5c791c3781dcaa83d92d047e12b6f7fdf00
       provider: openrouter
-      models: cohere/north-mini-code:free
-      max_candidates: 1
+      models: poolside/laguna-s-2.1:free,nvidia/nemotron-3.5-lightning:free,thinkingmachines/inkling-small:free,dots-studio/dots-3-note-preview:free
+      max_candidates: 4
       builder_shape: true
       max_output_tokens: 2048
       prompt_bytes: 70000
