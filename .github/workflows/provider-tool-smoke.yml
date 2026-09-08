@@ -3,8 +3,6 @@ name: provider-tool-smoke
 on:
   pull_request:
     branches: [development]
-    paths:
-      - .github/workflows/provider-tool-smoke.yml
   workflow_dispatch:
 
 permissions:
@@ -29,7 +27,7 @@ jobs:
     with:
       factory_ref: 451fb7683249376ad5fb5a01e04ce09f5c200279
       provider: openrouter
-      models: google/gemini-3.6-flash
+      models: qwen/qwen3-vl-235b-a22b-instruct
       max_candidates: 1
       builder_shape: true
       max_output_tokens: 2048
