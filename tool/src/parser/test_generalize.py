@@ -23,7 +23,7 @@ Run:
     python3 -m tool.src.parser.test_generalize        # from repo root
     python3 tool/src/parser/test_generalize.py
 """
-import pathlib, sys, unittest, urllib.request, urllib.error
+import pathlib, struct, sys, unittest, urllib.request, urllib.error
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[2]
@@ -132,6 +132,15 @@ class TestInteractionCorpus(unittest.TestCase):
         for library_marker in ("origami.Drag", "origami.DragSettings"):
             self.assertNotIn(library_marker, kinds,
                              f"Interaction_Touch contaminated with {library_marker}: kinds={kinds}")
+        # Touch is an independent document/table-shape oracle for typed Color.
+        # Its artboard uses the same named ColorKit Purple token as the Inspector.
+        self.assertTrue(any(
+            abs(color["red"] - 221 / 255) < 1e-12
+            and abs(color["green"] - 112 / 255) < 1e-12
+            and abs(color["blue"] - 223 / 255) < 1e-12
+            and color["alpha"] == 1.0
+            for color in out["decoded_colors"]
+        ), f"Interaction_Touch missing decoded Purple token: {out['decoded_colors']}")
 
     def test_interaction_drag_places_drag_not_library(self):
         p = _fetch_corpus_file("Interaction_Drag.origami")
@@ -214,6 +223,58 @@ class TestInteractionCorpus(unittest.TestCase):
         corrupted = bytearray(graph.d)
         corrupted[purple_offset + graph.field_offset(purple_info, 0)] = 2
         self.assertIsNone(Graph(bytes(corrupted)).decode_value(purple_offset, purple_tag))
+
+
+class TestTypedValueShapes(unittest.TestCase):
+    """Union decoding follows vtable relationships rather than observed offsets."""
+
+    @staticmethod
+    def _value_table(fields, table_size=80):
+        """Build the smallest ORGM buffer containing one schema-less value table."""
+        data = bytearray(256)
+        data[4:8] = b"ORGM"
+        table, vtable = 96, 48
+        field_count = 18  # includes the repeated union tag in field 17
+        struct.pack_into('<HH', data, vtable, 4 + field_count * 2, table_size)
+        for index, offset in fields.items():
+            struct.pack_into('<H', data, vtable + 4 + index * 2, offset)
+        struct.pack_into('<i', data, table, table - vtable)
+        return data, table
+
+    def test_number_uses_vtable_offset(self):
+        data, table = self._value_table({1: 16, 17: 32})
+        struct.pack_into('<d', data, table + 16, 8.0)
+        struct.pack_into('<I', data, table + 32, 41)
+        self.assertEqual(Graph(bytes(data)).decode_value(table, 41),
+                         {"type": "number", "value": 8.0})
+
+    def test_color_accepts_multiple_structural_field_layouts(self):
+        expected = {"type": "color", "space": "sRGB", "channels": "RGBA",
+                    "red": 221 / 255, "green": 112 / 255,
+                    "blue": 223 / 255, "alpha": 1.0}
+        # Neither layout uses the Interaction_Drag offsets (7 and 8). Both are
+        # valid table shapes because their vtables preserve discriminator, RGBA
+        # field, and repeated owner-tag relationships.
+        for subtype_offset, rgba_offset, tag_offset in ((6, 16, 48), (12, 24, 56)):
+            with self.subTest(rgba_offset=rgba_offset):
+                data, table = self._value_table(
+                    {0: subtype_offset, 4: rgba_offset, 17: tag_offset})
+                data[table + subtype_offset] = 3
+                struct.pack_into('<dddd', data, table + rgba_offset,
+                                 expected["red"], expected["green"],
+                                 expected["blue"], expected["alpha"])
+                struct.pack_into('<I', data, table + tag_offset, 73)
+                self.assertEqual(Graph(bytes(data)).decode_value(table, 73), expected)
+
+    def test_color_rejects_wrong_owner_tag_and_overlapping_payload(self):
+        data, table = self._value_table({0: 6, 4: 16, 17: 40})
+        data[table + 6] = 3
+        struct.pack_into('<dddd', data, table + 16, 0.1, 0.2, 0.3, 1.0)
+        struct.pack_into('<I', data, table + 40, 73)
+        graph = Graph(bytes(data))
+        self.assertIsNone(graph.decode_value(table, 72))
+        # Field 17 starts before all four channels fit, so this is not a Color.
+        self.assertIsNone(graph.decode_value(table, 73))
 
 
 class TestStabilityAcrossCorpus(unittest.TestCase):

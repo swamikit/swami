@@ -21,6 +21,7 @@ public struct Drag: ViewModifier {
     var momentumFriction: CGFloat
     var rubberBandFriction: CGFloat
     var rubberBandTension: CGFloat
+    var onRelease: ((CGSize) -> Void)?
 
     @State private var origin: CGSize = .zero
     @State private var current: CGSize = .zero
@@ -74,6 +75,11 @@ public struct Drag: ViewModifier {
                 previousSampleTime = nil
                 translation?.wrappedValue = .zero
                 velocity?.wrappedValue = sampledVelocity
+
+                // Publish the Drag position at Interaction touch-up. This hook lets
+                // a translated graph wire its separate Interaction → Pulse chain to
+                // Reset without installing a second gesture recognizer.
+                onRelease?(current)
 
                 // Add Momentum integrates dv/dt = -friction*v, so remaining
                 // displacement at touch-up is velocity / friction.
@@ -139,7 +145,8 @@ public extension View {
         reset: Bool = false,
         momentumFriction: CGFloat = 8,
         rubberBandFriction: CGFloat = 8,
-        rubberBandTension: CGFloat = 100
+        rubberBandTension: CGFloat = 100,
+        onRelease: ((CGSize) -> Void)? = nil
     ) -> some View {
         modifier(Drag(
             enable: enable,
@@ -151,7 +158,8 @@ public extension View {
             reset: reset,
             momentumFriction: momentumFriction,
             rubberBandFriction: rubberBandFriction,
-            rubberBandTension: rubberBandTension
+            rubberBandTension: rubberBandTension,
+            onRelease: onRelease
         ))
     }
 }

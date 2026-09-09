@@ -11,8 +11,8 @@ import Swami
 /// }
 ///
 /// A centered layer follows a drag in any direction. Origami's Drag Settings
-/// provide momentum and rubber-band bounds; releasing near the origin sends the
-/// placed graph's reset pulse.
+/// provide momentum and rubber-band bounds; the placed Interaction → Pulse chain
+/// resets releases near the origin.
 ///
 /// - Origami source: https://origami.design/public/origami_files/patterns/Interaction_Drag.origami
 public struct Interaction_DragView: View {
@@ -21,69 +21,79 @@ public struct Interaction_DragView: View {
     @State private var position: CGSize = .zero
     @State private var resetPulse = false
 
-    // The runner's Origami oracle fixes the reference viewport at 375×667 points.
-    // Values below are the corresponding source composition at that viewport.
-    private let referenceSize = CGSize(width: 375, height: 667)
-    private let screenSize = CGSize(width: 315, height: 607)
-    private let layerSize = CGSize(width: 120, height: 120)
+    // Measured from the runner's 750×1334 Origami capture and represented at
+    // the reference device's 2×, 375×667-point viewport.
+    private static let referenceSize = CGSize(width: 375, height: 667)
+    private static let interactionInset: CGFloat = 30
+    private static let interactionCornerRadius: CGFloat = 20
+    private static let layerSize: CGFloat = 120
+    private static let layerCornerRadius: CGFloat = 15
+    private static let resetTolerance: CGFloat = 100
 
-    private let purple = Color(
+    // ColorKit Purple and the source interaction-area fill, respectively.
+    private static let canvasColor = Color(
         red: 221.0 / 255.0,
         green: 112.0 / 255.0,
         blue: 223.0 / 255.0
     )
-    private let screenColor = Color(
+    private static let interactionAreaColor = Color(
         red: 229.0 / 255.0,
         green: 166.0 / 255.0,
         blue: 230.0 / 255.0
     )
 
     public var body: some View {
-        ZStack {
-            // The Purple artboard remains visible as an exact 30-point frame.
-            purple
+        GeometryReader { geometry in
+            ZStack {
+                Self.canvasColor
 
-            // The rounded screen is an explicit primary shape rather than a
-            // background modifier, preserving its inset edge in captured output.
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(screenColor)
-                .frame(width: screenSize.width, height: screenSize.height)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 15, style: .continuous)
-                        .fill(.white)
-                        .frame(width: layerSize.width, height: layerSize.height)
-                        .drag(
-                            momentum: true,
-                            bounds: dragBounds,
-                            position: $position,
-                            reset: resetPulse,
-                            momentumFriction: 8,
-                            rubberBandFriction: 8,
-                            rubberBandTension: 100
-                        )
-                        // Interaction → Equals (100-point tolerance) → Pulse → Reset.
-                        // Toggling models a pulse edge, so consecutive qualifying
-                        // releases each reset rather than leaving a latched Bool.
-                        .simultaneousGesture(
-                            DragGesture(minimumDistance: 0)
-                                .onEnded { _ in
-                                    if abs(position.width) <= 100,
-                                       abs(position.height) <= 100 {
-                                        resetPulse.toggle()
-                                    }
-                                }
-                        )
-                }
+                RoundedRectangle(
+                    cornerRadius: Self.interactionCornerRadius,
+                    style: .continuous
+                )
+                .fill(Self.interactionAreaColor)
+                .padding(Self.interactionInset)
+
+                RoundedRectangle(
+                    cornerRadius: Self.layerCornerRadius,
+                    style: .continuous
+                )
+                .fill(.white)
+                .frame(width: Self.layerSize, height: Self.layerSize)
+                .accessibilityIdentifier("interaction-drag-layer")
+                .drag(
+                    momentum: true,
+                    bounds: Self.dragBounds(in: geometry.size),
+                    position: $position,
+                    reset: resetPulse,
+                    momentumFriction: 8,
+                    rubberBandFriction: 8,
+                    rubberBandTension: 100,
+                    onRelease: sendResetPulseIfNeeded
+                )
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .frame(width: referenceSize.width, height: referenceSize.height)
-        .ignoresSafeArea()
+        .frame(width: Self.referenceSize.width, height: Self.referenceSize.height)
+        .background(Self.canvasColor)
+        .ignoresSafeArea(.all)
         .statusBarHidden(true)
     }
 
-    // The 120×120 moving layer remains inside the 315×607 rounded screen.
-    private var dragBounds: (min: CGSize, max: CGSize) {
-        let horizontal = (screenSize.width - layerSize.width) / 2
-        let vertical = (screenSize.height - layerSize.height) / 2
+    /// Implements the placed Interaction → Equals → Pulse connection. Drag owns
+    /// the sole recognizer and reports touch-up once, so Reset cannot race a
+    /// simultaneous local gesture.
+    private func sendResetPulseIfNeeded(at releasedPosition: CGSize) {
+        guard abs(releasedPosition.width) <= Self.resetTolerance,
+              abs(releasedPosition.height) <= Self.resetTolerance else { return }
+        resetPulse.toggle()
+    }
+
+    private static func dragBounds(in viewport: CGSize) -> (min: CGSize, max: CGSize) {
+        let width = viewport.width - (interactionInset * 2)
+        let height = viewport.height - (interactionInset * 2)
+        let horizontal = (width - layerSize) / 2
+        let vertical = (height - layerSize) / 2
         return (
             min: CGSize(width: -horizontal, height: -vertical),
             max: CGSize(width: horizontal, height: vertical)

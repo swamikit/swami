@@ -124,6 +124,35 @@ class Graph:
         if fo is None or fo + 4 > ts or t + fo + 4 > self.N: return None
         return self.u32(t + fo)
 
+    def field_u8(self, tinfo, field_idx):
+        """Read a present byte discriminator without assuming its table offset."""
+        t, _, _, ts = tinfo
+        fo = self.field_offset(tinfo, field_idx)
+        if fo is None or fo + 1 > ts or t + fo + 1 > self.N: return None
+        return self.d[t + fo]
+
+    def field_inline_float64s(self, tinfo, field_idx, count):
+        """Read an inline Float64 struct from a field's structural span.
+
+        FlatBuffers may move a field when optional neighbors differ between schema
+        versions. The vtable supplies its actual offset; the next populated field (or
+        table end) supplies its available span. This deliberately does not pin either
+        value to offsets observed in one corpus document.
+        """
+        t, _, vs, ts = tinfo
+        start = self.field_offset(tinfo, field_idx)
+        if start is None: return None
+        following = [
+            offset for idx in range((vs - 4) // 2)
+            if idx != field_idx
+            and (offset := self.field_offset(tinfo, idx)) is not None
+            and offset > start
+        ]
+        end = min(following, default=ts)
+        width = count * 8
+        if end - start < width or t + start + width > self.N: return None
+        return struct.unpack_from('<' + ('d' * count), self.d, t + start)
+
     def decode_value(self, value_off, expected_tag=None):
         """Decode a typed Origami value-union payload.
 
@@ -132,31 +161,25 @@ class Graph:
         is the structural type boundary: a table is never classified from a convenient
         vtable/byte pattern alone.
 
-        Once authenticated, a Number stores its Float64 in field 1 at table offset 4.
-        A Color additionally declares discriminator 3 in field 0 and stores its inline
-        four-Float64 RGBA struct in field 4.
+        Once authenticated, a Number is the payload shape with no field-0 subtype
+        discriminator and one inline Float64 in field 1. A Color declares subtype 3
+        in field 0 and carries an inline four-Float64 RGBA struct in field 4. Vtable
+        offsets and field spans are read structurally; they are not corpus constants.
         """
         info = self.table(value_off)
         if not info or expected_tag is None: return None
-        t, _, _, ts = info
         payload_tag = self.field_u32(info, 17)
         if payload_tag is None or payload_tag != expected_tag: return None
 
-        f0, f1 = self.field_offset(info, 0), self.field_offset(info, 1)
-        if f0 is None and f1 == 4 and ts >= 12:
-            value = struct.unpack_from('<d', self.d, t + f1)[0]
+        subtype = self.field_u8(info, 0)
+        number = self.field_inline_float64s(info, 1, 1)
+        if subtype is None and number is not None:
+            value = number[0]
             if value == value and abs(value) != float('inf'):
                 return {"type": "number", "value": value}
 
-        color_payload = self.field_offset(info, 4)
-        next_field = min(
-            (offset for idx in range(5, (info[2] - 4) // 2)
-             if idx != 17 and (offset := self.field_offset(info, idx)) is not None),
-            default=ts,
-        )
-        if (f0 == 7 and self.d[t + f0] == 3 and color_payload == 8
-                and next_field >= color_payload + 32):
-            channels = struct.unpack_from('<dddd', self.d, t + color_payload)
+        channels = self.field_inline_float64s(info, 4, 4)
+        if subtype == 3 and channels is not None:
             if all(c == c and 0.0 <= c <= 1.0 for c in channels):
                 return {"type": "color", "space": "sRGB", "channels": "RGBA",
                         "red": channels[0], "green": channels[1],

@@ -25,14 +25,15 @@ The view maps the placed graph in the same order:
 2. Momentum integrates the release velocity with Momentum Friction **8**.
 3. Rubber Band Friction **8** resists travel beyond the layer-edge bounds;
    Rubber Band Tension **100** settles the layer at a boundary.
-4. The separate `Interaction → Equals → Pulse` chain sends `Reset` when touch
-   ends within 100 points of the origin on both axes. Each qualifying release
-   creates a new pulse edge, including consecutive releases.
+4. At touch-up, the drag helper reports its final position to the separate
+   `Interaction → Equals → Pulse` chain. That chain sends `Reset` when both axes
+   are within 100 points of the origin. There is only one gesture recognizer, so
+   the pulse cannot race a second local drag gesture.
 
 The parser reads the three Drag Settings values from typed Number payloads. Its
-Color decoder additionally requires the FlatBuffers union discriminator and
-payload fields, with regression coverage rejecting unrelated tables and an
-invalid discriminator.
+Color decoder requires matching owner and payload union tags, then uses vtable
+field spans rather than corpus-specific byte offsets. Regression coverage checks
+multiple valid layouts and independently decodes Purple in Touch and Drag.
 
 ## Evidence
 
@@ -45,4 +46,4 @@ recording's touch indicator is evidence-only and is not part of
 ## See Also
 
 - ``Interaction_DragView``
-- ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:momentumFriction:rubberBandFriction:rubberBandTension:)``
+- ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:momentumFriction:rubberBandFriction:rubberBandTension:onRelease:)``
