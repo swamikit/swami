@@ -8,17 +8,17 @@ public struct InteractionDragView: View {
     @State private var isPressed = false
     private let artboardSize = CGSize(width: 888, height: 1212)
     private let cardSize = CGSize(width: 220, height: 140)
-    private let artboardColor = Color(red: 255/255.0, green: 43/255.0, blue: 79/255.0)
+    private let artboardColor = Color(red: 255/255.0, green: 19/255.0, blue: 52/255.0)
+    private let artboardHighlight = Color(red: 255/255.0, green: 43/255.0, blue: 79/255.0)
     private let cardColor = Color(red: 255/255.0, green: 211/255.0, blue: 180/255.0)
 
     public var body: some View {
         ZStack {
             artboardColor
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(cardColor)
+                .fill(isPressed ? artboardHighlight.opacity(0.92) : cardColor)
                 .frame(width: cardSize.width, height: cardSize.height)
-                .scaleEffect(isPressed ? 1.05 : 1.0)
-                .offset(position)
+                                .offset(position)
                 .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
                 .gesture(dragGesture)
         }
