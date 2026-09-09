@@ -18,7 +18,7 @@ public struct InteractionDragView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(isPressed ? artboardHighlight.opacity(0.92) : cardColor)
                 .frame(width: cardSize.width, height: cardSize.height)
-                                .offset(position)
+                .offset(position)
                 .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
                 .gesture(dragGesture)
         }
@@ -39,7 +39,7 @@ public struct InteractionDragView: View {
                     width: restingPosition.width + value.translation.width,
                     height: restingPosition.height + value.translation.height
                 )
-                position = clamp(projected)
+                position = rubberBand(projected)
             }
             .onEnded { value in
                 isPressed = false
@@ -70,6 +70,18 @@ public struct InteractionDragView: View {
         CGSize(
             width: min(max(position.width, dragBounds.min.width), dragBounds.max.width),
             height: min(max(position.height, dragBounds.min.height), dragBounds.max.height)
+        )
+    }
+
+    private func rubberBand(_ position: CGSize) -> CGSize {
+        func band(_ value: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat {
+            if value < lo { return lo - (lo - value) * 0.15 }
+            if value > hi { return hi + (value - hi) * 0.15 }
+            return value
+        }
+        return CGSize(
+            width: band(position.width, dragBounds.min.width, dragBounds.max.width),
+            height: band(position.height, dragBounds.min.height, dragBounds.max.height)
         )
     }
 }
