@@ -502,6 +502,8 @@ jobs:
           CHANGED_PATTERNS: ${{ steps.evidence.outputs.changed_patterns }}
           RESULTS: ${{ steps.verify.outputs.results }}
           ORIGAMI_VERSION: ${{ steps.verify.outputs.origami_version }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           mkdir -p out/delivery
           python3 - <<'PY'
@@ -515,6 +517,8 @@ jobs:
               "changed_patterns": os.environ["CHANGED_PATTERNS"],
               "results": os.environ.get("RESULTS", ""),
               "origami_version": os.environ.get("ORIGAMI_VERSION", ""),
+              "run_id": int(os.environ["RUN_ID"]),
+              "run_attempt": int(os.environ["RUN_ATTEMPT"]),
           }), encoding="utf-8")
           PY
 
