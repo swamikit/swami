@@ -21,7 +21,7 @@ public struct Interaction_DragView: View {
     /// Revision-specific contract checked by SwamiHost before CI can capture this view.
     /// Changing Interaction Drag's committed composition requires changing this value
     /// and the host assertion together, preventing a stale linked framework from passing.
-    public static let renderSignature = "interaction-drag-r140-canvas-card-v3"
+    public static let renderSignature = "interaction-drag-r140-canvas-card-v4"
 
     @State private var position: CGSize = .zero
     @State private var translation: CGSize = .zero
@@ -43,20 +43,21 @@ public struct Interaction_DragView: View {
     // helper call site prevents an unproven, implicit iOS-style fallback.
     static let rubberBandFriction: CGFloat = 0.15
 
-    // The placed graph calculates these limits from a 315×607-point interaction
-    // region around the 120-point card. That region is behavior/state, not a layer:
-    // the current-head Origami reference does not render a panel for it.
-    static let dragRegionSize = CGSize(width: 315, height: 607)
-    static let dragBounds = (
-        min: CGSize(
-            width: -(dragRegionSize.width - cardSize) / 2,
-            height: -(dragRegionSize.height - cardSize) / 2
-        ),
-        max: CGSize(
-            width: (dragRegionSize.width - cardSize) / 2,
-            height: (dragRegionSize.height - cardSize) / 2
+    /// Non-visual geometry recovered from the placed graph. The logical region
+    /// constrains Drag state only; it is deliberately absent from `body`.
+    enum DragGeometry {
+        static let logicalRegion = CGSize(width: 315, height: 607)
+        static let bounds = (
+            min: CGSize(
+                width: -(logicalRegion.width - Interaction_DragView.cardSize) / 2,
+                height: -(logicalRegion.height - Interaction_DragView.cardSize) / 2
+            ),
+            max: CGSize(
+                width: (logicalRegion.width - Interaction_DragView.cardSize) / 2,
+                height: (logicalRegion.height - Interaction_DragView.cardSize) / 2
+            )
         )
-    )
+    }
 
     public var body: some View {
         ZStack {
@@ -69,7 +70,7 @@ public struct Interaction_DragView: View {
                 .accessibilityIdentifier("interaction-drag-card")
                 .drag(
                     momentum: true,
-                    bounds: Self.dragBounds,
+                    bounds: Self.DragGeometry.bounds,
                     rubberBandFriction: Self.rubberBandFriction,
                     position: $position,
                     translation: $translation,

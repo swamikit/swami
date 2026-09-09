@@ -112,9 +112,8 @@ struct DragState: Equatable {
 /// consumer graph. `resetCount` represents repeated pulse events that a Boolean
 /// SwiftUI value alone cannot distinguish.
 ///
-/// Rubber-band friction is required at the call site rather than hidden behind
-/// an unverified helper default. Interaction Drag passes the Origami Drag patch's
-/// documented `0.15` value explicitly.
+/// Rubber-band friction defaults to Origami Drag's documented `0.15`. Consumers
+/// can override the input when a placed graph supplies a different value.
 public struct Drag: ViewModifier {
     var enable: Bool
     var momentum: Bool
@@ -214,7 +213,7 @@ public extension View {
         momentum: Bool = true,
         bounds: (min: CGSize, max: CGSize)? = nil,
         start: CGSize = .zero,
-        rubberBandFriction: CGFloat,
+        rubberBandFriction: CGFloat = 0.15,
         position: Binding<CGSize>? = nil,
         translation: Binding<CGSize>? = nil,
         velocity: Binding<CGSize>? = nil,

@@ -6,6 +6,8 @@ import Swami
 // the loop adds a `case "<slug>"` per pattern as they're translated. Keep the body a single
 // expression so screenshots are 1:1 with the Origami artboard — no host chrome, no nav bar.
 struct ContentView: View {
+    private static let interactionDragSignature = "interaction-drag-r140-canvas-card-v4"
+
     var body: some View {
         switch ProcessInfo.processInfo.environment["SWAMI_PATTERN"] {
         case "touch", nil: TouchOrigamiExampleView()
@@ -14,14 +16,20 @@ struct ContentView: View {
         }
     }
 
-    /// A stale framework now fails at launch instead of silently publishing a screenshot
-    /// from an older Interaction Drag implementation. The runner's `drag` selection must
-    /// traverse this assertion before `simctl io screenshot` can capture the app.
+    /// Keep stale-link detection on the selected Drag runtime path without terminating
+    /// SwamiHost. A mismatch produces unmistakable capture evidence and an accessibility
+    /// diagnostic; other patterns remain available for independent verification.
+    @ViewBuilder
     private func verifiedInteractionDragView() -> some View {
-        precondition(
-            Interaction_DragView.renderSignature == "interaction-drag-r140-canvas-card-v3",
-            "SwamiHost linked a stale Interaction Drag implementation"
-        )
-        return Interaction_DragView()
+        if Interaction_DragView.renderSignature == Self.interactionDragSignature {
+            Interaction_DragView()
+        } else {
+            ZStack {
+                Color.red.ignoresSafeArea()
+                Text("Interaction Drag runtime-head mismatch")
+                    .foregroundStyle(.white)
+            }
+            .accessibilityIdentifier("interaction-drag-runtime-head-mismatch")
+        }
     }
 }

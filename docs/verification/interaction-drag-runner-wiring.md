@@ -2,8 +2,8 @@
 
 This trace is the executable delivery path for `Interaction_Drag`. Run
 `scripts/assert-interaction-drag-wiring.py` after changing any link in the path. The
-`SwamiHost` target also runs that assertion as its first build phase on the macOS
-runner.
+`SwamiHost` target runs the assertion's product-scoped `--build-only` mode as its
+first build phase. The default invocation also validates runner delivery semantics.
 
 ## Source to target
 
@@ -16,10 +16,10 @@ runner.
 3. The `SwamiHost` target depends on, links, and embeds the built `Swami.framework`.
    Its `ContentView` maps the exact runner slug `drag` to `Interaction_DragView`.
 4. Before returning that view, `ContentView` compares the linked framework's public
-   render signature with the host's committed expectation. A stale framework therefore
-   traps during launch; it cannot silently produce evidence for an older implementation.
-   The same signature is exposed as the view's accessibility value without changing
-   pixels.
+   render signature with the host's committed expectation. A stale framework produces
+   an unmistakable red runtime-head mismatch view and accessibility diagnostic instead
+   of silently publishing old evidence or crashing unrelated host routes. The matching
+   signature is exposed as the pattern view's accessibility value without changing pixels.
 
 ## Registry to capture
 
@@ -27,12 +27,16 @@ runner.
    stem to recognize the changed generated source and uses the slug at runtime.
 2. The macOS job renders `Interaction_Drag.origami`, reads its native 750×1334 output,
    and selects the matching 375×667-point iPhone SE simulator.
-3. Xcode builds `SwamiHost` and executes the wiring assertion build phase. The job then
-   finds the newly built `.app`, installs that exact path with `simctl install`, and
-   reads its bundle identifier from that app's `Info.plist`.
+3. Xcode builds `SwamiHost` and executes the product-scoped wiring assertion build
+   phase. The full assertion separately recognizes the workflow's build, exact-app
+   install, runtime selection, screenshot capture, and H.264 recording commands by
+   semantics rather than indentation or exact generated text. The job finds the newly
+   built `.app`, installs that path with `simctl install`, and reads its bundle identifier
+   from that app's `Info.plist`.
 4. Capture terminates any running instance and launches the installed bundle with
-   `SIMCTL_CHILD_SWAMI_PATTERN=drag`. That selection must pass the runtime render
-   signature assertion before `simctl io screenshot` writes `out/swami/drag.png`.
+   `SIMCTL_CHILD_SWAMI_PATTERN=drag`. That selection traverses the runtime-head check
+   before `simctl io screenshot` writes `out/swami/drag.png`; a mismatch becomes visible
+   and accessibility-addressable evidence.
 5. The Drag-only Maestro flow relaunches with the same environment, performs two card
    swipes, and records `out/recordings/drag.mp4` with `simctl recordVideo --codec=h264`.
    Publication rejects a missing or empty recording.
@@ -54,8 +58,8 @@ parenthesized normalized *distortion* emitted by ImageMagick's SSIM metric as th
 were similarity. This repository's workflow is a protected control plane, so product
 changes do not alter its metric interpretation. SSIM remains catastrophic-sanity
 information only. The source/build/runtime signature checks above independently make
-stale linkage an executable failure, while the screenshot triplet, recording, DocC,
-and Reviewer determine fidelity.
+stale linkage observable in the selected runtime without taking down unrelated host
+routes, while the screenshot triplet, recording, DocC, and Reviewer determine fidelity.
 
 ## Local static check
 

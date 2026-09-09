@@ -297,15 +297,13 @@
 				"$(SRCROOT)/Swami.xcodeproj/project.pbxproj",
 				"$(SRCROOT)/Swami/Patterns/Interaction_Drag.swift",
 				"$(SRCROOT)/SwamiHost/ContentView.swift",
-				"$(SRCROOT)/../.github/patterns.txt",
-				"$(SRCROOT)/../.github/workflows/verify.yml",
 			);
 			name = "Assert Interaction Drag wiring";
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"$SRCROOT/../scripts/assert-interaction-drag-wiring.py\"\n";
+			shellScript = "\"$SRCROOT/../scripts/assert-interaction-drag-wiring.py\" --build-only\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

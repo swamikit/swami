@@ -3,18 +3,22 @@ import Testing
 @testable import Swami
 
 struct SwamiTests {
+    @Test func dragKeepsDocumentedDefaultSourceCompatible() {
+        _ = Color.clear.drag()
+    }
+
     @Test func interactionDragPreservesReferenceCompositionAndLogicalBounds() {
-        #expect(Interaction_DragView.renderSignature == "interaction-drag-r140-canvas-card-v3")
+        #expect(Interaction_DragView.renderSignature == "interaction-drag-r140-canvas-card-v4")
         #expect(Interaction_DragView.referenceSize == CGSize(width: 375, height: 667))
-        #expect(Interaction_DragView.dragRegionSize == CGSize(width: 315, height: 607))
+        #expect(Interaction_DragView.DragGeometry.logicalRegion == CGSize(width: 315, height: 607))
         #expect(Interaction_DragView.cardSize == 120)
         #expect(Interaction_DragView.cardCornerRadius == 15)
         #expect(Interaction_DragView.resetTolerance == 100)
         #expect(Interaction_DragView.rubberBandFriction == 0.15)
         #expect(Interaction_DragView.shouldReset(CGSize(width: 100, height: -100)))
         #expect(!Interaction_DragView.shouldReset(CGSize(width: 101, height: 0)))
-        #expect(Interaction_DragView.dragBounds.min == CGSize(width: -97.5, height: -243.5))
-        #expect(Interaction_DragView.dragBounds.max == CGSize(width: 97.5, height: 243.5))
+        #expect(Interaction_DragView.DragGeometry.bounds.min == CGSize(width: -97.5, height: -243.5))
+        #expect(Interaction_DragView.DragGeometry.bounds.max == CGSize(width: 97.5, height: 243.5))
     }
 
     @Test func freshGestureUsesConfiguredStartWithoutManualReset() {
@@ -50,7 +54,7 @@ struct SwamiTests {
     }
 
     @Test func dragDrivesBoundsMomentumResetAndFreshTouch() {
-        let bounds = Interaction_DragView.dragBounds
+        let bounds = Interaction_DragView.DragGeometry.bounds
         var state = DragState(start: .zero)
 
         state.change(
