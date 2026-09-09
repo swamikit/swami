@@ -33,14 +33,14 @@
     "app_login": "agent-factory-builder[bot]",
     "provider": "openrouter",
     "harness": "openai-compatible",
-    "model": "openai/gpt-5.6-sol",
+    "model": "z-ai/glm-5.3-flash",
     "cli_version": "0.55.1",
     "timeout_seconds": 1800,
     "branch_prefix": "agent-factory/issue-",
     "base_branch": "development",
     "runner": "macos-15",
     "fallback_provider": "openrouter",
-    "fallback_model": "dots-studio/dots-3-note-preview:free",
+    "fallback_model": "openai/gpt-5.6-sol",
     "max_model_requests": 60,
     "max_output_tokens": 2048,
     "max_revision_attempts": 3,
@@ -48,7 +48,7 @@
     "input_cost_per_million": 2.0,
     "output_cost_per_million": 10.0,
     "visual_revision_context": true,
-    "fallback_visual_revision_context": false
+    "fallback_visual_revision_context": true
   },
   "review": {
     "marker": "<!-- reviewer:agent-factory -->",
@@ -79,7 +79,8 @@
       "pixel-gate",
       "build-and-publish",
       "minimax / tool-smoke",
-      "openrouter / tool-smoke"
+      "openrouter-primary / tool-smoke",
+      "openrouter-fallback / tool-smoke"
     ],
     "allow_followup_issues": true
   }
