@@ -1,97 +1,125 @@
+import Foundation
 import SwiftUI
 
 /// SwiftUI equivalent of Origami's **Drag** patch (`origami.Drag`).
 ///
-/// Naming (ADR-0010): bare, patch-matched. Ported from the patch's own graph in the installed
-/// catalog (ADR-0011): `Origami Studio.app/…/Patches/origami.origami-system/patches/origami.Drag`.
-/// That graph builds Drag from `builtin.momentumScrolling` + `AddMomentum`, `Velocity`/`VelocityXY`,
-/// `ClippedPosition`/`ClipY`, `ExtractMomentumSettings`, `ResetwMomentum`, `RoundtoScreenPixels`,
-/// with Rubber Band Tension/Friction and Stick To Boundaries.
+/// Naming follows ADR-0010. The behavior mirrors the installed patch graph's
+/// Add Momentum, Rubber Band Friction, Rubber Band Tension, Stick To Boundaries,
+/// Reset Remaining Velocity on Touch Up, and Clip Position stages.
 ///
-/// Faithful ports (extracted from the graph's group I/O):
-/// - inputs  → `enable`, `momentum`, `bounds` (Clip / Start+End boundary), `start`, `reset`
-/// - outputs → `position`, `translation`, `velocity`
-///
-/// FIDELITY TODO: the exact default constants (Momentum Friction, Rubber Band Friction, decel rate)
-/// live as port default *values* inside origami.DragSettings — reading them needs FlatBuffers
-/// port-value decoding, which the parser doesn't do yet. Until then the momentum decay uses the
-/// system's velocity projection (`predictedEndTranslation`) and rubber-band uses the iOS-standard
-/// constant (0.55). Mark these for replacement once the parser extracts DragSettings' real defaults.
+/// The defaults are decoded from Origami's typed input-port values rather than
+/// borrowed from UIKit: Momentum Friction **8**, Rubber Band Friction **8**, and
+/// Rubber Band Tension **100**.
 public struct Drag: ViewModifier {
     var enable: Bool
     var momentum: Bool
-    /// Clip bounds for Position (Origami "Start/End Boundary" / "Min"/"Max"). nil = unbounded.
     var bounds: (min: CGSize, max: CGSize)?
     var position: Binding<CGSize>?
     var translation: Binding<CGSize>?
     var velocity: Binding<CGSize>?
     var reset: Bool
+    var momentumFriction: CGFloat
+    var rubberBandFriction: CGFloat
+    var rubberBandTension: CGFloat
 
-    @State private var origin: CGSize = .zero      // Position at the start of the current drag
-    @State private var current: CGSize = .zero     // live Position output
+    @State private var origin: CGSize = .zero
+    @State private var current: CGSize = .zero
+    @State private var previousTranslation: CGSize = .zero
+    @State private var previousSampleTime: Date?
+    @State private var sampledVelocity: CGSize = .zero
 
     public func body(content: Content) -> some View {
         content
             .offset(current)
             .gesture(dragGesture, isEnabled: enable)
-            .onChange(of: reset) { _, r in if r { settle(to: .zero) } }
+            .onChange(of: reset) { _, shouldReset in
+                if shouldReset {
+                    sampledVelocity = .zero
+                    settle(to: .zero)
+                    origin = .zero
+                }
+            }
     }
 
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
-            .onChanged { v in
-                // Live position = origin + translation, with rubber-band resistance past bounds.
-                let raw = CGSize(width: origin.width + v.translation.width,
-                                 height: origin.height + v.translation.height)
+            .onChanged { value in
+                if previousSampleTime == nil {
+                    // Reset remaining velocity on every new touch-down.
+                    origin = current
+                    previousTranslation = value.translation
+                    sampledVelocity = .zero
+                } else if let previousSampleTime {
+                    let elapsed = value.time.timeIntervalSince(previousSampleTime)
+                    if elapsed > 0 {
+                        sampledVelocity = CGSize(
+                            width: (value.translation.width - previousTranslation.width) / elapsed,
+                            height: (value.translation.height - previousTranslation.height) / elapsed
+                        )
+                    }
+                    previousTranslation = value.translation
+                }
+                previousSampleTime = value.time
+
+                let raw = CGSize(
+                    width: origin.width + value.translation.width,
+                    height: origin.height + value.translation.height
+                )
                 current = resist(raw)
-                translation?.wrappedValue = v.translation
+                translation?.wrappedValue = value.translation
                 position?.wrappedValue = current
+                velocity?.wrappedValue = sampledVelocity
             }
-            .onEnded { v in
-                // Velocity output (Origami "Velocity"): system projection over the gesture.
-                let vel = CGSize(width: v.predictedEndTranslation.width - v.translation.width,
-                                 height: v.predictedEndTranslation.height - v.translation.height)
-                velocity?.wrappedValue = vel
-                // Momentum: project to predicted end, then clamp/settle. ResetwMomentum: velocity
-                // does not carry across a fresh touch-down (origin is re-sampled onChanged).
-                let projected = momentum
-                    ? CGSize(width: origin.width + v.predictedEndTranslation.width,
-                             height: origin.height + v.predictedEndTranslation.height)
+            .onEnded { _ in
+                previousSampleTime = nil
+                translation?.wrappedValue = .zero
+                velocity?.wrappedValue = sampledVelocity
+
+                // Add Momentum integrates dv/dt = -friction*v, so remaining
+                // displacement at touch-up is velocity / friction.
+                let target = momentum
+                    ? CGSize(width: current.width + sampledVelocity.width / momentumFriction,
+                             height: current.height + sampledVelocity.height / momentumFriction)
                     : current
-                settle(to: clamp(projected))
-                origin = clamp(projected)
+                let boundedTarget = clamp(target)
+                settle(to: boundedTarget)
+                origin = boundedTarget
+                sampledVelocity = .zero
             }
     }
 
-    // MARK: Origami sub-patch behaviors
-
-    /// Clip / Stick To Boundaries: hard clamp of Position to [min, max].
-    private func clamp(_ s: CGSize) -> CGSize {
-        guard let b = bounds else { return s }
-        return CGSize(width: min(max(s.width, b.min.width), b.max.width),
-                      height: min(max(s.height, b.min.height), b.max.height))
+    /// Stick To Boundaries / Clip Position.
+    private func clamp(_ size: CGSize) -> CGSize {
+        guard let bounds else { return size }
+        return CGSize(
+            width: min(max(size.width, bounds.min.width), bounds.max.width),
+            height: min(max(size.height, bounds.min.height), bounds.max.height)
+        )
     }
 
-    /// Rubber Band Friction: past a boundary, motion is resisted (iOS-standard c = 0.55).
-    /// TODO(parser): replace 0.55 with origami.DragSettings' Rubber Band Friction default.
-    private func resist(_ s: CGSize) -> CGSize {
-        guard let b = bounds else { return s }
-        func rb(_ x: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat {
-            if x < lo { return lo - band(lo - x, span: max(hi - lo, 1)) }
-            if x > hi { return hi + band(x - hi, span: max(hi - lo, 1)) }
-            return x
+    /// Rubber Band Friction. Origami's value 8 means one point of displayed
+    /// over-travel for every eight points dragged beyond a boundary.
+    private func resist(_ size: CGSize) -> CGSize {
+        guard let bounds else { return size }
+        func resisted(_ value: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat {
+            if value < min { return min - (min - value) / rubberBandFriction }
+            if value > max { return max + (value - max) / rubberBandFriction }
+            return value
         }
-        return CGSize(width: rb(s.width, b.min.width, b.max.width),
-                      height: rb(s.height, b.min.height, b.max.height))
-    }
-    private func band(_ overshoot: CGFloat, span: CGFloat, c: CGFloat = 0.55) -> CGFloat {
-        (1 - (1 / ((overshoot * c / span) + 1))) * span
+        return CGSize(
+            width: resisted(size.width, min: bounds.min.width, max: bounds.max.width),
+            height: resisted(size.height, min: bounds.min.height, max: bounds.max.height)
+        )
     }
 
-    /// Settle with a spring (Origami momentum decay → resting Position). RoundtoScreenPixels is
-    /// left to the renderer (SwiftUI already snaps to device pixels).
+    /// Rubber Band Tension/Friction map directly to spring stiffness/damping.
     private func settle(to target: CGSize) {
-        withAnimation(.interpolatingSpring(stiffness: 180, damping: 22)) {
+        withAnimation(.interpolatingSpring(
+            mass: 1,
+            stiffness: rubberBandTension,
+            damping: rubberBandFriction,
+            initialVelocity: 0
+        )) {
             current = target
             position?.wrappedValue = target
         }
@@ -99,8 +127,8 @@ public struct Drag: ViewModifier {
 }
 
 public extension View {
-    /// Attach Origami-style **Drag**. Pass only the outputs you need; each maps to a Drag output
-    /// port (`position`, `translation`, `velocity`). `bounds` is the Clip / Start+End boundary.
+    /// Attach Origami-style **Drag**. Inputs and output bindings mirror the
+    /// patch; physics defaults come from Origami's decoded Drag Settings.
     func drag(
         enable: Bool = true,
         momentum: Bool = true,
@@ -108,10 +136,22 @@ public extension View {
         position: Binding<CGSize>? = nil,
         translation: Binding<CGSize>? = nil,
         velocity: Binding<CGSize>? = nil,
-        reset: Bool = false
+        reset: Bool = false,
+        momentumFriction: CGFloat = 8,
+        rubberBandFriction: CGFloat = 8,
+        rubberBandTension: CGFloat = 100
     ) -> some View {
-        modifier(Drag(enable: enable, momentum: momentum, bounds: bounds,
-                      position: position, translation: translation,
-                      velocity: velocity, reset: reset))
+        modifier(Drag(
+            enable: enable,
+            momentum: momentum,
+            bounds: bounds,
+            position: position,
+            translation: translation,
+            velocity: velocity,
+            reset: reset,
+            momentumFriction: momentumFriction,
+            rubberBandFriction: rubberBandFriction,
+            rubberBandTension: rubberBandTension
+        ))
     }
 }

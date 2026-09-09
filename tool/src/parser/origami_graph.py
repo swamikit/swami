@@ -17,9 +17,13 @@ Touch document but captured the embedded Drag/EdgeSwipe/etc. component internals
 "placed" nodes on any larger file (Interaction_Drag.origami is 534 KB — the tail cut
 falls INSIDE the embedded Drag definition).
 
-TODO (next iterations): decode ports + connections into edges; read layer values (colors,
-sizes) validated against the oracle; walk the entry[0] subtree structurally instead of
-using its byte offset as a boundary (would let us drop the string-scan too).
+The reader also decodes the inline value-union payloads needed by Interaction Drag:
+number defaults (including Drag Settings' Momentum Friction) and RGBA color payloads.
+The color payload is four little-endian Float64 channels in red/green/blue/alpha order;
+the corpus' named Purple token (`#DD70DF`) is the channel-order oracle.
+
+Remaining general parser work is connection/edge decoding and walking the entry[0]
+subtree structurally instead of using its byte offset as a boundary.
 """
 import zipfile, struct, re, json, sys, pathlib
 
@@ -95,16 +99,92 @@ class Graph:
                 rec[str(i)] = s if s is not None else v
         return rec
 
-    def field_uoffset_target(self, tinfo, field_idx):
-        """Return the byte offset a uoffset field points at, or None if the field is absent."""
-        t, vt, vs, ts = tinfo
+    def field_offset(self, tinfo, field_idx):
+        """Return a field's offset within its table, or None when it is absent."""
+        _, vt, vs, ts = tinfo
         slot_in_vt = 4 + field_idx*2
         if slot_in_vt + 2 > vs: return None
         fo = self.u16(vt + slot_in_vt)
-        if not fo or fo + 4 > ts: return None
+        return fo if fo and fo < ts else None
+
+    def field_uoffset_target(self, tinfo, field_idx):
+        """Return the byte offset a uoffset field points at, or None if the field is absent."""
+        t, _, _, ts = tinfo
+        fo = self.field_offset(tinfo, field_idx)
+        if fo is None or fo + 4 > ts: return None
         slot = t + fo
         if slot + 4 > self.N: return None
-        return slot + self.u32(slot)
+        target = slot + self.u32(slot)
+        return target if 0 <= target < self.N else None
+
+    def decode_value(self, value_off):
+        """Decode an Origami inline value-union payload.
+
+        These payload tables use a wide shared vtable. A Number stores its Float64 in
+        field 1 at table offset 4. A Color has discriminator 3 in field 0 and an inline
+        four-Float64 RGBA struct beginning at offset 8. Requiring both the structural
+        signature and finite channel range avoids interpreting arbitrary tables as values.
+        """
+        info = self.table(value_off)
+        if not info: return None
+        t, _, _, ts = info
+        f0, f1 = self.field_offset(info, 0), self.field_offset(info, 1)
+        if f1 == 4 and ts >= 12:
+            value = struct.unpack_from('<d', self.d, t + 4)[0]
+            if value == value and abs(value) != float('inf'):
+                return {"type": "number", "value": value}
+        if f0 == 7 and self.d[t + 7] == 3 and ts >= 40:
+            channels = struct.unpack_from('<dddd', self.d, t + 8)
+            if all(c == c and 0.0 <= c <= 1.0 for c in channels):
+                return {"type": "color", "space": "sRGB", "channels": "RGBA",
+                        "red": channels[0], "green": channels[1],
+                        "blue": channels[2], "alpha": channels[3]}
+        return None
+
+    def node_port_defaults(self, node_table):
+        """Decode named port defaults from a placed node's field-5 port vector."""
+        node = self.table(node_table)
+        if not node: return {}
+        vec = self.field_uoffset_target(node, 5)
+        entries = self.vector_entries(vec) if vec is not None else None
+        if entries is None: return {}
+        defaults = {}
+        for port_off in entries:
+            port = self.table(port_off)
+            if not port: continue
+            name_off = self.field_uoffset_target(port, 2)
+            value_off = self.field_uoffset_target(port, 4)
+            name = self.astr(name_off) if name_off is not None else None
+            value = self.decode_value(value_off) if value_off is not None else None
+            if name and value is not None:
+                defaults[name] = value
+        return defaults
+
+    def named_port_defaults(self, start=0, end=None):
+        """Decode scalar defaults from serialized port records in a byte range."""
+        defaults = {}
+        for off in range(max(0, start), min(end or self.N, self.N)):
+            port = self.table(off)
+            # Port records in this format have a 16-byte vtable and 40-byte table.
+            if not port or port[2:4] != (16, 40): continue
+            name_off = self.field_uoffset_target(port, 2)
+            value_off = self.field_uoffset_target(port, 4)
+            name = self.astr(name_off) if name_off is not None else None
+            value = self.decode_value(value_off) if value_off is not None else None
+            if name and value is not None:
+                defaults[name] = value
+        return defaults
+
+    def color_values(self, start=0):
+        """Return unique RGBA payloads at or above `start`, in serialized order."""
+        seen, colors = set(), []
+        for off in range(max(0, start), self.N - 40):
+            value = self.decode_value(off)
+            if not value or value["type"] != "color": continue
+            key = tuple(value[k] for k in ("red", "green", "blue", "alpha"))
+            if key not in seen:
+                seen.add(key); colors.append(value)
+        return colors
 
     def vector_entries(self, vec_off):
         """Given a vector's byte offset (count-prefix start), return absolute offsets of
@@ -184,13 +264,17 @@ def parse(origami_path, tail=None):
     kinds = {}
     for n in nodes:
         kinds[n["type"]] = kinds.get(n["type"], 0) + 1
+        defaults = g.node_port_defaults(n["table"])
+        if defaults: n["port_defaults"] = defaults
     return {
         "file": str(origami_path), "size": g.N, "identifier": "ORGM",
         "placed_root_offset": (tail if tail else None),
         "placed_node_count": len(nodes),
         "kinds": dict(sorted(kinds.items())),
         "placed_nodes": nodes,
-        "_todo": "edges (ports/connections), layer values vs oracle, walk entry[0] structurally",
+        "embedded_port_defaults": g.named_port_defaults(start=0, end=tail),
+        "decoded_colors": g.color_values(start=tail),
+        "remaining_parser_scope": "connections/edges and a fully structural entry[0] subtree walk",
     }
 
 

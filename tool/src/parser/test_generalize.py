@@ -154,6 +154,28 @@ class TestInteractionCorpus(unittest.TestCase):
         self.assertLess(out["placed_node_count"], 100,
                         f"Interaction_Drag over-counting into library: {out['placed_node_count']} nodes")
 
+        # Input defaults are typed unions, not scalar vtable slots. Interaction Drag
+        # requires this exact value; substituting an iOS deceleration constant is lossy.
+        settings = next(n for n in out["placed_nodes"]
+                        if n["type"] == "origami.DragSettings" and n["name"] == "Drag Settings")
+        self.assertEqual(settings["port_defaults"]["Momentum Friction"],
+                         {"type": "number", "value": 8.0})
+        self.assertEqual(out["embedded_port_defaults"]["Rubber Band Friction"],
+                         {"type": "number", "value": 8.0})
+        self.assertEqual(out["embedded_port_defaults"]["Rubber Band Tension"],
+                         {"type": "number", "value": 100.0})
+
+        # Color payloads are Float64 RGBA. Purple is the corpus oracle: DD/70/DF,
+        # alpha FF. This prevents the old ARGB-vs-RRGGBBAA guess from returning.
+        purple = {"type": "color", "space": "sRGB", "channels": "RGBA",
+                  "red": 221 / 255, "green": 112 / 255,
+                  "blue": 223 / 255, "alpha": 1.0}
+        self.assertTrue(any(all(abs(color[key] - value) < 1e-12
+                                if isinstance(value, float) else color[key] == value
+                                for key, value in purple.items())
+                            for color in out["decoded_colors"]),
+                        f"Interaction_Drag missing decoded Purple RGBA token: {out['decoded_colors']}")
+
 
 class TestStabilityAcrossCorpus(unittest.TestCase):
     """Every Interaction pattern locates SOME placed root — no silent failure."""
