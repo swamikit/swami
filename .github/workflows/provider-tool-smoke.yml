@@ -33,7 +33,7 @@ jobs:
       max_output_tokens: 2048
       prompt_bytes: 70000
       visual_input: true
-      input_cost_per_million: 4
-      output_cost_per_million: 15
+      input_cost_per_million: 2
+      output_cost_per_million: 10
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
