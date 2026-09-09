@@ -120,10 +120,11 @@ class Graph:
     def decode_value(self, value_off):
         """Decode an Origami inline value-union payload.
 
-        These payload tables use a wide shared vtable. A Number stores its Float64 in
-        field 1 at table offset 4. A Color has discriminator 3 in field 0 and an inline
-        four-Float64 RGBA struct beginning at offset 8. Requiring both the structural
-        signature and finite channel range avoids interpreting arbitrary tables as values.
+        These payload tables use a shared value vtable. A Number stores its Float64 in
+        field 1 at table offset 4. A Color stores union discriminator 3 in field 0 and
+        its inline payload in field 4; that payload is a four-Float64 RGBA struct.
+        Checking the declared fields (rather than only byte positions) prevents an
+        unrelated table with color-like bytes from being accepted as a Color value.
         """
         info = self.table(value_off)
         if not info: return None
@@ -133,8 +134,15 @@ class Graph:
             value = struct.unpack_from('<d', self.d, t + 4)[0]
             if value == value and abs(value) != float('inf'):
                 return {"type": "number", "value": value}
-        if f0 == 7 and self.d[t + 7] == 3 and ts >= 40:
-            channels = struct.unpack_from('<dddd', self.d, t + 8)
+        color_payload = self.field_offset(info, 4)
+        next_field = min(
+            (offset for idx in range(5, (info[2] - 4) // 2)
+             if (offset := self.field_offset(info, idx)) is not None),
+            default=ts,
+        )
+        if (f0 == 7 and self.d[t + f0] == 3 and color_payload == 8
+                and next_field >= color_payload + 32):
+            channels = struct.unpack_from('<dddd', self.d, t + color_payload)
             if all(c == c and 0.0 <= c <= 1.0 for c in channels):
                 return {"type": "color", "space": "sRGB", "channels": "RGBA",
                         "red": channels[0], "green": channels[1],

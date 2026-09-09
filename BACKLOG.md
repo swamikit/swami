@@ -19,11 +19,11 @@ agent — the cloud loop does not write there.
 - **drag() helper (origami.Drag)** — source constants are parser-decoded: Momentum Friction 8,
   Rubber Band Friction 8, and Rubber Band Tension 100. Issue #215 drives fling decay,
   over-drag resistance, boundary settlement, release-at-rest, and fresh-touch velocity reset.
-- **Interaction_Drag** — **ITEM 2 OF 69**: Artboard 888×1212, Purple `#DD70DF` card,
-  220×140 centered, corner radius 20, drag with momentum + rubber-band bounds, and
-  snap-to-center. The typed-value parser now recovers RGBA channel order and the Drag
-  constants (Momentum Friction 8, Rubber Band Friction 8, Rubber Band Tension 100).
-  Current delivery: Issue #215; runner visual/interaction evidence is generated for its PR head.
+- **Interaction_Drag** — **ITEM 2 OF 69**, UNVERIFIED pending the refreshed Issue #215
+  runner verdict. The current implementation targets the oracle's Purple `#DD70DF`
+  375×667 viewport, inset rounded screen, centered 120×120 drag layer, momentum,
+  rubber-band bounds, and near-origin reset pulse. Parser regression coverage pins the
+  Drag constants (Momentum Friction 8, Rubber Band Friction 8, Rubber Band Tension 100).
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
 - **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches

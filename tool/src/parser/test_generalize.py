@@ -176,6 +176,23 @@ class TestInteractionCorpus(unittest.TestCase):
                             for color in out["decoded_colors"]),
                         f"Interaction_Drag missing decoded Purple RGBA token: {out['decoded_colors']}")
 
+        # A Color is accepted only when the FlatBuffers value union declares both
+        # discriminator field 0 and payload field 4. Ordinary graph tables and a
+        # payload with a corrupted tag must not be decoded as color values.
+        graph = Graph(read_graph_bytes(p))
+        self.assertIsNone(graph.decode_value(settings["table"]))
+        purple_offset = next(
+            offset for offset in range(graph.placed_root_offset(), graph.N - 40)
+            if (value := graph.decode_value(offset)) is not None
+            and value.get("type") == "color"
+            and abs(value["red"] - 221 / 255) < 1e-12
+            and abs(value["green"] - 112 / 255) < 1e-12
+            and abs(value["blue"] - 223 / 255) < 1e-12
+        )
+        corrupted = bytearray(graph.d)
+        corrupted[purple_offset + 7] = 2
+        self.assertIsNone(Graph(bytes(corrupted)).decode_value(purple_offset))
+
 
 class TestStabilityAcrossCorpus(unittest.TestCase):
     """Every Interaction pattern locates SOME placed root — no silent failure."""

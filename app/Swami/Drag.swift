@@ -32,12 +32,12 @@ public struct Drag: ViewModifier {
         content
             .offset(current)
             .gesture(dragGesture, isEnabled: enable)
-            .onChange(of: reset) { _, shouldReset in
-                if shouldReset {
-                    sampledVelocity = .zero
-                    settle(to: .zero)
-                    origin = .zero
-                }
+            // Origami's Reset input is a pulse. Treat either Bool edge as a new
+            // pulse so repeated resets do not depend on returning a latch to false.
+            .onChange(of: reset) { _, _ in
+                sampledVelocity = .zero
+                settle(to: .zero)
+                origin = .zero
             }
     }
 

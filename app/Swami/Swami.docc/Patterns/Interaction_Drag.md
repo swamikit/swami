@@ -10,14 +10,12 @@ same momentum, rubber-band, and reset stages.
 
 ## Composition
 
-``Interaction_DragView`` presents the source artboard without application or
-status-bar chrome. A 220×140 Purple (`#DD70DF`) card with a 20-point continuous
-corner radius rests at the center of the white 888×1212 artboard.
-
-The values are source facts, not screenshot sampling. Swami's schema-less
-FlatBuffers reader decodes Origami colors as Float64 **RGBA** and recovers Drag
-Settings' typed input-port defaults. Purple's decoded channels—221, 112, 223,
-255—also provide the channel-order oracle.
+``Interaction_DragView`` fills the 375×667-point reference viewport with
+Purple (`#DD70DF`) and hides application and status-bar chrome. A pale
+`#E5A6E6` rounded screen is inset by 30 points. Its centered 120×120 white
+layer is the drag target. These dimensions and rendered colors are pinned to the current runner's
+Origami reference rather than inferred from simulator chrome or an unrelated
+library definition.
 
 ## Interaction
 
@@ -25,20 +23,24 @@ The view maps the placed graph in the same order:
 
 1. `Drag` publishes Position, Translation, and Velocity while the touch moves.
 2. Momentum integrates the release velocity with Momentum Friction **8**.
-3. Rubber Band Friction **8** resists travel beyond the calculated card-edge
-   bounds; Rubber Band Tension **100** settles the card at a boundary.
+3. Rubber Band Friction **8** resists travel beyond the layer-edge bounds;
+   Rubber Band Tension **100** settles the layer at a boundary.
 4. The separate `Interaction → Equals → Pulse` chain sends `Reset` when touch
-   ends within 100 points of the center on both axes.
+   ends within 100 points of the origin on both axes. Each qualifying release
+   creates a new pulse edge, including consecutive releases.
 
-The bounds are derived from source geometry: `±(888/2 − 220/2) = ±334`
-horizontally and `±(1212/2 − 140/2) = ±536` vertically.
+The parser reads the three Drag Settings values from typed Number payloads. Its
+Color decoder additionally requires the FlatBuffers union discriminator and
+payload fields, with regression coverage rejecting unrelated tables and an
+invalid discriminator.
 
 ## Evidence
 
 The verification runner opens the current public `Interaction_Drag.origami`,
-renders Origami and Swami at the reference dimensions, and publishes the Swami,
-Origami, and difference images with an H.264 recording. The recording's touch
-indicator is evidence-only and is not part of ``Interaction_DragView``.
+renders Origami and Swami at the same reference dimensions, and publishes the
+Swami, Origami, and difference images with an H.264 drag recording. The
+recording's touch indicator is evidence-only and is not part of
+``Interaction_DragView``.
 
 ## See Also
 
