@@ -4,7 +4,8 @@ import Testing
 
 struct SwamiTests {
     @Test func interactionDragMatchesRunnerGeometry() {
-        #expect(Interaction_DragView.interactionAreaInset == 30)
+        #expect(Interaction_DragView.referenceSize == CGSize(width: 375, height: 667))
+        #expect(Interaction_DragView.interactionAreaSize == CGSize(width: 315, height: 607))
         #expect(Interaction_DragView.interactionAreaCornerRadius == 20)
         #expect(Interaction_DragView.cardSize == 120)
         #expect(Interaction_DragView.cardCornerRadius == 15)

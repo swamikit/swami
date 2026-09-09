@@ -76,9 +76,9 @@ agent — the cloud loop does not write there.
 - **Placed-vs-library generalization** ✅ RESOLVED. `placed_root_offset()` structurally isolates
   the placed graph from embedded component internals using the FlatBuffers root reference.
 - **Input-port default-value decoding**: DragSettings port defaults (Momentum/Rubber Band Friction,
-  Clip) are NOT auto-decoded by the parser. Current workaround: physics constants use Origami-
-  documented defaults (0.15 friction, 0.2 momentum). Full resolution requires FlatBuffers port-value
-  union tag→payload decoding in the parser.
+  Clip) are NOT auto-decoded by the parser. Interaction Drag uses Origami's documented 0.15
+  rubber-band friction and the driven gesture's measured momentum projection, so it does not insert
+  an unverified momentum constant. Full union tag→payload decoding remains a parser follow-up.
 
 ## Infra self-healing loop (V4 prerequisites)
 - **`.github/ISSUE_TEMPLATE/infra-blocker.md`** (landed in PR #24) — structured evidence template for when a Builder or Review GA hits a runner-level failure (Origami install broken, sim boot fails, ImageMagick not available, etc.). Template auto-applies `label: infra-blocker` so downstream queries are label-based.

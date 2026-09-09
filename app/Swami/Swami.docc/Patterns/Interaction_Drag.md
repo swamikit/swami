@@ -13,12 +13,12 @@ area, and a centered 120×120-point white card.
 ## Interaction
 
 Touching the card engages a zero-distance drag. While the card is moving,
-``View/drag(enable:momentum:bounds:start:position:translation:velocity:reset:onRelease:)``:
+``View/drag(enable:momentum:bounds:start:position:translation:velocity:reset:resetOnRelease:)``:
 
 - publishes position, translation, and velocity;
 - applies rubber-band resistance beyond the inset area's boundaries;
 - projects release momentum and settles within those boundaries; and
-- accepts a reset pulse after a release within 100 points of center on both axes.
+- evaluates the bounded momentum destination on touch-up and resets when both axes are within 100 points of center.
 
 The reset condition comes from the placed graph's `Snap to origin` branch: two
 approximately-equal comparisons feed an And, which pulses Drag's Reset input when

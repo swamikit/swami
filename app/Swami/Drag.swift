@@ -11,8 +11,9 @@ import SwiftUI
 /// - inputs → `enable`, `momentum`, `bounds`, `start`, `reset`
 /// - outputs → `position`, `translation`, `velocity`
 ///
-/// `onRelease` observes the Drag lifecycle without installing a second gesture;
-/// callers can use it to drive graph logic connected to the patch's Reset input.
+/// `resetOnRelease` composes graph logic connected to Drag's Reset input without
+/// installing a competing gesture. It receives the bounded momentum destination and
+/// returns whether the release should pulse Reset.
 /// Rubber-band friction uses Origami's documented default of `0.15`. Momentum uses
 /// SwiftUI's gesture projection rather than an iOS scroll default; this preserves the
 /// gesture's measured direction and magnitude before the bounded spring settles it.
@@ -26,7 +27,7 @@ public struct Drag: ViewModifier {
     var translation: Binding<CGSize>?
     var velocity: Binding<CGSize>?
     var reset: Bool
-    var onRelease: ((CGSize) -> Void)?
+    var resetOnRelease: ((CGSize) -> Bool)?
 
     @State private var origin: CGSize = .zero
     @State private var current: CGSize = .zero
@@ -46,8 +47,7 @@ public struct Drag: ViewModifier {
             }
             .onChange(of: reset) { _, requested in
                 if requested {
-                    translation?.wrappedValue = .zero
-                    velocity?.wrappedValue = .zero
+                    resetOutputs()
                     settle(to: start)
                 }
             }
@@ -58,6 +58,10 @@ public struct Drag: ViewModifier {
             .onChanged { value in
                 if !gestureIsActive {
                     gestureIsActive = true
+                    // Each touch begins from the visible settled position. This is
+                    // required after reset and prevents stale momentum or origin state
+                    // from leaking into a later gesture.
+                    origin = current
                     translation?.wrappedValue = .zero
                     velocity?.wrappedValue = .zero
                 }
@@ -76,14 +80,24 @@ public struct Drag: ViewModifier {
                     height: value.predictedEndTranslation.height - value.translation.height
                 )
                 velocity?.wrappedValue = measuredVelocity
-                onRelease?(current)
+
                 let projected = momentum
                     ? CGSize(
                         width: origin.width + value.predictedEndTranslation.width,
                         height: origin.height + value.predictedEndTranslation.height
                     )
                     : current
-                settle(to: clamp(projected))
+                let destination = clamp(projected)
+
+                // Origami evaluates graph logic connected to Reset when Interaction
+                // turns off. Evaluate against the post-momentum bounded destination,
+                // then perform the reset in this same drag lifecycle.
+                if resetOnRelease?(destination) == true {
+                    resetOutputs()
+                    settle(to: start)
+                } else {
+                    settle(to: destination)
+                }
             }
     }
 
@@ -116,6 +130,11 @@ public struct Drag: ViewModifier {
         (1 - (1 / ((overshoot * friction / span) + 1))) * span
     }
 
+    private func resetOutputs() {
+        translation?.wrappedValue = .zero
+        velocity?.wrappedValue = .zero
+    }
+
     private func settle(to target: CGSize) {
         origin = target
         withAnimation(.interpolatingSpring(stiffness: 180, damping: 22)) {
@@ -135,7 +154,7 @@ public extension View {
         translation: Binding<CGSize>? = nil,
         velocity: Binding<CGSize>? = nil,
         reset: Bool = false,
-        onRelease: ((CGSize) -> Void)? = nil
+        resetOnRelease: ((CGSize) -> Bool)? = nil
     ) -> some View {
         modifier(Drag(
             enable: enable,
@@ -146,7 +165,7 @@ public extension View {
             translation: translation,
             velocity: velocity,
             reset: reset,
-            onRelease: onRelease
+            resetOnRelease: resetOnRelease
         ))
     }
 }

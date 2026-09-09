@@ -10,29 +10,31 @@ import Swami
 ///     @PageImage(purpose: card, source: "Interaction_Drag")
 /// }
 ///
-/// Reproduces the layer hierarchy shown by Origami's runner render: a full-screen
+/// Reproduces the layer hierarchy measured from Origami's runner render: a full-screen
 /// purple canvas, an inset rounded interaction area, and a centered draggable card.
 /// The card maps the `origami.Drag` Position output to its SwiftUI offset. A release
-/// projects momentum and applies rubber-band bounds. Releasing within 100 points of
-/// center on both axes pulses Reset, matching the placed graph's snap-to-origin branch.
+/// projects momentum and applies rubber-band bounds. If the bounded destination is
+/// within 100 points of center on both axes, the placed graph's Reset branch returns
+/// the card to its origin.
 public struct Interaction_DragView: View {
     public init() {}
 
     @State private var position: CGSize = .zero
     @State private var translation: CGSize = .zero
     @State private var velocity: CGSize = .zero
-    @State private var reset = false
 
-    // Values measured from the runner-produced 750×1334 Origami reference. The
-    // simulator renders this 375×667-point view at 2×, preserving the source pixels.
+    // Exact boundaries decoded from the runner-produced 750×1334 RGBA reference:
+    // x=0...749 #DD70DF canvas; x=60...689 and y=60...1273 #E5A6E6 area;
+    // x=255...494 and y=547...786 white card. The 2× render gives points below.
+    static let referenceSize = CGSize(width: 375, height: 667)
     static let canvasColor = Color(red: 221 / 255, green: 112 / 255, blue: 223 / 255)
     static let interactionAreaColor = Color(red: 229 / 255, green: 166 / 255, blue: 230 / 255)
-    static let interactionAreaInset: CGFloat = 30
+    static let interactionAreaSize = CGSize(width: 315, height: 607)
     static let interactionAreaCornerRadius: CGFloat = 20
     static let cardSize: CGFloat = 120
     static let cardCornerRadius: CGFloat = 15
     // The placed graph's “Snap to origin” branch compares both Position axes
-    // against zero with a 100-point tolerance before pulsing Drag.Reset.
+    // against zero with a 100-point tolerance when Interaction turns off.
     static let resetTolerance: CGFloat = 100
 
     public var body: some View {
@@ -42,11 +44,17 @@ public struct Interaction_DragView: View {
 
                 RoundedRectangle(cornerRadius: Self.interactionAreaCornerRadius)
                     .fill(Self.interactionAreaColor)
-                    .padding(Self.interactionAreaInset)
+                    .frame(
+                        width: Self.scaledWidth(Self.interactionAreaSize.width, in: geometry.size),
+                        height: Self.scaledHeight(Self.interactionAreaSize.height, in: geometry.size)
+                    )
 
                 RoundedRectangle(cornerRadius: Self.cardCornerRadius)
                     .fill(.white)
-                    .frame(width: Self.cardSize, height: Self.cardSize)
+                    .frame(
+                        width: Self.scaledWidth(Self.cardSize, in: geometry.size),
+                        height: Self.scaledHeight(Self.cardSize, in: geometry.size)
+                    )
                     .accessibilityIdentifier("interaction-drag-card")
                     .drag(
                         momentum: true,
@@ -54,8 +62,7 @@ public struct Interaction_DragView: View {
                         position: $position,
                         translation: $translation,
                         velocity: $velocity,
-                        reset: reset,
-                        onRelease: { handleRelease(at: $0) }
+                        resetOnRelease: Self.shouldReset
                     )
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
@@ -66,36 +73,33 @@ public struct Interaction_DragView: View {
         .onAppear(perform: resetToCenter)
     }
 
-    private func handleRelease(at releasedPosition: CGSize) {
-        guard Self.shouldReset(releasedPosition) else { return }
-        // Origami pulses Reset when interaction turns off and both Position axes
-        // are within the placed graph's 100-point center tolerance.
-        reset = true
-        DispatchQueue.main.async {
-            reset = false
-        }
-    }
-
     static func shouldReset(_ position: CGSize) -> Bool {
         abs(position.width) <= resetTolerance && abs(position.height) <= resetTolerance
     }
 
     static func dragBounds(in canvas: CGSize) -> (min: CGSize, max: CGSize) {
-        let interactionWidth = canvas.width - (Self.interactionAreaInset * 2)
-        let interactionHeight = canvas.height - (Self.interactionAreaInset * 2)
-        let horizontal = (interactionWidth - Self.cardSize) / 2
-        let vertical = (interactionHeight - Self.cardSize) / 2
+        let scaleX = canvas.width / referenceSize.width
+        let scaleY = canvas.height / referenceSize.height
+        let horizontal = (interactionAreaSize.width - cardSize) * scaleX / 2
+        let vertical = (interactionAreaSize.height - cardSize) * scaleY / 2
         return (
             min: CGSize(width: -horizontal, height: -vertical),
             max: CGSize(width: horizontal, height: vertical)
         )
     }
 
+    private static func scaledWidth(_ value: CGFloat, in canvas: CGSize) -> CGFloat {
+        value * canvas.width / referenceSize.width
+    }
+
+    private static func scaledHeight(_ value: CGFloat, in canvas: CGSize) -> CGFloat {
+        value * canvas.height / referenceSize.height
+    }
+
     private func resetToCenter() {
         position = .zero
         translation = .zero
         velocity = .zero
-        reset = false
     }
 }
 
