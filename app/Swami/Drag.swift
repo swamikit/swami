@@ -30,14 +30,12 @@ public struct Drag: ViewModifier {
     var velocity: Binding<CGSize>?
     var reset: Bool
 
-    @State private var origin: CGSize = .zero      // Position at the start of the current drag
-    @State private var current: CGSize = .zero     // live Position output
-    @GestureState private var isPressing = false
+    @State private var origin: CGSize = .zero
+    @State private var current: CGSize = .zero
 
     public func body(content: Content) -> some View {
         content
             .offset(current)
-            .scaleEffect(isPressing ? 1.01 : 1.0)
             .gesture(dragGesture, isEnabled: enable)
             .onChange(of: reset) { _, r in if r { settle(to: .zero) } }
     }
@@ -45,7 +43,6 @@ public struct Drag: ViewModifier {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { v in
-                // Live position = origin + translation, with rubber-band resistance past bounds.
                 let raw = CGSize(width: origin.width + v.translation.width,
                                  height: origin.height + v.translation.height)
                 current = resist(raw)
@@ -53,12 +50,9 @@ public struct Drag: ViewModifier {
                 position?.wrappedValue = current
             }
             .onEnded { v in
-                // Velocity output (Origami "Velocity"): system projection over the gesture.
                 let vel = CGSize(width: v.predictedEndTranslation.width - v.translation.width,
                                  height: v.predictedEndTranslation.height - v.translation.height)
                 velocity?.wrappedValue = vel
-                // Momentum: project to predicted end, then clamp/settle. ResetwMomentum: velocity
-                // does not carry across a fresh touch-down (origin is re-sampled onChanged).
                 let projected = momentum
                     ? CGSize(width: origin.width + v.predictedEndTranslation.width,
                              height: origin.height + v.predictedEndTranslation.height)
@@ -68,18 +62,12 @@ public struct Drag: ViewModifier {
             }
     }
 
-    // MARK: Origami sub-patch behaviors
-
-    /// Clip / Stick To Boundaries: hard clamp of Position to [min, max].
     private func clamp(_ s: CGSize) -> CGSize {
         guard let b = bounds else { return s }
         return CGSize(width: min(max(s.width, b.min.width), b.max.width),
                       height: min(max(s.height, b.min.height), b.max.height))
     }
 
-    /// Rubber Band Friction: past a boundary, motion is resisted.
-    /// Value: 0.15 — Origami-documented default for origami.Drag rubber-band resistance.
-    /// Verified against runner Inspector readout per Issue #140.
     private func resist(_ s: CGSize) -> CGSize {
         guard let b = bounds else { return s }
         func rb(_ x: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat {
@@ -90,14 +78,11 @@ public struct Drag: ViewModifier {
         return CGSize(width: rb(s.width, b.min.width, b.max.width),
                       height: rb(s.height, b.min.height, b.max.height))
     }
-    /// Rubber Band Friction coefficient: 0.15 (Origami-documented default).
-    /// Source: origami.design documentation for origami.Drag patch settings.
+
     private func band(_ overshoot: CGFloat, span: CGFloat, c: CGFloat = 0.15) -> CGFloat {
         (1 - (1 / ((overshoot * c / span) + 1))) * span
     }
 
-    /// Settle with a spring (Origami momentum decay → resting Position). RoundtoScreenPixels is
-    /// left to the renderer (SwiftUI already snaps to device pixels).
     private func settle(to target: CGSize) {
         withAnimation(.interpolatingSpring(stiffness: 180, damping: 22)) {
             current = target
@@ -107,8 +92,6 @@ public struct Drag: ViewModifier {
 }
 
 public extension View {
-    /// Attach Origami-style **Drag**. Pass only the outputs you need; each maps to a Drag output
-    /// port (`position`, `translation`, `velocity`). `bounds` is the Clip / Start+End boundary.
     func drag(
         enable: Bool = true,
         momentum: Bool = true,
