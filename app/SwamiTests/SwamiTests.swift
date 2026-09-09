@@ -8,7 +8,7 @@ struct SwamiTests {
     }
 
     @Test func interactionDragPreservesReferenceCompositionAndLogicalBounds() {
-        #expect(Interaction_DragView.renderSignature == "interaction-drag-r140-canvas-card-v6")
+        #expect(Interaction_DragView.builtProductRevision == "interaction-drag-r140-canvas-card-v7")
         #expect(Interaction_DragView.referenceSize == CGSize(width: 375, height: 667))
         #expect(Interaction_DragView.DragGeometry.logicalRegion == CGSize(width: 315, height: 607))
         #expect(Interaction_DragView.cardSize == 120)
@@ -19,6 +19,12 @@ struct SwamiTests {
         #expect(!Interaction_DragView.shouldReset(CGSize(width: 101, height: 0)))
         #expect(Interaction_DragView.DragGeometry.bounds.min == CGSize(width: -97.5, height: -243.5))
         #expect(Interaction_DragView.DragGeometry.bounds.max == CGSize(width: 97.5, height: 243.5))
+    }
+
+    @Test func resetCountTreatsEveryChangedCountAsOnePulse() {
+        #expect(!Drag.isNewResetPulse(previous: 4, current: 4))
+        #expect(Drag.isNewResetPulse(previous: 4, current: 5))
+        #expect(Drag.isNewResetPulse(previous: UInt.max, current: 0))
     }
 
     @Test func freshGestureUsesConfiguredStartWithoutManualReset() {

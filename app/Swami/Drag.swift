@@ -111,8 +111,9 @@ struct DragState: Equatable {
 ///
 /// Faithful ports: inputs `enable`, `momentum`, `bounds`, `start`, `reset`;
 /// outputs `position`, `translation`, `velocity`. Reset policy remains in the
-/// consumer graph. `resetCount` represents repeated pulse events that a Boolean
-/// SwiftUI value alone cannot distinguish.
+/// consumer graph. `resetCount` is a monotonic pulse input: every changed value
+/// performs one reset, including consecutive pulses for which a Boolean input would
+/// remain `true`. The count need not start at zero and wrapping is permitted.
 ///
 /// Rubber-band friction defaults to Origami Drag's documented `0.15`. Consumers
 /// can override the input when a placed graph supplies a different value.
@@ -165,9 +166,17 @@ public struct Drag: ViewModifier {
             .onChange(of: reset) { _, requested in
                 if requested { performReset() }
             }
-            .onChange(of: resetCount) { _, _ in
-                performReset()
+            .onChange(of: resetCount) { previous, current in
+                if Self.isNewResetPulse(previous: previous, current: current) {
+                    performReset()
+                }
             }
+    }
+
+    /// Kept as a pure predicate so repeated pulse semantics are covered without
+    /// coupling tests to SwiftUI's view-update scheduler.
+    static func isNewResetPulse(previous: UInt, current: UInt) -> Bool {
+        previous != current
     }
 
     private var dragGesture: some Gesture {

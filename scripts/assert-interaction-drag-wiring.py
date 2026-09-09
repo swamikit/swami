@@ -14,7 +14,7 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-SIGNATURE = "interaction-drag-r140-canvas-card-v6"
+REVISION = "interaction-drag-r140-canvas-card-v7"
 
 
 def read(path: str) -> str:
@@ -34,13 +34,25 @@ def assert_build_wiring() -> None:
         "Swami's synchronized source root is absent",
     )
 
+    if len(re.findall(r'INFOPLIST_FILE\s*=\s*"Swami-Info\.plist"\s*;', read(project))) != 2:
+        raise AssertionError(
+            f"{project}: Debug and Release must embed Swami's explicit framework plist"
+        )
+    require_pattern(
+        "app/Swami-Info.plist",
+        r"<key>SWAMIInteractionDragRevision</key>\s*<string>"
+        + re.escape(REVISION)
+        + r"</string>",
+        "framework bundle revision is stale",
+    )
+
     source_path = "app/Swami/Patterns/Interaction_Drag.swift"
     source = read(source_path)
-    signature = re.search(
-        r"public\s+static\s+let\s+renderSignature\s*=\s*\"([^\"]+)\"", source
+    require_pattern(
+        source_path,
+        r'object\s*\(\s*forInfoDictionaryKey:\s*"SWAMIInteractionDragRevision"\s*\)',
+        "runtime revision is not read from the built framework bundle",
     )
-    if signature is None or signature.group(1) != SIGNATURE:
-        raise AssertionError(f"{source_path}: revision-specific source marker is stale")
 
     body = re.search(
         r"public\s+var\s+body\s*:\s*some\s+View\s*\{([\s\S]*?)\n\s*static\s+func\s+shouldReset",
@@ -61,21 +73,19 @@ def assert_build_wiring() -> None:
             "card size is not source-bound",
         ),
         (
-            r"width:\s*Self\.DragGeometry\.logicalRegion\.width[\s\S]*?contentShape",
-            "logical interaction region is not preserved as an invisible hit target",
-        ),
-        (
             r"bounds:\s*Self\.DragGeometry\.bounds",
             "logical bounds are not passed as Drag state",
         ),
     ):
         if re.search(fact, rendered) is None:
             raise AssertionError(f"{source_path}: {reason}")
+    if re.search(r"\.frame\s*\([^)]*DragGeometry\.logicalRegion", rendered, re.DOTALL):
+        raise AssertionError(f"{source_path}: logical region leaked into the rendered hierarchy")
 
     host_path = "app/SwamiHost/ContentView.swift"
     require_pattern(
         host_path,
-        r"interactionDragSignature\s*=\s*\"" + re.escape(SIGNATURE) + r"\"",
+        r"interactionDragRevision\s*=\s*\"" + re.escape(REVISION) + r"\"",
         "host runtime-head expectation is stale",
     )
     require_pattern(
@@ -85,14 +95,15 @@ def assert_build_wiring() -> None:
     )
     require_pattern(
         host_path,
-        r"Interaction_DragView\.renderSignature\s*==\s*Self\.interactionDragSignature"
+        r"Interaction_DragView\.builtProductRevision\s*==\s*Self\.interactionDragRevision"
         r"[\s\S]*?Interaction_DragView\s*\(\s*\)",
-        "selected Drag runtime does not verify the linked implementation marker",
+        "selected Drag runtime does not verify the linked framework bundle",
     )
     require_pattern(
         host_path,
-        r"Interaction_DragView\s*\(\s*\)[\s\S]*?InteractionEvidenceTouchIndicator"
-        r"[\s\S]*?@GestureState[\s\S]*?DragGesture\s*\(\s*minimumDistance:\s*0"
+        r"showsTouchIndicator[\s\S]*?InteractionEvidenceTouchIndicator"
+        r"[\s\S]*?completedStillCaptureKey[\s\S]*?@GestureState"
+        r"[\s\S]*?DragGesture\s*\(\s*minimumDistance:\s*0"
         r"[\s\S]*?\.updating\s*\(\s*\$location\s*\)",
         "runner-host recording does not expose touch-down, trajectory, and release",
     )
@@ -112,6 +123,23 @@ def registry() -> dict[str, str]:
     return entries
 
 
+def workflow_steps(workflow: str) -> list[str]:
+    """Split explicit name/uses steps without assuming a fixed YAML indent."""
+    starts: list[tuple[int, int]] = []
+    for match in re.finditer(r"(?m)^(?P<indent>[ \t]*)-\s+(?:name|uses)\s*:", workflow):
+        starts.append((match.start(), len(match.group("indent").expandtabs(8))))
+
+    steps: list[str] = []
+    for index, (start, indent) in enumerate(starts):
+        end = len(workflow)
+        for next_start, next_indent in starts[index + 1 :]:
+            if next_indent <= indent:
+                end = next_start
+                break
+        steps.append(workflow[start:end])
+    return steps
+
+
 def assert_runner_wiring() -> None:
     if registry().get("drag") != "Interaction_Drag":
         raise AssertionError(
@@ -121,15 +149,11 @@ def assert_runner_wiring() -> None:
     workflow_path = ".github/workflows/verify.yml"
     workflow = read(workflow_path)
 
-    # Require related capabilities to coexist in a single workflow step, but do not
-    # pin quoting, variable names, indentation, command wrappers, or the recording's
-    # literal runtime slug. The registry and changed-pattern condition establish which
-    # pattern that generic launch/capture machinery selects.
-    starts = list(re.finditer(r"(?m)^\s{6}-\s+(?=name:|uses:)", workflow))
-    steps = [
-        workflow[match.start() : starts[index + 1].start() if index + 1 < len(starts) else len(workflow)]
-        for index, match in enumerate(starts)
-    ]
+    # Require related capabilities to coexist in a single explicit workflow step,
+    # without pinning quoting, variable names, indentation, or command wrappers.
+    steps = workflow_steps(workflow)
+    if not steps:
+        raise AssertionError(f"{workflow_path}: no explicit name/uses workflow steps found")
 
     def require_step(capabilities: tuple[str, ...], reason: str) -> str:
         for step in steps:
@@ -189,7 +213,7 @@ def main() -> int:
     if not arguments.build_only:
         assert_runner_wiring()
     scope = "build wiring" if arguments.build_only else "build and runner wiring"
-    print(f"Interaction Drag {scope} OK: {SIGNATURE}")
+    print(f"Interaction Drag {scope} OK: {REVISION}")
     return 0
 
 

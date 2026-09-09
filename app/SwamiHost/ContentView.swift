@@ -6,7 +6,7 @@ import Swami
 // the loop adds a `case "<slug>"` per pattern as they're translated. Keep the body a single
 // expression so screenshots are 1:1 with the Origami artboard — no host chrome, no nav bar.
 struct ContentView: View {
-    private static let interactionDragSignature = "interaction-drag-r140-canvas-card-v6"
+    private static let interactionDragRevision = "interaction-drag-r140-canvas-card-v7"
 
     var body: some View {
         switch ProcessInfo.processInfo.environment["SWAMI_PATTERN"] {
@@ -16,14 +16,18 @@ struct ContentView: View {
         }
     }
 
-    /// Keep stale-link detection on the selected Drag runtime path without terminating
-    /// SwamiHost. A mismatch produces unmistakable capture evidence and an accessibility
-    /// diagnostic; other patterns remain available for independent verification.
+    /// Validate the revision stored in the linked Swami.framework bundle. Unlike a
+    /// source marker compiled into both targets, this proves which built framework was
+    /// installed. The first Drag launch is the unmodified fidelity-screenshot path.
     @ViewBuilder
     private func verifiedInteractionDragView() -> some View {
-        if Interaction_DragView.renderSignature == Self.interactionDragSignature {
-            Interaction_DragView()
-                .modifier(InteractionEvidenceTouchIndicator())
+        if Interaction_DragView.builtProductRevision == Self.interactionDragRevision {
+            if InteractionEvidenceSession.showsTouchIndicator {
+                Interaction_DragView()
+                    .modifier(InteractionEvidenceTouchIndicator())
+            } else {
+                Interaction_DragView()
+            }
         } else {
             ZStack {
                 Color.red.ignoresSafeArea()
@@ -35,9 +39,27 @@ struct ContentView: View {
     }
 }
 
-/// Runner-only gesture evidence. This modifier lives in SwamiHost rather than the
-/// translated pattern, so screenshots remain pixel-identical at rest while recordings
-/// expose touch-down, the injected drag trajectory, and release.
+/// The verify runner installs a fresh host, launches Drag once for its still capture,
+/// then terminates and launches it again for the H.264 recording. Persisting that first
+/// launch keeps evidence UI completely outside the fidelity-screenshot render path.
+private enum InteractionEvidenceSession {
+    private static let completedStillCaptureKey = "InteractionDragCompletedStillCaptureV7"
+
+    static let showsTouchIndicator: Bool = {
+        guard ProcessInfo.processInfo.environment["SWAMI_PATTERN"] == "drag" else {
+            return false
+        }
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: completedStillCaptureKey) {
+            return true
+        }
+        defaults.set(true, forKey: completedStillCaptureKey)
+        return false
+    }()
+}
+
+/// Capture-only gesture evidence. It is selected only for the runner's second Drag
+/// launch, so the Swami screenshot and the translated pattern contain no cursor UI.
 private struct InteractionEvidenceTouchIndicator: ViewModifier {
     @GestureState private var location: CGPoint? = nil
 

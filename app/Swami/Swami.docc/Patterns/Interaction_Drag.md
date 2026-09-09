@@ -14,9 +14,10 @@ rather than this page assuming a match.
 
 ## Interaction
 
-Touching the card or its invisible 315×607-point interaction region engages a
-zero-distance drag. The region is a hit-test/layout frame only and paints no pixels.
-While the card is moving, the `drag` modifier:
+Touching the 120×120-point card engages a zero-distance drag. The placed graph's
+315×607-point logical region exists only as geometry used to derive the movement
+bounds; it creates no layout frame, hit-area panel, shape, or pixels. While the card
+is moving, the `drag` modifier:
 
 - publishes position, translation, and velocity;
 - preserves the placed graph's calculated limits (`±97.5` horizontally and `±243.5`
