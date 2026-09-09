@@ -2,6 +2,8 @@ import SwiftUI
 
 /// Testable state graph behind ``Drag``.
 struct DragState: Equatable {
+    /// The configured rest position. A completed gesture never mutates it.
+    private(set) var start: CGSize
     private(set) var origin: CGSize
     private(set) var current: CGSize
     private(set) var translation: CGSize = .zero
@@ -9,18 +11,24 @@ struct DragState: Equatable {
     private(set) var gestureIsActive = false
 
     init(start: CGSize) {
+        self.start = start
         origin = start
         current = start
     }
 
     mutating func change(
         translation newTranslation: CGSize,
+        start configuredStart: CGSize,
         bounds: (min: CGSize, max: CGSize)?,
         rubberBandFriction: CGFloat
     ) {
         if !gestureIsActive {
             gestureIsActive = true
-            origin = current
+            // Origami Drag starts every interaction from its current Start input. Do
+            // not promote the previous momentum endpoint into the next gesture's origin.
+            start = configuredStart
+            origin = configuredStart
+            current = configuredStart
             translation = .zero
             velocity = .zero
         }
@@ -48,9 +56,7 @@ struct DragState: Equatable {
                 height: origin.height + predictedEndTranslation.height
             )
             : current
-        let target = Self.clamp(projected, bounds: bounds)
-        origin = target
-        return target
+        return Self.clamp(projected, bounds: bounds)
     }
 
     mutating func settle(at target: CGSize) {
@@ -58,6 +64,7 @@ struct DragState: Equatable {
     }
 
     mutating func reset(to start: CGSize) {
+        self.start = start
         origin = start
         current = start
         translation = .zero
@@ -167,6 +174,7 @@ public struct Drag: ViewModifier {
             .onChanged { value in
                 state.change(
                     translation: value.translation,
+                    start: start,
                     bounds: bounds,
                     rubberBandFriction: rubberBandFriction
                 )

@@ -164,6 +164,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E36C08F6D69C8BAD4A89EF1C /* Build configuration list for PBXNativeTarget "SwamiHost" */;
 			buildPhases = (
+				140A55E27D2C4B73A7D8F901 /* Assert Interaction Drag wiring */,
 				6940123E0DF0F5487EFBE9EB /* Sources */,
 				BA10A18F5AC0D0E42FB317FA /* Frameworks */,
 				FF801F386830523A2E6765BC /* Resources */,
@@ -283,6 +284,30 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		140A55E27D2C4B73A7D8F901 /* Assert Interaction Drag wiring */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../scripts/assert-interaction-drag-wiring.py",
+				"$(SRCROOT)/Swami.xcodeproj/project.pbxproj",
+				"$(SRCROOT)/Swami/Patterns/Interaction_Drag.swift",
+				"$(SRCROOT)/SwamiHost/ContentView.swift",
+				"$(SRCROOT)/../.github/patterns.txt",
+				"$(SRCROOT)/../.github/workflows/verify.yml",
+			);
+			name = "Assert Interaction Drag wiring";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/../scripts/assert-interaction-drag-wiring.py\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		6940123E0DF0F5487EFBE9EB /* Sources */ = {

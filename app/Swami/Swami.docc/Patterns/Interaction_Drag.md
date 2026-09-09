@@ -19,7 +19,9 @@ Touching the card engages a zero-distance drag. While the card is moving, the
 
 - publishes position, translation, and velocity;
 - applies the Drag patch's documented 0.15 rubber-band friction beyond the fixed bounds;
-- projects release momentum and settles within those boundaries; and
+- projects release momentum and settles within those boundaries;
+- begins every fresh gesture from Drag's configured Start input rather than inheriting
+  a previous momentum endpoint; and
 - accepts every placed-graph reset pulse through the monotonic `resetCount` adapter.
 
 The pattern composes the reset decision outside the helper, matching the placed

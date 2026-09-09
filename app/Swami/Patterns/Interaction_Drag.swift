@@ -17,6 +17,11 @@ import Swami
 public struct Interaction_DragView: View {
     public init() {}
 
+    /// Revision-specific contract checked by SwamiHost before CI can capture this view.
+    /// Changing Interaction Drag's committed composition requires changing this value
+    /// and the host assertion together, preventing a stale linked framework from passing.
+    public static let renderSignature = "interaction-drag-r140-reset-start-v2"
+
     @State private var position: CGSize = .zero
     @State private var translation: CGSize = .zero
     @State private var velocity: CGSize = .zero
@@ -84,6 +89,7 @@ public struct Interaction_DragView: View {
         .background(Self.canvasColor)
         .ignoresSafeArea(.all)
         .statusBarHidden(true)
+        .accessibilityValue(Self.renderSignature)
     }
 
     static func shouldReset(_ position: CGSize) -> Bool {

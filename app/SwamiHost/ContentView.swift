@@ -9,8 +9,19 @@ struct ContentView: View {
     var body: some View {
         switch ProcessInfo.processInfo.environment["SWAMI_PATTERN"] {
         case "touch", nil: TouchOrigamiExampleView()
-        case "drag":       Interaction_DragView()
+        case "drag":       verifiedInteractionDragView()
         default:           TouchOrigamiExampleView()   // add cases as patterns land
         }
+    }
+
+    /// A stale framework now fails at launch instead of silently publishing a screenshot
+    /// from an older Interaction Drag implementation. The runner's `drag` selection must
+    /// traverse this assertion before `simctl io screenshot` can capture the app.
+    private func verifiedInteractionDragView() -> some View {
+        precondition(
+            Interaction_DragView.renderSignature == "interaction-drag-r140-reset-start-v2",
+            "SwamiHost linked a stale Interaction Drag implementation"
+        )
+        return Interaction_DragView()
     }
 }

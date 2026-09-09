@@ -4,6 +4,7 @@ import Testing
 
 struct SwamiTests {
     @Test func interactionDragMatchesRunnerGeometry() {
+        #expect(Interaction_DragView.renderSignature == "interaction-drag-r140-reset-start-v2")
         #expect(Interaction_DragView.referenceSize == CGSize(width: 375, height: 667))
         #expect(Interaction_DragView.interactionAreaSize == CGSize(width: 315, height: 607))
         #expect(Interaction_DragView.interactionAreaCornerRadius == 20)
@@ -17,12 +18,45 @@ struct SwamiTests {
         #expect(Interaction_DragView.dragBounds.max == CGSize(width: 97.5, height: 243.5))
     }
 
+    @Test func freshGestureUsesConfiguredStartWithoutManualReset() {
+        let start = CGSize(width: 12, height: -8)
+        var state = DragState(start: start)
+
+        state.change(
+            translation: CGSize(width: 30, height: 20),
+            start: start,
+            bounds: nil,
+            rubberBandFriction: Interaction_DragView.rubberBandFriction
+        )
+        let firstTarget = state.end(
+            predictedEndTranslation: CGSize(width: 90, height: 50),
+            momentum: true,
+            bounds: nil
+        )
+        state.settle(at: firstTarget)
+        #expect(state.current == CGSize(width: 102, height: 42))
+
+        // No reset occurs between gestures. The first change must nevertheless use
+        // configured Start, not the prior settled endpoint (the rejected-head bug).
+        state.change(
+            translation: CGSize(width: 4, height: 6),
+            start: start,
+            bounds: nil,
+            rubberBandFriction: Interaction_DragView.rubberBandFriction
+        )
+        #expect(state.origin == start)
+        #expect(state.current == CGSize(width: 16, height: -2))
+        #expect(state.translation == CGSize(width: 4, height: 6))
+        #expect(state.velocity == .zero)
+    }
+
     @Test func dragDrivesBoundsMomentumResetAndFreshTouch() {
         let bounds = Interaction_DragView.dragBounds
         var state = DragState(start: .zero)
 
         state.change(
             translation: CGSize(width: 40, height: 10),
+            start: .zero,
             bounds: bounds,
             rubberBandFriction: Interaction_DragView.rubberBandFriction
         )
@@ -47,6 +81,7 @@ struct SwamiTests {
         // A fresh touch starts at the reset position and cannot retain stale velocity.
         state.change(
             translation: CGSize(width: 250, height: 0),
+            start: .zero,
             bounds: bounds,
             rubberBandFriction: Interaction_DragView.rubberBandFriction
         )
@@ -59,7 +94,7 @@ struct SwamiTests {
             momentum: false,
             bounds: bounds
         )
-        #expect(boundedTarget == bounds.max)
+        #expect(boundedTarget == CGSize(width: bounds.max.width, height: 0))
         state.settle(at: boundedTarget)
 
         // A second pulse resets a later settled drag as completely as the first.
