@@ -113,6 +113,14 @@ jobs:
           path: factory-delivery
           persist-credentials: false
 
+      - name: Validate trusted Builder delivery import
+        run: |
+          set -euo pipefail
+          test "$(git -C factory-delivery rev-parse HEAD)" = "$FACTORY_REF"
+          resolved=$(cd factory-delivery && PYTHONPATH=src python3 -c \
+            'from pathlib import Path; import agent_factory.github_delivery as module; print(Path(module.__file__).resolve())')
+          test "$resolved" = "$GITHUB_WORKSPACE/factory-delivery/src/agent_factory/github_delivery.py"
+
       - name: Mint Builder installation token
         id: builder-token
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
@@ -530,6 +538,7 @@ jobs:
           ORIGAMI_VERSION: ${{ steps.verify.outputs.origami_version }}
         run: |
           set -euo pipefail
+          EVIDENCE_ROOT="$GITHUB_WORKSPACE/out"
           SITE_REPO="${REPO#*/}"
           DOCC_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/documentation/swami/"
           DOCC_HEAD_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/.agent-factory-head"
@@ -557,11 +566,11 @@ jobs:
             BODY+="### ${stem}"$'\n\n'
             BODY+="Changed: \`app/Swami/Patterns/${stem}.swift\` · Origami ${ORIGAMI_VERSION} · normalized SSIM ${score:-unavailable} · catastrophic sanity **${sanity:-failed}**"$'\n\n'
             BODY+="| Swami | Origami | Diff |"$'\n'"|---|---|---|"$'\n'
-            BODY+="| ![Swami ${stem}](out/swami/${slug}.png) | ![Origami ${stem}](out/origami/${slug}.png) | ![Difference for ${stem}](out/diff/${slug}.png) |"$'\n\n'
-            ATTACHMENTS+=(--attach "out/swami/${slug}.png" --attach "out/origami/${slug}.png" --attach "out/diff/${slug}.png")
-            if [ -s "out/recordings/${slug}.mp4" ]; then
-              BODY+="#### Interaction recording"$'\n\n'"![](out/recordings/${slug}.mp4)"$'\n\n'
-              ATTACHMENTS+=(--attach "out/recordings/${slug}.mp4")
+            BODY+="| ![Swami ${stem}](${EVIDENCE_ROOT}/swami/${slug}.png) | ![Origami ${stem}](${EVIDENCE_ROOT}/origami/${slug}.png) | ![Difference for ${stem}](${EVIDENCE_ROOT}/diff/${slug}.png) |"$'\n\n'
+            ATTACHMENTS+=(--attach "${EVIDENCE_ROOT}/swami/${slug}.png" --attach "${EVIDENCE_ROOT}/origami/${slug}.png" --attach "${EVIDENCE_ROOT}/diff/${slug}.png")
+            if [ -s "${EVIDENCE_ROOT}/recordings/${slug}.mp4" ]; then
+              BODY+="#### Interaction recording"$'\n\n'"![](${EVIDENCE_ROOT}/recordings/${slug}.mp4)"$'\n\n'
+              ATTACHMENTS+=(--attach "${EVIDENCE_ROOT}/recordings/${slug}.mp4")
             elif [ "$slug" = "drag" ]; then
               BODY+="Interaction recording: **missing**"$'\n\n'
               overall="failed"
@@ -569,7 +578,8 @@ jobs:
           done
           [ "$docc_status" = "ready" ] || overall="failed"
           printf '%s' "$BODY" > /tmp/builder-delivery.md
-          PYTHONPATH=factory-delivery/src python3 -m agent_factory.github_delivery \
+          cd "$GITHUB_WORKSPACE/factory-delivery"
+          PYTHONPATH=src python3 -m agent_factory.github_delivery \
             --repo "$REPO" --pr "$PR" --head "$SHA" --status "$overall" \
             --body-file /tmp/builder-delivery.md "${ATTACHMENTS[@]}"
           echo "status=$overall" >> "$GITHUB_OUTPUT"
