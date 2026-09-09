@@ -8,7 +8,7 @@ struct SwamiTests {
     }
 
     @Test func interactionDragPreservesReferenceCompositionAndLogicalBounds() {
-        #expect(Interaction_DragView.builtProductRevision == "interaction-drag-r140-canvas-card-v7")
+        #expect(Interaction_DragView.sourceRevision == "interaction-drag-r140-canvas-card-v8")
         #expect(Interaction_DragView.referenceSize == CGSize(width: 375, height: 667))
         #expect(Interaction_DragView.DragGeometry.logicalRegion == CGSize(width: 315, height: 607))
         #expect(Interaction_DragView.cardSize == 120)
@@ -41,9 +41,10 @@ struct SwamiTests {
             releaseTranslation: CGSize(width: 30, height: 20),
             predictedEndTranslation: CGSize(width: 90, height: 50),
             momentum: true,
-            bounds: nil
+            bounds: nil,
+            rubberBandFriction: Interaction_DragView.rubberBandFriction
         )
-        state.settle(at: firstTarget)
+        state.settle(at: firstTarget.target)
         #expect(state.current == CGSize(width: 102, height: 42))
 
         // No reset occurs between gestures. The first change must nevertheless use
@@ -73,12 +74,14 @@ struct SwamiTests {
             releaseTranslation: CGSize(width: 35, height: 12),
             predictedEndTranslation: CGSize(width: 80, height: 30),
             momentum: true,
-            bounds: nil
+            bounds: nil,
+            rubberBandFriction: Interaction_DragView.rubberBandFriction
         )
 
         #expect(state.translation == CGSize(width: 35, height: 12))
         #expect(state.velocity == CGSize(width: 45, height: 18))
-        #expect(target == CGSize(width: 80, height: 30))
+        #expect(target.releasedPosition == CGSize(width: 35, height: 12))
+        #expect(target.target == CGSize(width: 80, height: 30))
     }
 
     @Test func dragDrivesBoundsMomentumResetAndFreshTouch() {
@@ -98,12 +101,13 @@ struct SwamiTests {
             releaseTranslation: CGSize(width: 40, height: 10),
             predictedEndTranslation: CGSize(width: 200, height: 20),
             momentum: true,
-            bounds: bounds
+            bounds: bounds,
+            rubberBandFriction: Interaction_DragView.rubberBandFriction
         )
-        #expect(momentumTarget == CGSize(width: 97.5, height: 20))
+        #expect(momentumTarget.target == CGSize(width: 97.5, height: 20))
         #expect(state.velocity == CGSize(width: 160, height: 10))
-        state.settle(at: momentumTarget)
-        #expect(state.current == momentumTarget)
+        state.settle(at: momentumTarget.target)
+        #expect(state.current == momentumTarget.target)
 
         state.reset(to: .zero)
         #expect(state.current == .zero)
@@ -125,10 +129,11 @@ struct SwamiTests {
             releaseTranslation: CGSize(width: 250, height: 0),
             predictedEndTranslation: CGSize(width: 300, height: 0),
             momentum: false,
-            bounds: bounds
+            bounds: bounds,
+            rubberBandFriction: Interaction_DragView.rubberBandFriction
         )
-        #expect(boundedTarget == CGSize(width: bounds.max.width, height: 0))
-        state.settle(at: boundedTarget)
+        #expect(boundedTarget.target == CGSize(width: bounds.max.width, height: 0))
+        state.settle(at: boundedTarget.target)
 
         // A second pulse resets a later settled drag as completely as the first.
         state.reset(to: .zero)

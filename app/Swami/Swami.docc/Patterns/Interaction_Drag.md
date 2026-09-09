@@ -43,9 +43,10 @@ Swami, Origami, and difference screenshots plus the H.264 Maestro recording. The
 recording demonstrates press, drag, bounded momentum, rubber-band settling, release,
 and a fresh gesture/reset cycle. A small runner-host indicator follows the injected
 touch from touch-down through its trajectory and disappears on release; that evidence
-modifier is not part of `Interaction_DragView`. The page image is populated by the
-documentation publication pipeline from the verified Swami render; it is not a
-hand-authored substitute.
+modifier is not part of `Interaction_DragView`. Revision checks are likewise reported
+only to the runner log and never replace the pattern with diagnostic UI. The page image
+is populated by the documentation publication pipeline from the verified Swami render;
+it is not a hand-authored substitute.
 
 ## See Also
 

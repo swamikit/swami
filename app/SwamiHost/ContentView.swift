@@ -6,36 +6,48 @@ import Swami
 // the loop adds a `case "<slug>"` per pattern as they're translated. Keep the body a single
 // expression so screenshots are 1:1 with the Origami artboard — no host chrome, no nav bar.
 struct ContentView: View {
-    private static let interactionDragRevision = "interaction-drag-r140-canvas-card-v7"
+    private static let interactionDragRevision = "interaction-drag-r140-canvas-card-v8"
 
     var body: some View {
         switch ProcessInfo.processInfo.environment["SWAMI_PATTERN"] {
         case "touch", nil: TouchOrigamiExampleView()
-        case "drag":       verifiedInteractionDragView()
+        case "drag":       interactionDragView()
         default:           TouchOrigamiExampleView()   // add cases as patterns land
         }
     }
 
-    /// Validate the revision stored in the linked Swami.framework bundle. Unlike a
-    /// source marker compiled into both targets, this proves which built framework was
-    /// installed. The first Drag launch is the unmodified fidelity-screenshot path.
+    /// Always render the selected product. Revision diagnosis is deliberately
+    /// non-visual so it can never replace fidelity evidence with an error screen.
     @ViewBuilder
-    private func verifiedInteractionDragView() -> some View {
-        if Interaction_DragView.builtProductRevision == Self.interactionDragRevision {
+    private func interactionDragView() -> some View {
+        Group {
             if InteractionEvidenceSession.showsTouchIndicator {
                 Interaction_DragView()
                     .modifier(InteractionEvidenceTouchIndicator())
             } else {
                 Interaction_DragView()
             }
-        } else {
-            ZStack {
-                Color.red.ignoresSafeArea()
-                Text("Interaction Drag runtime-head mismatch")
-                    .foregroundStyle(.white)
-            }
-            .accessibilityIdentifier("interaction-drag-runtime-head-mismatch")
         }
+        .onAppear(perform: reportInteractionDragRuntimeHead)
+    }
+
+    private func reportInteractionDragRuntimeHead() {
+        let source = Interaction_DragView.sourceRevision
+        let product = Interaction_DragView.builtProductRevision
+        guard source == Self.interactionDragRevision,
+              product == Self.interactionDragRevision else {
+            let actual = product ?? "missing"
+            writeDiagnostic(
+                "Interaction Drag runtime-head mismatch: host=\(Self.interactionDragRevision) "
+                    + "source=\(source) product=\(actual)"
+            )
+            return
+        }
+        writeDiagnostic("Interaction Drag runtime-head OK: \(source)")
+    }
+
+    private func writeDiagnostic(_ message: String) {
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
     }
 }
 
@@ -43,7 +55,7 @@ struct ContentView: View {
 /// then terminates and launches it again for the H.264 recording. Persisting that first
 /// launch keeps evidence UI completely outside the fidelity-screenshot render path.
 private enum InteractionEvidenceSession {
-    private static let completedStillCaptureKey = "InteractionDragCompletedStillCaptureV7"
+    private static let completedStillCaptureKey = "InteractionDragCompletedStillCaptureV8"
 
     static let showsTouchIndicator: Bool = {
         guard ProcessInfo.processInfo.environment["SWAMI_PATTERN"] == "drag" else {

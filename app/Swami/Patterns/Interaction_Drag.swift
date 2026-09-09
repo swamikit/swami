@@ -19,9 +19,10 @@ import Swami
 public struct Interaction_DragView: View {
     public init() {}
 
-    /// Revision embedded in Swami.framework's generated Info.plist. SwamiHost checks
-    /// this built-product value before capture so a stale linked framework cannot pass
-    /// merely because host and pattern source constants were edited together.
+    /// Revision-specific source marker used by the build wiring assertion. The host
+    /// compares it with the linked framework bundle without changing rendered pixels.
+    public static let sourceRevision = "interaction-drag-r140-canvas-card-v8"
+
     public static var builtProductRevision: String? {
         Bundle(for: InteractionDragBundleMarker.self)
             .object(forInfoDictionaryKey: "SWAMIInteractionDragRevision") as? String

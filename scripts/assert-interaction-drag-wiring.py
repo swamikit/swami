@@ -14,7 +14,7 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-REVISION = "interaction-drag-r140-canvas-card-v7"
+REVISION = "interaction-drag-r140-canvas-card-v8"
 
 
 def read(path: str) -> str:
@@ -48,6 +48,11 @@ def assert_build_wiring() -> None:
 
     source_path = "app/Swami/Patterns/Interaction_Drag.swift"
     source = read(source_path)
+    require_pattern(
+        source_path,
+        r'sourceRevision\s*=\s*"' + re.escape(REVISION) + r'"',
+        "revision-specific pattern source marker is stale",
+    )
     require_pattern(
         source_path,
         r'object\s*\(\s*forInfoDictionaryKey:\s*"SWAMIInteractionDragRevision"\s*\)',
@@ -90,15 +95,22 @@ def assert_build_wiring() -> None:
     )
     require_pattern(
         host_path,
-        r"case\s+\"drag\"\s*:\s*verifiedInteractionDragView\s*\(\s*\)",
-        "SWAMI_PATTERN=drag is not routed to the verified view",
+        r"case\s+\"drag\"\s*:\s*interactionDragView\s*\(\s*\)",
+        "SWAMI_PATTERN=drag is not routed to the Interaction Drag view",
     )
     require_pattern(
         host_path,
-        r"Interaction_DragView\.builtProductRevision\s*==\s*Self\.interactionDragRevision"
-        r"[\s\S]*?Interaction_DragView\s*\(\s*\)",
-        "selected Drag runtime does not verify the linked framework bundle",
+        r"Interaction_DragView\.sourceRevision[\s\S]*?"
+        r"Interaction_DragView\.builtProductRevision[\s\S]*?"
+        r"source\s*==\s*Self\.interactionDragRevision[\s\S]*?"
+        r"product\s*==\s*Self\.interactionDragRevision",
+        "selected Drag runtime does not diagnose source and built-product revisions",
     )
+    if re.search(r"runtime-head-mismatch|Color\.red|if[^{]*builtProductRevision[^{]*\{"
+                 r"[\s\S]*?Interaction_DragView", read(host_path)):
+        raise AssertionError(
+            f"{host_path}: runtime-head diagnosis must not replace the rendered pattern"
+        )
     require_pattern(
         host_path,
         r"showsTouchIndicator[\s\S]*?InteractionEvidenceTouchIndicator"

@@ -8,18 +8,17 @@ first build phase. The default invocation also validates runner delivery semanti
 ## Source to target
 
 1. `app/Swami/Patterns/Interaction_Drag.swift` defines the committed
-   `Interaction_DragView` and its revision-specific `renderSignature`.
+   `Interaction_DragView` and its revision-specific `sourceRevision`.
 2. `app/Swami.xcodeproj/project.pbxproj` places `app/Swami` in a
    `PBXFileSystemSynchronizedRootGroup` owned by the `Swami` framework target. This
    gives `Interaction_Drag.swift` target membership without a hand-maintained source
    build-file entry.
 3. The `SwamiHost` target depends on, links, and embeds the built `Swami.framework`.
    Its `ContentView` maps the exact runner slug `drag` to `Interaction_DragView`.
-4. Before returning that view, `ContentView` compares the linked framework's public
-   render signature with the host's committed expectation. A stale framework produces
-   an unmistakable red runtime-head mismatch view and accessibility diagnostic instead
-   of silently publishing old evidence or crashing unrelated host routes. The matching
-   signature is exposed as the pattern view's accessibility value without changing pixels.
+4. `ContentView` compares the pattern source marker and linked framework bundle
+   revision with the host's committed expectation when the selected view appears. It
+   reports the result to the runner log, but always returns `Interaction_DragView`.
+   Runtime-head diagnosis therefore cannot alter, cover, or replace captured pixels.
 
 ## Registry to capture
 
@@ -34,9 +33,10 @@ first build phase. The default invocation also validates runner delivery semanti
    built `.app`, installs that path with `simctl install`, and reads its bundle identifier
    from that app's `Info.plist`.
 4. Capture terminates any running instance and launches the installed bundle with
-   `SIMCTL_CHILD_SWAMI_PATTERN=drag`. That selection traverses the runtime-head check
-   before `simctl io screenshot` writes `out/swami/drag.png`; a mismatch becomes visible
-   and accessibility-addressable evidence.
+   `SIMCTL_CHILD_SWAMI_PATTERN=drag`. That selection logs the runtime-head check and
+   always renders the pattern before `simctl io screenshot` writes
+   `out/swami/drag.png`; build/install identity failures remain assertion failures rather
+   than product UI.
 5. The Drag-only Maestro flow relaunches with the same environment, performs two card
    swipes, and records `out/recordings/drag.mp4` with `simctl recordVideo --codec=h264`.
    A `SwamiHost`-only simultaneous gesture renders a small indicator at the injected
@@ -60,9 +60,9 @@ revisions retained the same final rest-state pixels, and the workflow reported t
 parenthesized normalized *distortion* emitted by ImageMagick's SSIM metric as though it
 were similarity. This repository's workflow is a protected control plane, so product
 changes do not alter its metric interpretation. SSIM remains catastrophic-sanity
-information only. The source/build/runtime signature checks above independently make
-stale linkage observable in the selected runtime without taking down unrelated host
-routes, while the screenshot triplet, recording, DocC, and Reviewer determine fidelity.
+information only. The source/build/runtime revision checks above independently make stale linkage
+observable without introducing a diagnostic layer into the selected runtime, while the
+screenshot triplet, recording, DocC, and Reviewer determine fidelity.
 
 ## Local static check
 

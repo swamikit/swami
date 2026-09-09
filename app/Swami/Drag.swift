@@ -44,21 +44,34 @@ struct DragState: Equatable {
         releaseTranslation: CGSize,
         predictedEndTranslation: CGSize,
         momentum: Bool,
-        bounds: (min: CGSize, max: CGSize)?
-    ) -> CGSize {
-        gestureIsActive = false
+        bounds: (min: CGSize, max: CGSize)?,
+        rubberBandFriction: CGFloat
+    ) -> (releasedPosition: CGSize, target: CGSize) {
+        // The end payload is the authoritative final sample. Derive release position,
+        // translation, and velocity together instead of replaying a change event.
+        let releasedRaw = CGSize(
+            width: origin.width + releaseTranslation.width,
+            height: origin.height + releaseTranslation.height
+        )
+        current = Self.resist(
+            releasedRaw,
+            bounds: bounds,
+            friction: rubberBandFriction
+        )
         translation = releaseTranslation
         velocity = CGSize(
             width: predictedEndTranslation.width - releaseTranslation.width,
             height: predictedEndTranslation.height - releaseTranslation.height
         )
+        gestureIsActive = false
+
         let projected = momentum
             ? CGSize(
                 width: origin.width + predictedEndTranslation.width,
                 height: origin.height + predictedEndTranslation.height
             )
             : current
-        return Self.clamp(projected, bounds: bounds)
+        return (current, Self.clamp(projected, bounds: bounds))
     }
 
     mutating func settle(at target: CGSize) {
@@ -193,27 +206,20 @@ public struct Drag: ViewModifier {
                 position?.wrappedValue = state.current
             }
             .onEnded { value in
-                // Consume the end payload directly. The final onChanged sample is not
-                // guaranteed to equal the gesture's release translation.
-                state.change(
-                    translation: value.translation,
-                    start: start,
-                    bounds: bounds,
-                    rubberBandFriction: rubberBandFriction
-                )
-                let releasedPosition = state.current
-                let target = state.end(
+                let release = state.end(
                     releaseTranslation: value.translation,
                     predictedEndTranslation: value.predictedEndTranslation,
                     momentum: momentum,
-                    bounds: bounds
+                    bounds: bounds,
+                    rubberBandFriction: rubberBandFriction
                 )
                 translation?.wrappedValue = state.translation
                 velocity?.wrappedValue = state.velocity
-                onRelease?(releasedPosition)
+                position?.wrappedValue = release.releasedPosition
+                onRelease?(release.releasedPosition)
                 withAnimation(.interpolatingSpring(stiffness: 180, damping: 22)) {
-                    state.settle(at: target)
-                    position?.wrappedValue = target
+                    state.settle(at: release.target)
+                    position?.wrappedValue = release.target
                 }
             }
     }

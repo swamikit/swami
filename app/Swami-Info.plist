@@ -19,6 +19,6 @@
     <key>CFBundleVersion</key>
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>SWAMIInteractionDragRevision</key>
-    <string>interaction-drag-r140-canvas-card-v7</string>
+    <string>interaction-drag-r140-canvas-card-v8</string>
 </dict>
 </plist>
