@@ -67,6 +67,7 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           EVIDENCE_ROOT: ${{ runner.temp }}/evidence
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           PR=$(jq -r .pr "$EVIDENCE_ROOT/delivery/manifest.json")
@@ -80,7 +81,10 @@ jobs:
           test "$(jq -r .total_count <<<"$artifact")" = "1"
           test "$(jq -r '.artifacts[0].workflow_run.id' <<<"$artifact")" = "$RUN_ID"
           test "$(jq -r '.artifacts[0].workflow_run.head_sha' <<<"$artifact")" = "$SHA"
-          python3 - "$PR" "$SHA" "$EVIDENCE_ROOT" "$RUN_ID" "$RUN_ATTEMPT" <<'PY'
+          trusted_workflow_sha=$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/verify.yml?ref=${DEFAULT_BRANCH}" --jq .content \
+            | tr -d '\n' | base64 --decode | shasum -a 256 | awk '{print $1}')
+          python3 - "$PR" "$SHA" "$EVIDENCE_ROOT" "$RUN_ID" "$RUN_ATTEMPT" "$trusted_workflow_sha" <<'PY'
+          import hashlib
           import json
           import re
           import sys
@@ -92,6 +96,8 @@ jobs:
               raise SystemExit("evidence manifest does not match the triggering PR head")
           if manifest.get("run_id") != int(sys.argv[4]) or manifest.get("run_attempt") != int(sys.argv[5]):
               raise SystemExit("evidence manifest does not match the triggering run attempt")
+          if manifest.get("workflow_sha256") != sys.argv[6]:
+              raise SystemExit("evidence was not produced by the trusted default-branch verifier")
           changed = str(manifest.get("changed_patterns") or "")
           if not re.fullmatch(r"[a-z0-9_]+:[A-Za-z0-9_]+(?: [a-z0-9_]+:[A-Za-z0-9_]+)*", changed):
               raise SystemExit("invalid changed-pattern manifest")
@@ -107,6 +113,7 @@ jobs:
                       raise SystemExit("duplicate verification result in evidence manifest")
                   rows[match.group(1)] = (match.group(2), match.group(3))
           pairs = []
+          expected_media = set()
           for pair in changed.split():
               slug, stem = pair.split(":", 1)
               if slug in {item[0] for item in pairs} or stem in {item[1] for item in pairs}:
@@ -115,9 +122,22 @@ jobs:
               if slug not in rows:
                   raise SystemExit(f"missing verification result for {slug}")
               for relative in (f"swami/{slug}.png", f"origami/{slug}.png", f"diff/{slug}.png"):
+                  expected_media.add(relative)
                   path = (root / relative).resolve()
                   if root not in path.parents or not path.is_file():
                       raise SystemExit(f"missing or unsafe evidence path: {relative}")
+              recording = f"recordings/{slug}.mp4"
+              if (root / recording).is_file():
+                  expected_media.add(recording)
+          declared_media = manifest.get("media_sha256")
+          if not isinstance(declared_media, dict) or set(declared_media) != expected_media:
+              raise SystemExit("evidence media digest set does not exactly match the declared patterns")
+          for relative, expected_digest in declared_media.items():
+              if not re.fullmatch(r"[0-9a-f]{64}", str(expected_digest)):
+                  raise SystemExit(f"invalid evidence digest for {relative}")
+              actual_digest = hashlib.sha256((root / relative).read_bytes()).hexdigest()
+              if actual_digest != expected_digest:
+                  raise SystemExit(f"evidence digest mismatch for {relative}")
           PY
           files=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --paginate --jq '.[].filename')
           test "$(printf '%s\n' "$files" | sed '/^$/d' | wc -l | tr -d ' ')" = "$(jq -r .changed_files <<<"$pr_meta")"

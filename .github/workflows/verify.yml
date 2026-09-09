@@ -508,9 +508,15 @@ jobs:
           mkdir -p out/delivery
           python3 - <<'PY'
           import json
+          import hashlib
           import os
           from pathlib import Path
 
+          out = Path("out")
+          media = {}
+          for directory, suffix in (("swami", ".png"), ("origami", ".png"), ("diff", ".png"), ("recordings", ".mp4")):
+              for path in sorted((out / directory).glob(f"*{suffix}")):
+                  media[path.relative_to(out).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
           Path("out/delivery/manifest.json").write_text(json.dumps({
               "pr": int(os.environ["PR"]),
               "sha": os.environ["SHA"],
@@ -519,6 +525,8 @@ jobs:
               "origami_version": os.environ.get("ORIGAMI_VERSION", ""),
               "run_id": int(os.environ["RUN_ID"]),
               "run_attempt": int(os.environ["RUN_ATTEMPT"]),
+              "workflow_sha256": hashlib.sha256(Path(".github/workflows/verify.yml").read_bytes()).hexdigest(),
+              "media_sha256": media,
           }), encoding="utf-8")
           PY
 
