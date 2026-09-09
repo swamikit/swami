@@ -3,15 +3,17 @@
 Swami's Steward, Builder, Reviewer, Gate, and integration workflows must use the
 same immutable Agent Factory commit.
 
-- Current: `a08460356ec152cba4b4290089256da8394a09ae`
-- Previous: `1e667cad232b86b03d93ca7be68187b73bd543e6`
-- Upstream evidence: https://github.com/samuelalake/agent-factory/compare/1e667cad232b86b03d93ca7be68187b73bd543e6...a08460356ec152cba4b4290089256da8394a09ae
+- Current: `8c92c353a3d36b71ea36e278953da656ccc6c905`
+- Previous: `ac8e3e45e953149e55ec4d87a5606e31edbe8369`
+- Upstream evidence: https://github.com/samuelalake/agent-factory/compare/ac8e3e45e953149e55ec4d87a5606e31edbe8369...8c92c353a3d36b71ea36e278953da656ccc6c905
 - First consumer: Swami Interaction Drag PR #150. Reviewer now inspects its
   authenticated current-head Swami, Origami, and diff images whether the
   deterministic sanity check passes or fails, while Builder receives the
   resulting visual diagnosis on revision. Builder revisions now also receive
   the authenticated exact-head Reviewer's eligible inline findings and fail
-  closed rather than truncating an oversized review brief.
+  closed rather than truncating an oversized review brief. OpenRouter Builder
+  requests now constrain endpoint prices, enforce reported billed cost after
+  every response, and share one $1 budget across primary and fallback attempts.
 - Rollback: revert the pin-bump commit so all five workflow references return to
   the previous SHA atomically.
 
