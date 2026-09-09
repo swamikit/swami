@@ -99,7 +99,7 @@ jobs:
           if manifest.get("run_id") != int(sys.argv[4]) or manifest.get("run_attempt") != int(sys.argv[5]):
               raise SystemExit("evidence manifest does not match the triggering run attempt")
           if manifest.get("workflow_sha256") != sys.argv[6]:
-              raise SystemExit("evidence was not produced by the trusted default-branch verifier")
+              raise SystemExit("evidence was not produced by the trusted base-branch verifier")
           changed = str(manifest.get("changed_patterns") or "")
           if not re.fullmatch(r"[a-z0-9_]+:[A-Za-z0-9_]+(?: [a-z0-9_]+:[A-Za-z0-9_]+)*", changed):
               raise SystemExit("invalid changed-pattern manifest")
