@@ -5,18 +5,19 @@ public struct InteractionDragView: View {
 
     @State private var position: CGSize = .zero
     @State private var restingPosition: CGSize = .zero
-    @State private var isPressed = false
+    @GestureState private var isPressed = false
+
     private let artboardSize = CGSize(width: 888, height: 1212)
     private let cardSize = CGSize(width: 220, height: 140)
-    private let artboardColor = Color(red: 255/255.0, green: 19/255.0, blue: 52/255.0)
-    private let artboardHighlight = Color(red: 255/255.0, green: 43/255.0, blue: 79/255.0)
+    private let artboardColor = Color(red: 221/255.0, green: 112/255.0, blue: 223/255.0)
     private let cardColor = Color(red: 255/255.0, green: 211/255.0, blue: 180/255.0)
+    private let pressedCardColor = Color(red: 255/255.0, green: 255/255.0, blue: 255/255.0)
 
     public var body: some View {
         ZStack {
             artboardColor
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(isPressed ? artboardHighlight.opacity(0.92) : cardColor)
+                .fill(isPressed ? pressedCardColor : cardColor)
                 .frame(width: cardSize.width, height: cardSize.height)
                 .offset(position)
                 .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
@@ -27,14 +28,15 @@ public struct InteractionDragView: View {
         .onAppear {
             position = .zero
             restingPosition = .zero
-            isPressed = false
         }
     }
 
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .updating($isPressed) { _, state, _ in
+                state = true
+            }
             .onChanged { value in
-                isPressed = true
                 let projected = CGSize(
                     width: restingPosition.width + value.translation.width,
                     height: restingPosition.height + value.translation.height
@@ -42,7 +44,6 @@ public struct InteractionDragView: View {
                 position = rubberBand(projected)
             }
             .onEnded { value in
-                isPressed = false
                 let projected = CGSize(
                     width: restingPosition.width + value.predictedEndTranslation.width,
                     height: restingPosition.height + value.predictedEndTranslation.height

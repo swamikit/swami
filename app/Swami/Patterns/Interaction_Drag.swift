@@ -3,9 +3,9 @@
 // graph region (placed_root_offset=465976).
 //
 // Evidence sources:
-// - Artboard/card geometry: 888×1212 artboard and 220×140 card centered in the canvas.
+// - Artboard/card geometry: 888×1212 artboard and 220×140 centered card.
 // - Card color: solid tan at pos 518344: 0xFFD3B4FF = rgba(255, 211, 180, 255).
-// - Artboard background: warm canvas fill, rendered full-bleed with no chrome.
+// - Artboard background: warm purple canvas, rendered full-bleed with no chrome.
 // - Interaction evidence: Maestro-driven press/drag/release/reset recording from the GitHub macOS runner.
 //
 // Issue #140 fidelity resolution (supersedes #119):
