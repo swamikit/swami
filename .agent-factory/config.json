@@ -30,6 +30,7 @@
   },
   "builder": {
     "marker": "<!-- builder:agent-factory -->",
+    "app_login": "agent-factory-builder[bot]",
     "provider": "minimax",
     "harness": "openai-compatible",
     "model": "MiniMax-M2.7",
