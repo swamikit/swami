@@ -24,6 +24,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   APP_PROJECT: app/Swami.xcodeproj
@@ -98,6 +99,12 @@ jobs:
     if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 40
+    outputs:
+      pr: ${{ steps.evidence.outputs.pr }}
+      sha: ${{ steps.evidence.outputs.sha }}
+      changed_patterns: ${{ steps.evidence.outputs.changed_patterns }}
+      results: ${{ steps.verify.outputs.results }}
+      origami_version: ${{ steps.verify.outputs.origami_version }}
     env:
       PATTERNS: ${{ needs.changes.outputs.patterns }}
     steps:
@@ -105,37 +112,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout pinned Builder delivery publisher
-        uses: actions/checkout@v4
-        with:
-          repository: samuelalake/agent-factory
-          ref: ${{ env.FACTORY_REF }}
-          path: factory-delivery
-          persist-credentials: false
-
-      - name: Validate trusted Builder delivery import
-        run: |
-          set -euo pipefail
-          test "$(git -C factory-delivery rev-parse HEAD)" = "$FACTORY_REF"
-          resolved=$(cd factory-delivery && PYTHONPATH=src python3 -c \
-            'from pathlib import Path; import agent_factory.github_delivery as module; print(Path(module.__file__).resolve())')
-          test "$resolved" = "$GITHUB_WORKSPACE/factory-delivery/src/agent_factory/github_delivery.py"
-
-      - name: Mint Builder installation token
-        id: builder-token
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.AGENT_FACTORY_BUILDER_APP_ID }}
-          private-key: ${{ secrets.AGENT_FACTORY_BUILDER_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-
       - name: Resolve PR, source head, and changed patterns
         id: evidence
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
         env:
-          GH_TOKEN: ${{ steps.builder-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -eu
@@ -476,11 +457,6 @@ jobs:
             echo "origami_version=${{ steps.origami.outputs.version }}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Upload artifacts (always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with: { name: pixel-gate, path: out/, if-no-files-found: warn }
-
       - name: Record changed interaction patterns
         if: steps.evidence.outputs.pr != '' && contains(steps.evidence.outputs.changed_patterns, 'drag:Interaction_Drag')
         env:
@@ -524,21 +500,91 @@ jobs:
           trap - EXIT
           test -s out/recordings/drag.mp4
 
+      - name: Upload Builder evidence (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: builder-evidence, path: out/, if-no-files-found: warn }
+
+      - name: Enforce current-head visual sanity
+        if: steps.evidence.outputs.pr != '' && steps.evidence.outputs.changed_patterns != ''
+        env:
+          CHANGED_PATTERNS: ${{ steps.evidence.outputs.changed_patterns }}
+          RESULTS: ${{ steps.verify.outputs.results }}
+        run: |
+          set -euo pipefail
+          for pair in $CHANGED_PATTERNS; do
+            slug="${pair%%:*}"
+            sanity=$(printf '%s\n' "$RESULTS" | awk -F'|' -v wanted="$slug" '$2 ~ "^[[:space:]]*" wanted "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $4); print $4; exit}')
+            test "$sanity" = "pass" || {
+              echo "::error::${slug} failed catastrophic visual sanity"
+              exit 1
+            }
+          done
+
+      - name: Explain fork evidence policy
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
+        run: |
+          echo "::notice::Builder evidence publication is withheld for fork-authored code because GitHub App secrets are unavailable to untrusted pull requests. Maintainers can inspect the workflow artifact and re-run the trusted path after bringing the head into this repository."
+          {
+            echo "## Fork evidence policy"
+            echo
+            echo "Builder evidence and the PR DocC publication are withheld because this pull request originates from a fork. The verification artifact remains available to maintainers. Bring the head into this repository, then dispatch the trusted workflow to publish attributed evidence."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-builder-delivery:
+    needs: [changes, pixel-gate]
+    if: always() && needs.pixel-gate.outputs.pr != '' && needs.pixel-gate.outputs.changed_patterns != '' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false))
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Download runner-produced evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: builder-evidence
+          path: evidence
+
+      - name: Checkout pinned Builder delivery publisher
+        uses: actions/checkout@v4
+        with:
+          repository: samuelalake/agent-factory
+          ref: ${{ env.FACTORY_REF }}
+          path: factory-delivery
+          persist-credentials: false
+
+      - name: Validate trusted Builder delivery import
+        run: |
+          set -euo pipefail
+          test "$(git -C factory-delivery rev-parse HEAD)" = "$FACTORY_REF"
+          test -z "$(git -C factory-delivery status --porcelain)"
+          resolved=$(cd factory-delivery && PYTHONPATH=src python3 -c \
+            'from pathlib import Path; import agent_factory.github_delivery as module; print(Path(module.__file__).resolve())')
+          test "$resolved" = "$GITHUB_WORKSPACE/factory-delivery/src/agent_factory/github_delivery.py"
+
+      - name: Mint Builder installation token
+        id: builder-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AGENT_FACTORY_BUILDER_APP_ID }}
+          private-key: ${{ secrets.AGENT_FACTORY_BUILDER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
       - name: Publish canonical Builder delivery into the PR description
-        id: builder-delivery
-        if: (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)) && steps.evidence.outputs.pr != '' && steps.evidence.outputs.changed_patterns != ''
         env:
           GH_TOKEN: ${{ steps.builder-token.outputs.token }}
           AGENT_FACTORY_MEDIA_UPLOAD_TOKEN: ${{ secrets.AGENT_FACTORY_MEDIA_UPLOAD_TOKEN }}
-          PR: ${{ steps.evidence.outputs.pr }}
+          PR: ${{ needs.pixel-gate.outputs.pr }}
           REPO: ${{ github.repository }}
-          SHA: ${{ steps.evidence.outputs.sha }}
-          CHANGED_PATTERNS: ${{ steps.evidence.outputs.changed_patterns }}
-          RESULTS: ${{ steps.verify.outputs.results }}
-          ORIGAMI_VERSION: ${{ steps.verify.outputs.origami_version }}
+          SHA: ${{ needs.pixel-gate.outputs.sha }}
+          CHANGED_PATTERNS: ${{ needs.pixel-gate.outputs.changed_patterns }}
+          RESULTS: ${{ needs.pixel-gate.outputs.results }}
+          ORIGAMI_VERSION: ${{ needs.pixel-gate.outputs.origami_version }}
         run: |
           set -euo pipefail
-          EVIDENCE_ROOT="$GITHUB_WORKSPACE/out"
+          EVIDENCE_ROOT="$GITHUB_WORKSPACE/evidence"
           SITE_REPO="${REPO#*/}"
           DOCC_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/documentation/swami/"
           DOCC_HEAD_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/.agent-factory-head"
@@ -582,25 +628,6 @@ jobs:
           PYTHONPATH=src python3 -m agent_factory.github_delivery \
             --repo "$REPO" --pr "$PR" --head "$SHA" --status "$overall" \
             --body-file /tmp/builder-delivery.md "${ATTACHMENTS[@]}"
-          echo "status=$overall" >> "$GITHUB_OUTPUT"
-
-      - name: Enforce current-head delivery sanity
-        if: steps.evidence.outputs.pr != '' && steps.evidence.outputs.changed_patterns != ''
-        run: |
-          test "${{ steps.builder-delivery.outputs.status }}" = "ready" || {
-            echo "::error::Builder delivery is not reviewable; inspect the canonical PR description"
-            exit 1
-          }
-
-      - name: Explain fork evidence policy
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true
-        run: |
-          echo "::notice::Builder evidence publication is withheld for fork-authored code because GitHub App secrets are unavailable to untrusted pull requests. Maintainers can inspect the workflow artifact and re-run the trusted path after bringing the head into this repository."
-          {
-            echo "## Fork evidence policy"
-            echo
-            echo "Builder evidence and the PR DocC publication are withheld because this pull request originates from a fork. The verification artifact remains available to maintainers. Bring the head into this repository, then dispatch the trusted workflow to publish attributed evidence."
-          } >> "$GITHUB_STEP_SUMMARY"
 
 # NEXT (per ADR-0013): (a) parser-verification step that reads Origami's Inspector via AX
 # attributes and diffs against the parser's IR; (b) interaction gate — XCUITest-drives-both-sides
