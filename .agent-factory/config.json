@@ -33,7 +33,7 @@
     "app_login": "agent-factory-builder[bot]",
     "provider": "openrouter",
     "harness": "openai-compatible",
-    "model": "qwen/qwen3.8-max-0902",
+    "model": "z-ai/glm-5.3-flash",
     "cli_version": "0.55.1",
     "timeout_seconds": 1800,
     "branch_prefix": "agent-factory/issue-",
