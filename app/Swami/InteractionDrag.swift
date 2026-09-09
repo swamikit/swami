@@ -5,6 +5,7 @@ public struct InteractionDragView: View {
 
     @State private var position: CGSize = .zero
     @State private var restingPosition: CGSize = .zero
+    @State private var isPressed = false
     private let artboardSize = CGSize(width: 888, height: 1212)
     private let cardSize = CGSize(width: 220, height: 140)
     private let artboardColor = Color(red: 255/255.0, green: 43/255.0, blue: 79/255.0)
@@ -16,6 +17,7 @@ public struct InteractionDragView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(cardColor)
                 .frame(width: cardSize.width, height: cardSize.height)
+                .scaleEffect(isPressed ? 1.05 : 1.0)
                 .offset(position)
                 .position(x: artboardSize.width / 2, y: artboardSize.height / 2)
                 .gesture(dragGesture)
@@ -25,12 +27,14 @@ public struct InteractionDragView: View {
         .onAppear {
             position = .zero
             restingPosition = .zero
+            isPressed = false
         }
     }
 
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
+                isPressed = true
                 let projected = CGSize(
                     width: restingPosition.width + value.translation.width,
                     height: restingPosition.height + value.translation.height
@@ -38,6 +42,7 @@ public struct InteractionDragView: View {
                 position = clamp(projected)
             }
             .onEnded { value in
+                isPressed = false
                 let projected = CGSize(
                     width: restingPosition.width + value.predictedEndTranslation.width,
                     height: restingPosition.height + value.predictedEndTranslation.height
