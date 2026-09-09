@@ -16,18 +16,21 @@ agent — the cloud loop does not write there.
       artboard — the oracle only pinned "Tap frame white"; compare side-by-side or Samuel's eye.
   (b) INTERACTION undriven — static shot can't verify the 100×100 oval growing from the touch point
       on press/tap. Needs a driven gesture in the sim (touch-injection tool) or Samuel driving live.
-- **drag() helper (origami.Drag)** — drafted, syntax-clean, NOT compiled in-framework, NOT driven.
-  Momentum/rubber-band CONSTANTS are placeholders (iOS-standard), not Origami's real defaults
-  (see parser TODO). Drive: fling → momentum decay matches Origami feel; over-drag past bounds →
-  rubber-band resists then settles; release at rest → clamps; velocity reset on fresh touch.
-- **Interaction_Drag** — **ITEM 2 OF 69** (2026-09-07): Artboard 888×1212, tan card
-  #B0E0B27B, 220×140 centered, corner radius 20, drag with momentum + rubber-band bounds,
-  snap-to-center. Parser generalized via `placed_root_offset()` (ADR-0013 structural walk).
-  TRANSLATION COMPLETE — fidelity debts addressed (Issue #119):
-  - Artboard background: explicit `// TODO: parser-decoded token when available` marker
-  - Card color: explicit `// TODO: parser-decoded token when available` marker (ARGB assumed)
-  - Drag bounds: geometric evidence documented inline (centered rest-position verified)
-  Pending: pixel triplet from verify.yml + DocC preview PNG from post-merge.yml
+- **drag() helper (origami.Drag)** — implemented with faithful ports (Position/Translation/Velocity
+  out; Enable/Momentum/bounds/Reset in). Rubber-band friction uses Origami's documented 0.15
+  default; release momentum comes from the gesture's measured projection rather than an iOS
+  scroll default. Drive: fling → bounded momentum settle; over-drag → rubber-band resistance;
+  reset → origin and all outputs clear; fresh touch → stale velocity clears.
+- **Interaction_Drag** — **ITEM 2 OF 69** (Issue #140 corrective delivery): the current-head
+  Origami reference is 750×1334 pixels (375×667 points at 2×). Its rendered hierarchy is an
+  `#DD70DF` full-screen canvas and a centered 120×120-point white card with a 15-point radius;
+  there is no visible interaction-area panel. The placed graph confirms `origami.Drag`, bounds
+  calculated from a logical 315×607-point region around the card, and a `Snap to origin` branch
+  that pulses Reset when both position axes are within 100 points of center on touch-up. The
+  logical region remains in state only, producing limits of ±97.5 points horizontally and ±243.5
+  vertically. Implementation and DocC are complete; exact-head runner screenshots, Maestro H.264
+  recording, and Reviewer verdict remain the integration gate. Resolve this item when that head
+  merges.
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
 - **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches
@@ -71,14 +74,12 @@ agent — the cloud loop does not write there.
   as "you forgot how to number files."
 
 ## Parser TODOs blocking faithful output
-- **Placed-vs-library generalization** (core challenge): fixed tail offset (360000) is tuned to the
-  Touch example; on Interaction_Drag (534 KB) it captures Drag's component internals as false
-  "placed" nodes. Need a structural way to find the document's placed graph (root reference), not a
-  byte offset. Blocks trustworthy translation of any pattern embedding composite patches.
+- **Placed-vs-library generalization** ✅ RESOLVED. `placed_root_offset()` structurally isolates
+  the placed graph from embedded component internals using the FlatBuffers root reference.
 - **Input-port default-value decoding**: DragSettings port defaults (Momentum/Rubber Band Friction,
-  Clip) are NOT reachable by naive vtable field-offset walking (returns zeros / canvas coords).
-  Values are a typed value-union stored indirectly — needs real union tag→payload decoding. Blocks
-  faithful momentum constants in drag().
+  Clip) are NOT auto-decoded by the parser. Interaction Drag uses Origami's documented 0.15
+  rubber-band friction and the driven gesture's measured momentum projection, so it does not insert
+  an unverified momentum constant. Full union tag→payload decoding remains a parser follow-up.
 
 ## Infra self-healing loop (V4 prerequisites)
 - **`.github/ISSUE_TEMPLATE/infra-blocker.md`** (landed in PR #24) — structured evidence template for when a Builder or Review GA hits a runner-level failure (Origami install broken, sim boot fails, ImageMagick not available, etc.). Template auto-applies `label: infra-blocker` so downstream queries are label-based.
@@ -96,10 +97,8 @@ agent — the cloud loop does not write there.
 
 ## Generalization Gap (Issue #83 learning)
 
-The parser now successfully uses `placed_root_offset()` to structurally isolate the placed graph from embedded component internals. However, the following gaps remain:
+The parser successfully uses `placed_root_offset()` to isolate the placed graph from embedded component internals. Interaction Drag's corrected composition does not treat arbitrary 32-bit words as colors: its rendered RGBA values and geometry come from the runner reference, while structural parsing confirms the Drag, bounds, and snap-to-origin nodes.
 
-**Unresolved (port values)**: Exact drag physics constants (Momentum Friction, Rubber Band Friction, decel rate) are still placeholders from iOS defaults. These live as port default *values* inside origami.DragSettings — reading them needs FlatBuffers port-value decoding, which the parser doesn't implement yet.
+Input-port union decoding remains a parser generalization task. Interaction Drag does not block on a guessed momentum-friction constant because its SwiftUI mapping uses the driven gesture's measured projection.
 
-**Unresolved (color channels)**: Card fill `#B0E0B27B` decoded as ARGB (alpha-first, yielding tan rgb 224,178,123). The RRGGBBAA reading would yield pale green rgba(176,224,178,123). Both interpretations are structurally valid; neither has parser-IR evidence. Marked `// TODO: parser-decoded token when available` in `Interaction_Drag.swift` per Issue #119. Locking in requires either: (a) extending the parser to emit color value objects with known channel order, or (b) an Origami Inspector AX readout confirming the hex.
-
-**Not expanded** (per issue scope): This issue focused on delivering Interaction_Drag as the first corpus entry. Parser, codegen, and DocC improvements are by-products recorded here, but not expanded to a second pattern.
+Issue #140 supersedes #119 only after Steward records the merged PR and exact-head verify run.
