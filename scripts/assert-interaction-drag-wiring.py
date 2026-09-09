@@ -18,8 +18,14 @@ def require(path: str, text: str, reason: str) -> None:
         raise AssertionError(f"{path}: {reason}; missing {text!r}")
 
 
+def reject(path: str, text: str, reason: str) -> None:
+    contents = (ROOT / path).read_text(encoding="utf-8")
+    if text in contents:
+        raise AssertionError(f"{path}: {reason}; found {text!r}")
+
+
 def main() -> int:
-    signature = "interaction-drag-r140-reset-start-v2"
+    signature = "interaction-drag-r140-canvas-card-v3"
 
     require(
         "app/Swami.xcodeproj/project.pbxproj",
@@ -35,6 +41,11 @@ def main() -> int:
         "app/Swami/Patterns/Interaction_Drag.swift",
         f'public static let renderSignature = "{signature}"',
         "the revision-specific implementation marker is absent",
+    )
+    reject(
+        "app/Swami/Patterns/Interaction_Drag.swift",
+        ".fill(Self.interactionAreaColor)",
+        "the rejected rendered interaction-area panel was restored",
     )
     require(
         "app/SwamiHost/ContentView.swift",

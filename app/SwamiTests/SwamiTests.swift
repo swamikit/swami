@@ -3,11 +3,10 @@ import Testing
 @testable import Swami
 
 struct SwamiTests {
-    @Test func interactionDragMatchesRunnerGeometry() {
-        #expect(Interaction_DragView.renderSignature == "interaction-drag-r140-reset-start-v2")
+    @Test func interactionDragPreservesReferenceCompositionAndLogicalBounds() {
+        #expect(Interaction_DragView.renderSignature == "interaction-drag-r140-canvas-card-v3")
         #expect(Interaction_DragView.referenceSize == CGSize(width: 375, height: 667))
-        #expect(Interaction_DragView.interactionAreaSize == CGSize(width: 315, height: 607))
-        #expect(Interaction_DragView.interactionAreaCornerRadius == 20)
+        #expect(Interaction_DragView.dragRegionSize == CGSize(width: 315, height: 607))
         #expect(Interaction_DragView.cardSize == 120)
         #expect(Interaction_DragView.cardCornerRadius == 15)
         #expect(Interaction_DragView.resetTolerance == 100)

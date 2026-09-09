@@ -19,7 +19,7 @@ struct ContentView: View {
     /// traverse this assertion before `simctl io screenshot` can capture the app.
     private func verifiedInteractionDragView() -> some View {
         precondition(
-            Interaction_DragView.renderSignature == "interaction-drag-r140-reset-start-v2",
+            Interaction_DragView.renderSignature == "interaction-drag-r140-canvas-card-v3",
             "SwamiHost linked a stale Interaction Drag implementation"
         )
         return Interaction_DragView()

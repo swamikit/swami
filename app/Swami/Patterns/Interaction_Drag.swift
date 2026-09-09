@@ -10,26 +10,24 @@ import Swami
 ///     @PageImage(purpose: card, source: "Interaction_Drag")
 /// }
 ///
-/// Reproduces the runner reference's fixed layer hierarchy and framing. The card maps
-/// `origami.Drag` Position to its offset. Release projects momentum, applies the Drag
-/// patch's rubber-band bounds, and pulses Reset when both position axes are within the
-/// placed graph's 100-point center tolerance.
+/// Reproduces the runner reference's fixed layer hierarchy and framing: a full-screen
+/// magenta canvas and a centered white card. The card maps `origami.Drag` Position to
+/// its offset. Release projects momentum, applies the Drag patch's logical bounds, and
+/// pulses Reset when both position axes are within the placed graph's 100-point center
+/// tolerance.
 public struct Interaction_DragView: View {
     public init() {}
 
     /// Revision-specific contract checked by SwamiHost before CI can capture this view.
     /// Changing Interaction Drag's committed composition requires changing this value
     /// and the host assertion together, preventing a stale linked framework from passing.
-    public static let renderSignature = "interaction-drag-r140-reset-start-v2"
+    public static let renderSignature = "interaction-drag-r140-canvas-card-v3"
 
     @State private var position: CGSize = .zero
     @State private var translation: CGSize = .zero
     @State private var velocity: CGSize = .zero
     @State private var resetCount: UInt = 0
 
-    // Exact boundaries decoded from the runner-produced 750×1334 RGBA reference:
-    // x=0...749 #DD70DF canvas; x=60...689 and y=60...1273 #E5A6E6 area;
-    // x=255...494 and y=547...786 white card. At 2× these are fixed points.
     static let referenceSize = CGSize(width: 375, height: 667)
     static let canvasColor = Color(
         .sRGB,
@@ -38,15 +36,6 @@ public struct Interaction_DragView: View {
         blue: 223.0 / 255.0,
         opacity: 1
     )
-    static let interactionAreaColor = Color(
-        .sRGB,
-        red: 229.0 / 255.0,
-        green: 166.0 / 255.0,
-        blue: 230.0 / 255.0,
-        opacity: 1
-    )
-    static let interactionAreaSize = CGSize(width: 315, height: 607)
-    static let interactionAreaCornerRadius: CGFloat = 20
     static let cardSize: CGFloat = 120
     static let cardCornerRadius: CGFloat = 15
     static let resetTolerance: CGFloat = 100
@@ -54,25 +43,29 @@ public struct Interaction_DragView: View {
     // helper call site prevents an unproven, implicit iOS-style fallback.
     static let rubberBandFriction: CGFloat = 0.15
 
+    // The placed graph calculates these limits from a 315×607-point interaction
+    // region around the 120-point card. That region is behavior/state, not a layer:
+    // the current-head Origami reference does not render a panel for it.
+    static let dragRegionSize = CGSize(width: 315, height: 607)
     static let dragBounds = (
-        min: CGSize(width: -97.5, height: -243.5),
-        max: CGSize(width: 97.5, height: 243.5)
+        min: CGSize(
+            width: -(dragRegionSize.width - cardSize) / 2,
+            height: -(dragRegionSize.height - cardSize) / 2
+        ),
+        max: CGSize(
+            width: (dragRegionSize.width - cardSize) / 2,
+            height: (dragRegionSize.height - cardSize) / 2
+        )
     )
 
     public var body: some View {
         ZStack {
             Self.canvasColor
 
-            RoundedRectangle(cornerRadius: Self.interactionAreaCornerRadius)
-                .fill(Self.interactionAreaColor)
-                .frame(
-                    width: Self.interactionAreaSize.width,
-                    height: Self.interactionAreaSize.height
-                )
-
             RoundedRectangle(cornerRadius: Self.cardCornerRadius)
                 .fill(.white)
                 .frame(width: Self.cardSize, height: Self.cardSize)
+                .contentShape(Rectangle())
                 .accessibilityIdentifier("interaction-drag-card")
                 .drag(
                     momentum: true,
@@ -86,7 +79,6 @@ public struct Interaction_DragView: View {
                 )
         }
         .frame(width: Self.referenceSize.width, height: Self.referenceSize.height)
-        .background(Self.canvasColor)
         .ignoresSafeArea(.all)
         .statusBarHidden(true)
         .accessibilityValue(Self.renderSignature)

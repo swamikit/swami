@@ -6,11 +6,11 @@
 }
 
 `Interaction_DragView` translates the Interaction Drag pattern into a full-screen
-SwiftUI composition. The dimensions and colors are measured from the runner-produced
-750×1334 RGBA reference. Its corresponding 375×667-point composition has a
-`#DD70DF` canvas, a 315×607-point `#E5A6E6` interaction area, and a centered
-120×120-point white card. The current-head
-PR screenshot triplet verifies the rendered result rather than this page assuming a match.
+SwiftUI composition. The current-head Origami reference contains two visible layers:
+a `#DD70DF` canvas at 375×667 points and a centered 120×120-point white card with a
+15-point corner radius. The interaction region used to calculate drag limits is not a
+visible panel. The current-head PR screenshot triplet verifies the rendered result
+rather than this page assuming a match.
 
 ## Interaction
 
@@ -18,7 +18,9 @@ Touching the card engages a zero-distance drag. While the card is moving, the
 `drag` modifier:
 
 - publishes position, translation, and velocity;
-- applies the Drag patch's documented 0.15 rubber-band friction beyond the fixed bounds;
+- preserves the placed graph's calculated limits (`±97.5` horizontally and `±243.5`
+  vertically) as state derived from its 315×607-point logical region;
+- applies the Drag patch's documented 0.15 rubber-band friction beyond those limits;
 - projects release momentum and settles within those boundaries;
 - begins every fresh gesture from Drag's configured Start input rather than inheriting
   a previous momentum endpoint; and
@@ -34,9 +36,11 @@ velocity and returns the card to its origin.
 ## Verification media
 
 The pull-request delivery generated from the same commit supplies the native
-Swami, Origami, and difference screenshots plus the H.264 Maestro recording.
-The page image is populated by the documentation publication pipeline from the
-verified Swami render; it is not a hand-authored substitute.
+Swami, Origami, and difference screenshots plus the H.264 Maestro recording. The
+recording demonstrates press, drag, bounded momentum, rubber-band settling, release,
+and a fresh gesture/reset cycle. The page image is populated by the documentation
+publication pipeline from the verified Swami render; it is not a hand-authored
+substitute.
 
 ## See Also
 

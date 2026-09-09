@@ -21,15 +21,16 @@ agent — the cloud loop does not write there.
   default; release momentum comes from the gesture's measured projection rather than an iOS
   scroll default. Drive: fling → bounded momentum settle; over-drag → rubber-band resistance;
   reset → origin and all outputs clear; fresh touch → stale velocity clears.
-- **Interaction_Drag** — **ITEM 2 OF 69** (Issue #140 corrective delivery): the runner-produced
-  reference is 750×1334 pixels (375×667 points at 2×). It shows an `#DD70DF` full-screen canvas,
-  an inset 315×607-point `#E5A6E6` rounded interaction area, and a centered 120×120-point white
-  card with a 15-point radius. These values are read from the reference PNG's decoded RGBA pixels
-  and boundaries; they do not depend on an unproven packed-color channel interpretation.
-  The placed graph confirms `origami.Drag`, calculated layer-edge bounds, and a `Snap to origin`
-  branch that pulses Reset when both position axes are within 100 points of center on touch-up.
-  Implementation and DocC are complete; exact-head runner screenshots, Maestro H.264 recording,
-  and Reviewer verdict remain the integration gate. Resolve this item when that head merges.
+- **Interaction_Drag** — **ITEM 2 OF 69** (Issue #140 corrective delivery): the current-head
+  Origami reference is 750×1334 pixels (375×667 points at 2×). Its rendered hierarchy is an
+  `#DD70DF` full-screen canvas and a centered 120×120-point white card with a 15-point radius;
+  there is no visible interaction-area panel. The placed graph confirms `origami.Drag`, bounds
+  calculated from a logical 315×607-point region around the card, and a `Snap to origin` branch
+  that pulses Reset when both position axes are within 100 points of center on touch-up. The
+  logical region remains in state only, producing limits of ±97.5 points horizontally and ±243.5
+  vertically. Implementation and DocC are complete; exact-head runner screenshots, Maestro H.264
+  recording, and Reviewer verdict remain the integration gate. Resolve this item when that head
+  merges.
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
 - **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches

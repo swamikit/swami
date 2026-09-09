@@ -39,18 +39,23 @@ runner.
 
 ## Failure diagnosis
 
-The screenshots attached to rejected head `977ba62` show that its Swami and Origami
-renders are visually the same composition. The red outlines in the third attachment
-are ImageMagick's difference visualization, not an Origami layer. Consequently that
-third image must not be read as the reference hierarchy.
+Revision-specific assertions on rejected head `bdade46` established that the runner
+captured the intended source, host selection, newly built and installed app, and runtime
+view. The matching screenshots therefore disproved the stale-runner hypothesis. Direct
+review of that head's Origami reference identified the real product defect: Swami drew
+a pale rounded interaction-area panel that is not a rendered layer in the reference.
+The corrected view retains the panel's former 315×607-point dimensions only as the
+logical input used to derive Drag bounds; its visible hierarchy is now just the canvas
+and card.
 
 The repeated `0.000714529` did not prove that three binaries were identical: the
 revisions retained the same final rest-state pixels, and the workflow reported the
 parenthesized normalized *distortion* emitted by ImageMagick's SSIM metric as though it
-were similarity. Near zero is expected for nearly identical images in that field. This
-repository's workflow is a protected control plane, so product changes do not alter its
-metric interpretation. The source/build/runtime signature checks above independently
-make stale linkage an executable failure while preserving faithful pixels.
+were similarity. This repository's workflow is a protected control plane, so product
+changes do not alter its metric interpretation. SSIM remains catastrophic-sanity
+information only. The source/build/runtime signature checks above independently make
+stale linkage an executable failure, while the screenshot triplet, recording, DocC,
+and Reviewer determine fidelity.
 
 ## Local static check
 
