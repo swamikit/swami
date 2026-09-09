@@ -14,7 +14,7 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-SIGNATURE = "interaction-drag-r140-canvas-card-v4"
+SIGNATURE = "interaction-drag-r140-canvas-card-v5"
 
 
 def read(path: str) -> str:
@@ -80,31 +80,49 @@ def assert_runner_wiring() -> None:
             ".github/patterns.txt: drag must map to Interaction_Drag for changed-source selection"
         )
 
-    # Match command meaning rather than generated YAML indentation or exact quoting.
+    # Assert the actual shell commands used by this workflow. In particular, Drag's
+    # recording path must select the literal `drag` runtime; a nearby `$slug` template
+    # is not proof that the interaction capture launches Interaction_Drag.
     workflow_path = ".github/workflows/verify.yml"
-    workflow = re.sub(r"[ \t\\\n]+", " ", read(workflow_path))
     contracts = (
-        (r"xcodebuild\s+build\b[^\n]*?-project\s+[^ ]+[^\n]*?-scheme\s+[^ ]+", "build"),
-        (r"xcrun\s+simctl\s+install\b[^\n]*?\$APP", "install the just-built app"),
         (
-            r"SIMCTL_CHILD_SWAMI_PATTERN\s*=\s*[^ ]*slug[^ ]*\s+"
-            r"xcrun\s+simctl\s+launch\b",
-            "runtime pattern selection",
+            r'xcodebuild\s+build\s+-project\s+"\$APP_PROJECT"\s+'
+            r'-scheme\s+"\$SCHEME"',
+            "SwamiHost build",
         ),
         (
-            r"xcrun\s+simctl\s+io\b[^\n]*?screenshot\s+"
-            r"[^\n]*?out/swami/[^ ]*slug[^ ]*\.png",
-            "per-pattern screenshot capture",
+            r'xcrun\s+simctl\s+install\s+"\$\{\{\s*steps\.sim\.outputs\.udid\s*\}\}"\s+"\$APP"',
+            "install of the just-built SwamiHost app",
         ),
         (
-            r"xcrun\s+simctl\s+io\b[^\n]*?recordVideo\b[^\n]*?"
-            r"--codec\s*=\s*h264\b[^\n]*?out/recordings/drag\.mp4",
-            "H.264 Interaction Drag recording",
+            r'SIMCTL_CHILD_SWAMI_PATTERN="\$slug"\s+xcrun\s+simctl\s+launch\s+'
+            r'"\$\{\{\s*steps\.sim\.outputs\.udid\s*\}\}"\s+'
+            r'"\$\{\{\s*steps\.app\.outputs\.bid\s*\}\}"',
+            "registry-selected screenshot launch",
+        ),
+        (
+            r'xcrun\s+simctl\s+io\s+"\$\{\{\s*steps\.sim\.outputs\.udid\s*\}\}"\s+'
+            r'screenshot\s+"out/swami/\$\{slug\}\.png"',
+            "registry-selected screenshot capture",
+        ),
+        (
+            r'SIMCTL_CHILD_SWAMI_PATTERN=drag\s+xcrun\s+simctl\s+launch\s+'
+            r'"\$UDID"\s+"\$APP_ID"',
+            "concrete Interaction Drag runtime selection",
+        ),
+        (
+            r'xcrun\s+simctl\s+io\s+"\$UDID"\s+recordVideo\s+'
+            r'--codec=h264\s+--force\s+out/recordings/drag\.mp4',
+            "concrete H.264 Interaction Drag recording",
+        ),
+        (
+            r'\["maestro",\s*"--device",\s*sys\.argv\[1\],\s*"test",\s*'
+            r'"/tmp/interaction-drag\.yaml"\]',
+            "Interaction Drag Maestro execution",
         ),
     )
     for pattern, description in contracts:
-        if re.search(pattern, workflow, flags=re.MULTILINE) is None:
-            raise AssertionError(f"{workflow_path}: missing semantic contract: {description}")
+        require_pattern(workflow_path, pattern, f"missing semantic contract: {description}")
 
 
 def main() -> int:

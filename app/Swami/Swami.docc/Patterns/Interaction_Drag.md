@@ -21,7 +21,8 @@ Touching the card engages a zero-distance drag. While the card is moving, the
 - preserves the placed graph's calculated limits (`±97.5` horizontally and `±243.5`
   vertically) as state derived from its 315×607-point logical region;
 - applies the Drag patch's documented 0.15 rubber-band friction beyond those limits;
-- projects release momentum and settles within those boundaries;
+- computes release velocity from the gesture's explicit touch-up sample, projects
+  momentum, and settles within those boundaries;
 - begins every fresh gesture from Drag's configured Start input rather than inheriting
   a previous momentum endpoint; and
 - accepts every placed-graph reset pulse through the monotonic `resetCount` adapter.

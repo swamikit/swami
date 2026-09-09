@@ -6,7 +6,7 @@ import Swami
 // the loop adds a `case "<slug>"` per pattern as they're translated. Keep the body a single
 // expression so screenshots are 1:1 with the Origami artboard — no host chrome, no nav bar.
 struct ContentView: View {
-    private static let interactionDragSignature = "interaction-drag-r140-canvas-card-v4"
+    private static let interactionDragSignature = "interaction-drag-r140-canvas-card-v5"
 
     var body: some View {
         switch ProcessInfo.processInfo.environment["SWAMI_PATTERN"] {

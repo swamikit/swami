@@ -21,7 +21,7 @@ public struct Interaction_DragView: View {
     /// Revision-specific contract checked by SwamiHost before CI can capture this view.
     /// Changing Interaction Drag's committed composition requires changing this value
     /// and the host assertion together, preventing a stale linked framework from passing.
-    public static let renderSignature = "interaction-drag-r140-canvas-card-v4"
+    public static let renderSignature = "interaction-drag-r140-canvas-card-v5"
 
     @State private var position: CGSize = .zero
     @State private var translation: CGSize = .zero

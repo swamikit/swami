@@ -8,7 +8,7 @@ struct SwamiTests {
     }
 
     @Test func interactionDragPreservesReferenceCompositionAndLogicalBounds() {
-        #expect(Interaction_DragView.renderSignature == "interaction-drag-r140-canvas-card-v4")
+        #expect(Interaction_DragView.renderSignature == "interaction-drag-r140-canvas-card-v5")
         #expect(Interaction_DragView.referenceSize == CGSize(width: 375, height: 667))
         #expect(Interaction_DragView.DragGeometry.logicalRegion == CGSize(width: 315, height: 607))
         #expect(Interaction_DragView.cardSize == 120)
@@ -32,6 +32,7 @@ struct SwamiTests {
             rubberBandFriction: Interaction_DragView.rubberBandFriction
         )
         let firstTarget = state.end(
+            releaseTranslation: CGSize(width: 30, height: 20),
             predictedEndTranslation: CGSize(width: 90, height: 50),
             momentum: true,
             bounds: nil
@@ -53,6 +54,27 @@ struct SwamiTests {
         #expect(state.velocity == .zero)
     }
 
+    @Test func releaseUsesGestureEndTranslationInsteadOfPriorChangeSample() {
+        var state = DragState(start: .zero)
+        state.change(
+            translation: CGSize(width: 20, height: 5),
+            start: .zero,
+            bounds: nil,
+            rubberBandFriction: Interaction_DragView.rubberBandFriction
+        )
+
+        let target = state.end(
+            releaseTranslation: CGSize(width: 35, height: 12),
+            predictedEndTranslation: CGSize(width: 80, height: 30),
+            momentum: true,
+            bounds: nil
+        )
+
+        #expect(state.translation == CGSize(width: 35, height: 12))
+        #expect(state.velocity == CGSize(width: 45, height: 18))
+        #expect(target == CGSize(width: 80, height: 30))
+    }
+
     @Test func dragDrivesBoundsMomentumResetAndFreshTouch() {
         let bounds = Interaction_DragView.DragGeometry.bounds
         var state = DragState(start: .zero)
@@ -67,6 +89,7 @@ struct SwamiTests {
         #expect(state.translation == CGSize(width: 40, height: 10))
 
         let momentumTarget = state.end(
+            releaseTranslation: CGSize(width: 40, height: 10),
             predictedEndTranslation: CGSize(width: 200, height: 20),
             momentum: true,
             bounds: bounds
@@ -93,6 +116,7 @@ struct SwamiTests {
         #expect(state.current.width < 250)
 
         let boundedTarget = state.end(
+            releaseTranslation: CGSize(width: 250, height: 0),
             predictedEndTranslation: CGSize(width: 300, height: 0),
             momentum: false,
             bounds: bounds

@@ -41,14 +41,16 @@ struct DragState: Equatable {
     }
 
     mutating func end(
+        releaseTranslation: CGSize,
         predictedEndTranslation: CGSize,
         momentum: Bool,
         bounds: (min: CGSize, max: CGSize)?
     ) -> CGSize {
         gestureIsActive = false
+        translation = releaseTranslation
         velocity = CGSize(
-            width: predictedEndTranslation.width - translation.width,
-            height: predictedEndTranslation.height - translation.height
+            width: predictedEndTranslation.width - releaseTranslation.width,
+            height: predictedEndTranslation.height - releaseTranslation.height
         )
         let projected = momentum
             ? CGSize(
@@ -182,12 +184,22 @@ public struct Drag: ViewModifier {
                 position?.wrappedValue = state.current
             }
             .onEnded { value in
+                // Consume the end payload directly. The final onChanged sample is not
+                // guaranteed to equal the gesture's release translation.
+                state.change(
+                    translation: value.translation,
+                    start: start,
+                    bounds: bounds,
+                    rubberBandFriction: rubberBandFriction
+                )
                 let releasedPosition = state.current
                 let target = state.end(
+                    releaseTranslation: value.translation,
                     predictedEndTranslation: value.predictedEndTranslation,
                     momentum: momentum,
                     bounds: bounds
                 )
+                translation?.wrappedValue = state.translation
                 velocity?.wrappedValue = state.velocity
                 onRelease?(releasedPosition)
                 withAnimation(.interpolatingSpring(stiffness: 180, damping: 22)) {
