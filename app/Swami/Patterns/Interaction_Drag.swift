@@ -21,7 +21,7 @@ public struct Interaction_DragView: View {
     /// Revision-specific contract checked by SwamiHost before CI can capture this view.
     /// Changing Interaction Drag's committed composition requires changing this value
     /// and the host assertion together, preventing a stale linked framework from passing.
-    public static let renderSignature = "interaction-drag-r140-canvas-card-v5"
+    public static let renderSignature = "interaction-drag-r140-canvas-card-v6"
 
     @State private var position: CGSize = .zero
     @State private var translation: CGSize = .zero
@@ -66,6 +66,12 @@ public struct Interaction_DragView: View {
             RoundedRectangle(cornerRadius: Self.cardCornerRadius)
                 .fill(.white)
                 .frame(width: Self.cardSize, height: Self.cardSize)
+                // Preserve the placed graph's interaction region as an invisible hit
+                // target. This layout frame draws no panel or other reference layer.
+                .frame(
+                    width: Self.DragGeometry.logicalRegion.width,
+                    height: Self.DragGeometry.logicalRegion.height
+                )
                 .contentShape(Rectangle())
                 .accessibilityIdentifier("interaction-drag-card")
                 .drag(

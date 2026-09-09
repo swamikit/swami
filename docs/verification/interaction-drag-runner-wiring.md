@@ -39,7 +39,10 @@ first build phase. The default invocation also validates runner delivery semanti
    and accessibility-addressable evidence.
 5. The Drag-only Maestro flow relaunches with the same environment, performs two card
    swipes, and records `out/recordings/drag.mp4` with `simctl recordVideo --codec=h264`.
-   Publication rejects a missing or empty recording.
+   A `SwamiHost`-only simultaneous gesture renders a small indicator at the injected
+   touch location until release, making touch-down and the trajectory legible without
+   adding cursor UI to `Interaction_DragView`. Publication rejects a missing or empty
+   recording.
 
 ## Failure diagnosis
 

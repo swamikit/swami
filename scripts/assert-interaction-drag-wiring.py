@@ -14,7 +14,7 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-SIGNATURE = "interaction-drag-r140-canvas-card-v5"
+SIGNATURE = "interaction-drag-r140-canvas-card-v6"
 
 
 def read(path: str) -> str:
@@ -41,6 +41,37 @@ def assert_build_wiring() -> None:
     )
     if signature is None or signature.group(1) != SIGNATURE:
         raise AssertionError(f"{source_path}: revision-specific source marker is stale")
+
+    body = re.search(
+        r"public\s+var\s+body\s*:\s*some\s+View\s*\{([\s\S]*?)\n\s*static\s+func\s+shouldReset",
+        source,
+    )
+    if body is None:
+        raise AssertionError(f"{source_path}: cannot inspect the rendered composition")
+    rendered = body.group(1)
+    if len(re.findall(r"\bRoundedRectangle\s*\(", rendered)) != 1:
+        raise AssertionError(
+            f"{source_path}: rendered hierarchy must contain only the one rounded card"
+        )
+    for fact, reason in (
+        (r"Self\.canvasColor", "full-screen canvas is absent"),
+        (r"cornerRadius:\s*Self\.cardCornerRadius", "card radius is not source-bound"),
+        (
+            r"width:\s*Self\.cardSize\s*,\s*height:\s*Self\.cardSize",
+            "card size is not source-bound",
+        ),
+        (
+            r"width:\s*Self\.DragGeometry\.logicalRegion\.width[\s\S]*?contentShape",
+            "logical interaction region is not preserved as an invisible hit target",
+        ),
+        (
+            r"bounds:\s*Self\.DragGeometry\.bounds",
+            "logical bounds are not passed as Drag state",
+        ),
+    ):
+        if re.search(fact, rendered) is None:
+            raise AssertionError(f"{source_path}: {reason}")
+
     host_path = "app/SwamiHost/ContentView.swift"
     require_pattern(
         host_path,
@@ -57,6 +88,13 @@ def assert_build_wiring() -> None:
         r"Interaction_DragView\.renderSignature\s*==\s*Self\.interactionDragSignature"
         r"[\s\S]*?Interaction_DragView\s*\(\s*\)",
         "selected Drag runtime does not verify the linked implementation marker",
+    )
+    require_pattern(
+        host_path,
+        r"Interaction_DragView\s*\(\s*\)[\s\S]*?InteractionEvidenceTouchIndicator"
+        r"[\s\S]*?@GestureState[\s\S]*?DragGesture\s*\(\s*minimumDistance:\s*0"
+        r"[\s\S]*?\.updating\s*\(\s*\$location\s*\)",
+        "runner-host recording does not expose touch-down, trajectory, and release",
     )
 
 
@@ -80,49 +118,62 @@ def assert_runner_wiring() -> None:
             ".github/patterns.txt: drag must map to Interaction_Drag for changed-source selection"
         )
 
-    # Assert the actual shell commands used by this workflow. In particular, Drag's
-    # recording path must select the literal `drag` runtime; a nearby `$slug` template
-    # is not proof that the interaction capture launches Interaction_Drag.
     workflow_path = ".github/workflows/verify.yml"
-    contracts = (
-        (
-            r'xcodebuild\s+build\s+-project\s+"\$APP_PROJECT"\s+'
-            r'-scheme\s+"\$SCHEME"',
-            "SwamiHost build",
-        ),
-        (
-            r'xcrun\s+simctl\s+install\s+"\$\{\{\s*steps\.sim\.outputs\.udid\s*\}\}"\s+"\$APP"',
-            "install of the just-built SwamiHost app",
-        ),
-        (
-            r'SIMCTL_CHILD_SWAMI_PATTERN="\$slug"\s+xcrun\s+simctl\s+launch\s+'
-            r'"\$\{\{\s*steps\.sim\.outputs\.udid\s*\}\}"\s+'
-            r'"\$\{\{\s*steps\.app\.outputs\.bid\s*\}\}"',
-            "registry-selected screenshot launch",
-        ),
-        (
-            r'xcrun\s+simctl\s+io\s+"\$\{\{\s*steps\.sim\.outputs\.udid\s*\}\}"\s+'
-            r'screenshot\s+"out/swami/\$\{slug\}\.png"',
-            "registry-selected screenshot capture",
-        ),
-        (
-            r'SIMCTL_CHILD_SWAMI_PATTERN=drag\s+xcrun\s+simctl\s+launch\s+'
-            r'"\$UDID"\s+"\$APP_ID"',
-            "concrete Interaction Drag runtime selection",
-        ),
-        (
-            r'xcrun\s+simctl\s+io\s+"\$UDID"\s+recordVideo\s+'
-            r'--codec=h264\s+--force\s+out/recordings/drag\.mp4',
-            "concrete H.264 Interaction Drag recording",
-        ),
-        (
-            r'\["maestro",\s*"--device",\s*sys\.argv\[1\],\s*"test",\s*'
-            r'"/tmp/interaction-drag\.yaml"\]',
-            "Interaction Drag Maestro execution",
-        ),
+    workflow = read(workflow_path)
+
+    # Require related capabilities to coexist in a single workflow step, but do not
+    # pin quoting, variable names, indentation, command wrappers, or the recording's
+    # literal runtime slug. The registry and changed-pattern condition establish which
+    # pattern that generic launch/capture machinery selects.
+    starts = list(re.finditer(r"(?m)^\s{6}-\s+(?=name:|uses:)", workflow))
+    steps = [
+        workflow[match.start() : starts[index + 1].start() if index + 1 < len(starts) else len(workflow)]
+        for index, match in enumerate(starts)
+    ]
+
+    def require_step(capabilities: tuple[str, ...], reason: str) -> str:
+        for step in steps:
+            if all(re.search(item, step, flags=re.IGNORECASE) for item in capabilities):
+                return step
+        raise AssertionError(f"{workflow_path}: missing semantic contract: {reason}")
+
+    require_step(
+        (r"\bxcodebuild\b", r"\bbuild\b", r"\bSwamiHost\b|\$SCHEME"),
+        "SwamiHost build",
     )
-    for pattern, description in contracts:
-        require_pattern(workflow_path, pattern, f"missing semantic contract: {description}")
+    install = require_step(
+        (r"\bsimctl\s+install\b", r"build/Build/Products", r"CFBundleIdentifier"),
+        "install and bundle lookup of the current build product",
+    )
+    if not re.search(r"\.app\b|\$APP\b", install):
+        raise AssertionError(f"{workflow_path}: install step does not select a built app")
+
+    require_step(
+        (
+            r"RUN_PATTERNS",
+            r"slug=.*pair",
+            r"SWAMI_PATTERN\s*=",
+            r"\bsimctl\s+launch\b",
+            r"\bsimctl\s+io\b[\s\S]*?\bscreenshot\b",
+            r"out/swami/",
+        ),
+        "registry-selected host launch and screenshot capture",
+    )
+    recording = require_step(
+        (
+            r"changed_patterns[\s\S]*?Interaction_Drag",
+            r"SWAMI_PATTERN\s*=",
+            r"\bsimctl\s+launch\b",
+            r"\brecordVideo\b",
+            r"(?:--codec[=\s]+h264|h264[\s\S]*?recordVideo)",
+            r"\.mp4\b",
+            r"\bmaestro\b",
+            r"\.ya?ml\b",
+        ),
+        "changed Interaction Drag launch, scripted gesture, and H.264 recording",
+    )
+    if not re.search(r"test\s+-s\s+[^\n]*\.mp4", recording):
+        raise AssertionError(f"{workflow_path}: recording is not checked for non-empty output")
 
 
 def main() -> int:

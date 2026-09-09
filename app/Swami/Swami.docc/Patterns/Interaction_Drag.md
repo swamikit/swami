@@ -14,8 +14,9 @@ rather than this page assuming a match.
 
 ## Interaction
 
-Touching the card engages a zero-distance drag. While the card is moving, the
-`drag` modifier:
+Touching the card or its invisible 315×607-point interaction region engages a
+zero-distance drag. The region is a hit-test/layout frame only and paints no pixels.
+While the card is moving, the `drag` modifier:
 
 - publishes position, translation, and velocity;
 - preserves the placed graph's calculated limits (`±97.5` horizontally and `±243.5`
@@ -39,9 +40,11 @@ velocity and returns the card to its origin.
 The pull-request delivery generated from the same commit supplies the native
 Swami, Origami, and difference screenshots plus the H.264 Maestro recording. The
 recording demonstrates press, drag, bounded momentum, rubber-band settling, release,
-and a fresh gesture/reset cycle. The page image is populated by the documentation
-publication pipeline from the verified Swami render; it is not a hand-authored
-substitute.
+and a fresh gesture/reset cycle. A small runner-host indicator follows the injected
+touch from touch-down through its trajectory and disappears on release; that evidence
+modifier is not part of `Interaction_DragView`. The page image is populated by the
+documentation publication pipeline from the verified Swami render; it is not a
+hand-authored substitute.
 
 ## See Also
 

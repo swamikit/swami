@@ -8,7 +8,7 @@ struct SwamiTests {
     }
 
     @Test func interactionDragPreservesReferenceCompositionAndLogicalBounds() {
-        #expect(Interaction_DragView.renderSignature == "interaction-drag-r140-canvas-card-v5")
+        #expect(Interaction_DragView.renderSignature == "interaction-drag-r140-canvas-card-v6")
         #expect(Interaction_DragView.referenceSize == CGSize(width: 375, height: 667))
         #expect(Interaction_DragView.DragGeometry.logicalRegion == CGSize(width: 315, height: 607))
         #expect(Interaction_DragView.cardSize == 120)
