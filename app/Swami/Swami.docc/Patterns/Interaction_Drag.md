@@ -6,14 +6,16 @@
 }
 
 `Interaction_DragView` translates the Interaction Drag pattern into a full-screen
-SwiftUI composition. At the runner's 2× render scale, its 375×667-point canvas
-matches Origami's 750×1334 image: a purple canvas, a 30-point inset interaction
-area, and a centered 120×120-point white card.
+SwiftUI composition. The dimensions and colors are measured from the runner-produced
+750×1334 RGBA reference. Its corresponding 375×667-point composition has a
+`#DD70DF` canvas, a 315×607-point `#E5A6E6` interaction area, and a centered
+120×120-point white card. The current-head
+PR screenshot triplet verifies the rendered result rather than this page assuming a match.
 
 ## Interaction
 
 Touching the card engages a zero-distance drag. While the card is moving,
-``View/drag(enable:momentum:bounds:start:position:translation:velocity:reset:)``:
+`drag(enable:momentum:bounds:start:position:translation:velocity:reset:)`:
 
 - publishes position, translation, and velocity;
 - applies rubber-band resistance beyond the inset area's boundaries;

@@ -33,12 +33,8 @@ public struct Interaction_DragView: View {
     static let interactionAreaColor = Color(red: 229 / 255, green: 166 / 255, blue: 230 / 255)
     static let interactionAreaSize = CGSize(width: 315, height: 607)
     static let interactionAreaCornerRadius: CGFloat = 20
-    // The reference contour darkens the canvas by 4% immediately outside the area.
-    static let interactionAreaContourOpacity: CGFloat = 0.04
     static let cardSize: CGFloat = 120
     static let cardCornerRadius: CGFloat = 15
-    // The card's decoded outer contour darkens #E5A6E6 by approximately 1%.
-    static let cardContourOpacity: CGFloat = 0.01
     // The placed graph's “Snap to origin” branch compares both Position axes
     // against zero with a 100-point tolerance when Interaction turns off.
     static let resetTolerance: CGFloat = 100
@@ -54,13 +50,6 @@ public struct Interaction_DragView: View {
                         width: Self.scaledWidth(Self.interactionAreaSize.width, in: geometry.size),
                         height: Self.scaledHeight(Self.interactionAreaSize.height, in: geometry.size)
                     )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: Self.interactionAreaCornerRadius)
-                            .stroke(
-                                Color.black.opacity(Self.interactionAreaContourOpacity),
-                                lineWidth: Self.scaledWidth(1, in: geometry.size)
-                            )
-                    }
 
                 RoundedRectangle(cornerRadius: Self.cardCornerRadius)
                     .fill(.white)
@@ -68,13 +57,6 @@ public struct Interaction_DragView: View {
                         width: Self.scaledWidth(Self.cardSize, in: geometry.size),
                         height: Self.scaledHeight(Self.cardSize, in: geometry.size)
                     )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: Self.cardCornerRadius)
-                            .stroke(
-                                Color.black.opacity(Self.cardContourOpacity),
-                                lineWidth: Self.scaledWidth(1, in: geometry.size)
-                            )
-                    }
                     .accessibilityIdentifier("interaction-drag-card")
                     .drag(
                         momentum: true,
@@ -84,11 +66,12 @@ public struct Interaction_DragView: View {
                         velocity: $velocity,
                         reset: resetRequested
                     )
-                    // This gesture represents the placed Interaction-off branch. Drag
-                    // itself receives only its patch-faithful Reset input above.
+                    // The placed graph wires Interaction's rising-off pulse through
+                    // two Position-within-100 comparisons and And to Drag.Reset.
+                    // Keep that graph composition outside the Drag helper.
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                            .onEnded { _ in requestResetAfterTouchUp() }
+                            .onEnded { _ in pulsePlacedGraphReset() }
                     )
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
@@ -122,7 +105,7 @@ public struct Interaction_DragView: View {
         value * canvas.height / referenceSize.height
     }
 
-    private func requestResetAfterTouchUp() {
+    private func pulsePlacedGraphReset() {
         guard Self.shouldReset(position) else { return }
         resetRequested = true
         DispatchQueue.main.async {

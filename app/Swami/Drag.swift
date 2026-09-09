@@ -21,6 +21,8 @@ public struct Drag: ViewModifier {
     var momentum: Bool
     /// Clip bounds for Position (Origami “Start/End Boundary” / “Min”/“Max”). nil = unbounded.
     var bounds: (min: CGSize, max: CGSize)?
+    /// Initial position and the destination of an explicit `reset` pulse.
+    /// Runtime changes do not move an active or settled drag.
     var start: CGSize
     var position: Binding<CGSize>?
     var translation: Binding<CGSize>?
@@ -39,9 +41,6 @@ public struct Drag: ViewModifier {
                 origin = start
                 current = start
                 position?.wrappedValue = start
-            }
-            .onChange(of: start) { _, newStart in
-                settle(to: newStart)
             }
             .onChange(of: reset) { _, requested in
                 if requested {
