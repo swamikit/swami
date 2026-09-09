@@ -73,6 +73,7 @@ jobs:
           pr_meta=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}")
           test "$(jq -r .head.sha <<<"$pr_meta")" = "$SHA"
           run_meta=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")
+          test "$(jq -r .path <<<"$run_meta")" = ".github/workflows/verify.yml"
           jq -e --argjson pr "$PR" '.pull_requests | map(.number) | index($pr) != null' <<<"$run_meta" >/dev/null
           gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" --jq '.[].number' | grep -Fxq "$PR"
           artifact=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts?name=builder-evidence")
@@ -120,6 +121,10 @@ jobs:
           PY
           files=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --paginate --jq '.[].filename')
           test "$(printf '%s\n' "$files" | sed '/^$/d' | wc -l | tr -d ' ')" = "$(jq -r .changed_files <<<"$pr_meta")"
+          if printf '%s\n' "$files" | grep -Fxq ".github/workflows/verify.yml"; then
+            echo "::error::the evidence-producing workflow changed in this PR; merge that control-plane change separately before publishing Builder evidence"
+            exit 1
+          fi
           expected_stems=$(printf '%s\n' "$files" | sed -nE 's#^app/Swami/Patterns/([A-Za-z0-9_]+)[.]swift$#\1#p' | sort -u)
           declared_stems=$(jq -r '.changed_patterns | split(" ")[] | split(":")[1]' "$EVIDENCE_ROOT/delivery/manifest.json" | sort -u)
           test -n "$expected_stems"
