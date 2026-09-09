@@ -10,12 +10,10 @@ import Swami
 ///     @PageImage(purpose: card, source: "Interaction_Drag")
 /// }
 ///
-/// Reproduces the layer hierarchy measured from Origami's runner render: a full-screen
-/// purple canvas, an inset rounded interaction area, and a centered draggable card.
-/// The card maps the `origami.Drag` Position output to its SwiftUI offset. A release
-/// projects momentum and applies rubber-band bounds. If its touch-up position is within
-/// 100 points of center on both axes, the placed graph's Reset branch pulses Drag's
-/// Reset input and returns the card to its origin.
+/// Reproduces the runner reference's fixed layer hierarchy and framing. The card maps
+/// `origami.Drag` Position to its offset. Release projects momentum, applies the Drag
+/// patch's rubber-band bounds, and pulses Reset when both position axes are within the
+/// placed graph's 100-point center tolerance.
 public struct Interaction_DragView: View {
     public init() {}
 
@@ -26,10 +24,8 @@ public struct Interaction_DragView: View {
 
     // Exact boundaries decoded from the runner-produced 750×1334 RGBA reference:
     // x=0...749 #DD70DF canvas; x=60...689 and y=60...1273 #E5A6E6 area;
-    // x=255...494 and y=547...786 white card. The 2× render gives points below.
+    // x=255...494 and y=547...786 white card. At 2× these are fixed points.
     static let referenceSize = CGSize(width: 375, height: 667)
-    // Pin the decoded RGBA channels to sRGB so rendering cannot reinterpret the
-    // reference values through the device's wider display color space.
     static let canvasColor = Color(
         .sRGB,
         red: 221.0 / 255.0,
@@ -48,86 +44,55 @@ public struct Interaction_DragView: View {
     static let interactionAreaCornerRadius: CGFloat = 20
     static let cardSize: CGFloat = 120
     static let cardCornerRadius: CGFloat = 15
-    // The placed graph's “Snap to origin” branch compares both Position axes
-    // against zero with a 100-point tolerance when Interaction turns off.
     static let resetTolerance: CGFloat = 100
+    // Origami's Drag patch documentation specifies 0.15. Requiring this at the
+    // helper call site prevents an unproven, implicit iOS-style fallback.
+    static let rubberBandFriction: CGFloat = 0.15
+
+    static let dragBounds = (
+        min: CGSize(width: -97.5, height: -243.5),
+        max: CGSize(width: 97.5, height: 243.5)
+    )
 
     public var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Self.canvasColor
+        ZStack {
+            Self.canvasColor
 
-                RoundedRectangle(cornerRadius: Self.interactionAreaCornerRadius)
-                    .fill(Self.interactionAreaColor)
-                    .frame(
-                        width: Self.scaledWidth(Self.interactionAreaSize.width, in: geometry.size),
-                        height: Self.scaledHeight(Self.interactionAreaSize.height, in: geometry.size)
-                    )
+            RoundedRectangle(cornerRadius: Self.interactionAreaCornerRadius)
+                .fill(Self.interactionAreaColor)
+                .frame(
+                    width: Self.interactionAreaSize.width,
+                    height: Self.interactionAreaSize.height
+                )
 
-                RoundedRectangle(cornerRadius: Self.cardCornerRadius)
-                    .fill(.white)
-                    .frame(
-                        width: Self.scaledWidth(Self.cardSize, in: geometry.size),
-                        height: Self.scaledHeight(Self.cardSize, in: geometry.size)
-                    )
-                    .accessibilityIdentifier("interaction-drag-card")
-                    .drag(
-                        momentum: true,
-                        bounds: Self.dragBounds(in: geometry.size),
-                        position: $position,
-                        translation: $translation,
-                        velocity: $velocity,
-                        resetCount: resetCount
-                    )
-                    // The placed graph wires Interaction's rising-off pulse through
-                    // two Position-within-100 comparisons and And to Drag.Reset.
-                    // Keep that graph composition outside the Drag helper.
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                            .onEnded { _ in pulsePlacedGraphReset() }
-                    )
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
+            RoundedRectangle(cornerRadius: Self.cardCornerRadius)
+                .fill(.white)
+                .frame(width: Self.cardSize, height: Self.cardSize)
+                .accessibilityIdentifier("interaction-drag-card")
+                .drag(
+                    momentum: true,
+                    bounds: Self.dragBounds,
+                    rubberBandFriction: Self.rubberBandFriction,
+                    position: $position,
+                    translation: $translation,
+                    velocity: $velocity,
+                    resetCount: resetCount,
+                    onRelease: pulsePlacedGraphReset
+                )
         }
+        .frame(width: Self.referenceSize.width, height: Self.referenceSize.height)
         .background(Self.canvasColor)
         .ignoresSafeArea(.all)
         .statusBarHidden(true)
-        .onAppear(perform: resetToCenter)
     }
 
     static func shouldReset(_ position: CGSize) -> Bool {
         abs(position.width) <= resetTolerance && abs(position.height) <= resetTolerance
     }
 
-    static func dragBounds(in canvas: CGSize) -> (min: CGSize, max: CGSize) {
-        let scaleX = canvas.width / referenceSize.width
-        let scaleY = canvas.height / referenceSize.height
-        let horizontal = (interactionAreaSize.width - cardSize) * scaleX / 2
-        let vertical = (interactionAreaSize.height - cardSize) * scaleY / 2
-        return (
-            min: CGSize(width: -horizontal, height: -vertical),
-            max: CGSize(width: horizontal, height: vertical)
-        )
-    }
-
-    private static func scaledWidth(_ value: CGFloat, in canvas: CGSize) -> CGFloat {
-        value * canvas.width / referenceSize.width
-    }
-
-    private static func scaledHeight(_ value: CGFloat, in canvas: CGSize) -> CGFloat {
-        value * canvas.height / referenceSize.height
-    }
-
-    private func pulsePlacedGraphReset() {
-        guard Self.shouldReset(position) else { return }
+    private func pulsePlacedGraphReset(at releasedPosition: CGSize) {
+        guard Self.shouldReset(releasedPosition) else { return }
         resetCount &+= 1
-    }
-
-    private func resetToCenter() {
-        position = .zero
-        translation = .zero
-        velocity = .zero
-        resetCount = 0
     }
 }
 

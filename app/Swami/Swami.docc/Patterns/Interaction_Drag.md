@@ -14,18 +14,20 @@ PR screenshot triplet verifies the rendered result rather than this page assumin
 
 ## Interaction
 
-Touching the card engages a zero-distance drag. While the card is moving,
-`drag(enable:momentum:bounds:start:position:translation:velocity:reset:)`:
+Touching the card engages a zero-distance drag. While the card is moving, the
+`drag` modifier:
 
 - publishes position, translation, and velocity;
-- applies rubber-band resistance beyond the inset area's boundaries;
+- applies the Drag patch's documented 0.15 rubber-band friction beyond the fixed bounds;
 - projects release momentum and settles within those boundaries; and
-- accepts the placed graph's reset pulse through Drag's `reset` input.
+- accepts every placed-graph reset pulse through the monotonic `resetCount` adapter.
 
-The pattern composes that reset pulse outside the helper, matching the placed
+The pattern composes the reset decision outside the helper, matching the placed
 `Snap to origin` branch: two approximately-equal comparisons feed an And when
-interaction turns off. A touch-up within 100 points of center on both axes resets
-the card; Drag itself does not expose an app-specific release predicate.
+interaction turns off. The helper's release callback reports the touch-up position
+without installing a competing gesture. A touch-up within 100 points of center on
+both axes increments `resetCount`; each increment clears position, translation, and
+velocity and returns the card to its origin.
 
 ## Verification media
 

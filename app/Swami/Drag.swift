@@ -1,55 +1,161 @@
 import SwiftUI
 
+/// Testable state graph behind ``Drag``.
+struct DragState: Equatable {
+    private(set) var origin: CGSize
+    private(set) var current: CGSize
+    private(set) var translation: CGSize = .zero
+    private(set) var velocity: CGSize = .zero
+    private(set) var gestureIsActive = false
+
+    init(start: CGSize) {
+        origin = start
+        current = start
+    }
+
+    mutating func change(
+        translation newTranslation: CGSize,
+        bounds: (min: CGSize, max: CGSize)?,
+        rubberBandFriction: CGFloat
+    ) {
+        if !gestureIsActive {
+            gestureIsActive = true
+            origin = current
+            translation = .zero
+            velocity = .zero
+        }
+        translation = newTranslation
+        let raw = CGSize(
+            width: origin.width + newTranslation.width,
+            height: origin.height + newTranslation.height
+        )
+        current = Self.resist(raw, bounds: bounds, friction: rubberBandFriction)
+    }
+
+    mutating func end(
+        predictedEndTranslation: CGSize,
+        momentum: Bool,
+        bounds: (min: CGSize, max: CGSize)?
+    ) -> CGSize {
+        gestureIsActive = false
+        velocity = CGSize(
+            width: predictedEndTranslation.width - translation.width,
+            height: predictedEndTranslation.height - translation.height
+        )
+        let projected = momentum
+            ? CGSize(
+                width: origin.width + predictedEndTranslation.width,
+                height: origin.height + predictedEndTranslation.height
+            )
+            : current
+        let target = Self.clamp(projected, bounds: bounds)
+        origin = target
+        return target
+    }
+
+    mutating func settle(at target: CGSize) {
+        current = target
+    }
+
+    mutating func reset(to start: CGSize) {
+        origin = start
+        current = start
+        translation = .zero
+        velocity = .zero
+        gestureIsActive = false
+    }
+
+    private static func clamp(
+        _ value: CGSize,
+        bounds: (min: CGSize, max: CGSize)?
+    ) -> CGSize {
+        guard let bounds else { return value }
+        return CGSize(
+            width: min(max(value.width, bounds.min.width), bounds.max.width),
+            height: min(max(value.height, bounds.min.height), bounds.max.height)
+        )
+    }
+
+    private static func resist(
+        _ value: CGSize,
+        bounds: (min: CGSize, max: CGSize)?,
+        friction: CGFloat
+    ) -> CGSize {
+        guard let bounds else { return value }
+        func band(_ overshoot: CGFloat, span: CGFloat) -> CGFloat {
+            (1 - (1 / ((overshoot * friction / span) + 1))) * span
+        }
+        func component(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+            let span = max(upper - lower, 1)
+            if value < lower { return lower - band(lower - value, span: span) }
+            if value > upper { return upper + band(value - upper, span: span) }
+            return value
+        }
+        return CGSize(
+            width: component(value.width, lower: bounds.min.width, upper: bounds.max.width),
+            height: component(value.height, lower: bounds.min.height, upper: bounds.max.height)
+        )
+    }
+}
+
 /// SwiftUI equivalent of Origami's **Drag** patch (`origami.Drag`).
 ///
-/// Naming follows ADR-0010. The helper is based on the patch graph in Origami's
-/// installed catalog: interaction supplies translation, projected translation supplies
-/// momentum, the configured boundaries clip position, and out-of-range input receives
-/// rubber-band resistance before release.
+/// Faithful ports: inputs `enable`, `momentum`, `bounds`, `start`, `reset`;
+/// outputs `position`, `translation`, `velocity`. Reset policy remains in the
+/// consumer graph. `resetCount` represents repeated pulse events that a Boolean
+/// SwiftUI value alone cannot distinguish.
 ///
-/// Faithful ports (from the patch's group I/O):
-/// - inputs → `enable`, `momentum`, `bounds`, `start`, `reset`
-/// - outputs → `position`, `translation`, `velocity`
-///
-/// Reset policy remains outside this helper: graph composition pulses the faithful
-/// `reset` input, just as a patch connected to Drag's Reset port does in Origami. The
-/// `resetCount` adapter gives every pulse a distinct identity when the graph can fire
-/// repeatedly; the Boolean input remains available for direct level-to-pulse wiring.
-/// Rubber-band friction uses Origami's documented default of `0.15`. Momentum uses
-/// SwiftUI's gesture projection rather than an iOS scroll default; this preserves the
-/// gesture's measured direction and magnitude before the bounded spring settles it.
+/// Rubber-band friction is required at the call site rather than hidden behind
+/// an unverified helper default. Interaction Drag passes the Origami Drag patch's
+/// documented `0.15` value explicitly.
 public struct Drag: ViewModifier {
     var enable: Bool
     var momentum: Bool
-    /// Clip bounds for Position (Origami “Start/End Boundary” / “Min”/“Max”). nil = unbounded.
     var bounds: (min: CGSize, max: CGSize)?
-    /// Initial position and the destination of an explicit `reset` pulse.
-    /// Runtime changes do not move an active or settled drag.
     var start: CGSize
+    var rubberBandFriction: CGFloat
     var position: Binding<CGSize>?
     var translation: Binding<CGSize>?
     var velocity: Binding<CGSize>?
     var reset: Bool
-    /// Monotonic pulse identity for graph branches that can fire more than once.
     var resetCount: UInt
+    var onRelease: ((CGSize) -> Void)?
 
-    @State private var origin: CGSize = .zero
-    @State private var current: CGSize = .zero
-    @State private var gestureIsActive = false
+    @State private var state: DragState
+
+    init(
+        enable: Bool,
+        momentum: Bool,
+        bounds: (min: CGSize, max: CGSize)?,
+        start: CGSize,
+        rubberBandFriction: CGFloat,
+        position: Binding<CGSize>?,
+        translation: Binding<CGSize>?,
+        velocity: Binding<CGSize>?,
+        reset: Bool,
+        resetCount: UInt,
+        onRelease: ((CGSize) -> Void)?
+    ) {
+        self.enable = enable
+        self.momentum = momentum
+        self.bounds = bounds
+        self.start = start
+        self.rubberBandFriction = rubberBandFriction
+        self.position = position
+        self.translation = translation
+        self.velocity = velocity
+        self.reset = reset
+        self.resetCount = resetCount
+        self.onRelease = onRelease
+        _state = State(initialValue: DragState(start: start))
+    }
 
     public func body(content: Content) -> some View {
         content
-            .offset(current)
+            .offset(state.current)
             .gesture(dragGesture, isEnabled: enable)
-            .onAppear {
-                origin = start
-                current = start
-                position?.wrappedValue = start
-            }
             .onChange(of: reset) { _, requested in
-                if requested {
-                    performReset()
-                }
+                if requested { performReset() }
             }
             .onChange(of: resetCount) { _, _ in
                 performReset()
@@ -59,81 +165,37 @@ public struct Drag: ViewModifier {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
-                if !gestureIsActive {
-                    gestureIsActive = true
-                    // Each touch begins from the visible settled position. This is
-                    // required after reset and prevents stale momentum or origin state
-                    // from leaking into a later gesture.
-                    origin = current
-                    translation?.wrappedValue = .zero
-                    velocity?.wrappedValue = .zero
-                }
-                let raw = CGSize(
-                    width: origin.width + value.translation.width,
-                    height: origin.height + value.translation.height
+                state.change(
+                    translation: value.translation,
+                    bounds: bounds,
+                    rubberBandFriction: rubberBandFriction
                 )
-                current = resist(raw)
-                translation?.wrappedValue = value.translation
-                position?.wrappedValue = current
+                translation?.wrappedValue = state.translation
+                velocity?.wrappedValue = state.velocity
+                position?.wrappedValue = state.current
             }
             .onEnded { value in
-                gestureIsActive = false
-                let measuredVelocity = CGSize(
-                    width: value.predictedEndTranslation.width - value.translation.width,
-                    height: value.predictedEndTranslation.height - value.translation.height
+                let releasedPosition = state.current
+                let target = state.end(
+                    predictedEndTranslation: value.predictedEndTranslation,
+                    momentum: momentum,
+                    bounds: bounds
                 )
-                velocity?.wrappedValue = measuredVelocity
-
-                let projected = momentum
-                    ? CGSize(
-                        width: origin.width + value.predictedEndTranslation.width,
-                        height: origin.height + value.predictedEndTranslation.height
-                    )
-                    : current
-                settle(to: clamp(projected))
+                velocity?.wrappedValue = state.velocity
+                onRelease?(releasedPosition)
+                withAnimation(.interpolatingSpring(stiffness: 180, damping: 22)) {
+                    state.settle(at: target)
+                    position?.wrappedValue = target
+                }
             }
-    }
-
-    private func clamp(_ value: CGSize) -> CGSize {
-        guard let bounds else { return value }
-        return CGSize(
-            width: min(max(value.width, bounds.min.width), bounds.max.width),
-            height: min(max(value.height, bounds.min.height), bounds.max.height)
-        )
-    }
-
-    private func resist(_ value: CGSize) -> CGSize {
-        guard let bounds else { return value }
-        func rubberBand(_ component: CGFloat, _ lower: CGFloat, _ upper: CGFloat) -> CGFloat {
-            if component < lower {
-                return lower - band(lower - component, span: max(upper - lower, 1))
-            }
-            if component > upper {
-                return upper + band(component - upper, span: max(upper - lower, 1))
-            }
-            return component
-        }
-        return CGSize(
-            width: rubberBand(value.width, bounds.min.width, bounds.max.width),
-            height: rubberBand(value.height, bounds.min.height, bounds.max.height)
-        )
-    }
-
-    private func band(_ overshoot: CGFloat, span: CGFloat, friction: CGFloat = 0.15) -> CGFloat {
-        (1 - (1 / ((overshoot * friction / span) + 1))) * span
     }
 
     private func performReset() {
-        translation?.wrappedValue = .zero
-        velocity?.wrappedValue = .zero
-        settle(to: start)
-    }
-
-    private func settle(to target: CGSize) {
-        origin = target
         withAnimation(.interpolatingSpring(stiffness: 180, damping: 22)) {
-            current = target
-            position?.wrappedValue = target
+            state.reset(to: start)
+            position?.wrappedValue = state.current
+            translation?.wrappedValue = state.translation
+            velocity?.wrappedValue = state.velocity
         }
     }
 }
@@ -144,22 +206,26 @@ public extension View {
         momentum: Bool = true,
         bounds: (min: CGSize, max: CGSize)? = nil,
         start: CGSize = .zero,
+        rubberBandFriction: CGFloat,
         position: Binding<CGSize>? = nil,
         translation: Binding<CGSize>? = nil,
         velocity: Binding<CGSize>? = nil,
         reset: Bool = false,
-        resetCount: UInt = 0
+        resetCount: UInt = 0,
+        onRelease: ((CGSize) -> Void)? = nil
     ) -> some View {
         modifier(Drag(
             enable: enable,
             momentum: momentum,
             bounds: bounds,
             start: start,
+            rubberBandFriction: rubberBandFriction,
             position: position,
             translation: translation,
             velocity: velocity,
             reset: reset,
-            resetCount: resetCount
+            resetCount: resetCount,
+            onRelease: onRelease
         ))
     }
 }
