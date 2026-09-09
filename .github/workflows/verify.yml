@@ -87,12 +87,6 @@ jobs:
     if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 40
-    outputs:
-      pr: ${{ steps.evidence.outputs.pr }}
-      sha: ${{ steps.evidence.outputs.sha }}
-      changed_patterns: ${{ steps.evidence.outputs.changed_patterns }}
-      results: ${{ steps.verify.outputs.results }}
-      origami_version: ${{ steps.verify.outputs.origami_version }}
     env:
       PATTERNS: ${{ needs.changes.outputs.patterns }}
     steps:
@@ -488,6 +482,30 @@ jobs:
           trap - EXIT
           test -s out/recordings/drag.mp4
 
+      - name: Write Builder evidence manifest (always)
+        if: always() && steps.evidence.outputs.pr != '' && steps.evidence.outputs.changed_patterns != ''
+        env:
+          PR: ${{ steps.evidence.outputs.pr }}
+          SHA: ${{ steps.evidence.outputs.sha }}
+          CHANGED_PATTERNS: ${{ steps.evidence.outputs.changed_patterns }}
+          RESULTS: ${{ steps.verify.outputs.results }}
+          ORIGAMI_VERSION: ${{ steps.verify.outputs.origami_version }}
+        run: |
+          mkdir -p out/delivery
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          Path("out/delivery/manifest.json").write_text(json.dumps({
+              "pr": int(os.environ["PR"]),
+              "sha": os.environ["SHA"],
+              "changed_patterns": os.environ["CHANGED_PATTERNS"],
+              "results": os.environ.get("RESULTS", ""),
+              "origami_version": os.environ.get("ORIGAMI_VERSION", ""),
+          }), encoding="utf-8")
+          PY
+
       - name: Upload Builder evidence (always)
         if: always()
         uses: actions/upload-artifact@v4
@@ -518,104 +536,6 @@ jobs:
             echo
             echo "Builder evidence and the PR DocC publication are withheld because this pull request originates from a fork. The verification artifact remains available to maintainers. Bring the head into this repository, then dispatch the trusted workflow to publish attributed evidence."
           } >> "$GITHUB_STEP_SUMMARY"
-
-  publish-builder-delivery:
-    needs: [changes, pixel-gate]
-    if: always() && needs.pixel-gate.outputs.pr != '' && needs.pixel-gate.outputs.changed_patterns != '' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false))
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - name: Download runner-produced evidence
-        uses: actions/download-artifact@v4
-        with:
-          name: builder-evidence
-          path: evidence
-
-      - name: Checkout pinned Builder delivery publisher
-        uses: actions/checkout@v4
-        with:
-          repository: samuelalake/agent-factory
-          ref: ${{ env.FACTORY_REF }}
-          path: factory-delivery
-          persist-credentials: false
-
-      - name: Validate trusted Builder delivery import
-        run: |
-          set -euo pipefail
-          test "$(git -C factory-delivery rev-parse HEAD)" = "$FACTORY_REF"
-          test -z "$(git -C factory-delivery status --porcelain)"
-          resolved=$(cd factory-delivery && PYTHONPATH=src python3 -c \
-            'from pathlib import Path; import agent_factory.github_delivery as module; print(Path(module.__file__).resolve())')
-          test "$resolved" = "$GITHUB_WORKSPACE/factory-delivery/src/agent_factory/github_delivery.py"
-
-      - name: Mint Builder installation token
-        id: builder-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.AGENT_FACTORY_BUILDER_APP_ID }}
-          private-key: ${{ secrets.AGENT_FACTORY_BUILDER_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-
-      - name: Publish canonical Builder delivery into the PR description
-        env:
-          GH_TOKEN: ${{ steps.builder-token.outputs.token }}
-          AGENT_FACTORY_MEDIA_UPLOAD_TOKEN: ${{ secrets.AGENT_FACTORY_MEDIA_UPLOAD_TOKEN }}
-          PR: ${{ needs.pixel-gate.outputs.pr }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ needs.pixel-gate.outputs.sha }}
-          CHANGED_PATTERNS: ${{ needs.pixel-gate.outputs.changed_patterns }}
-          RESULTS: ${{ needs.pixel-gate.outputs.results }}
-          ORIGAMI_VERSION: ${{ needs.pixel-gate.outputs.origami_version }}
-        run: |
-          set -euo pipefail
-          EVIDENCE_ROOT="$GITHUB_WORKSPACE/evidence"
-          SITE_REPO="${REPO#*/}"
-          DOCC_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/documentation/swami/"
-          DOCC_HEAD_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/.agent-factory-head"
-          docc_status="failed"
-          for attempt in $(seq 1 180); do
-            published_head=$(curl -fsSL "$DOCC_HEAD_URL" 2>/dev/null || true)
-            if [ "$published_head" = "$SHA" ] && [ "$(curl -sL -o /dev/null -w '%{http_code}' "$DOCC_URL")" = "200" ]; then
-              docc_status="ready"
-              break
-            fi
-            sleep 10
-          done
-
-          BODY="Current head: \`${SHA:0:7}\` · [DocC preview](${DOCC_URL})"$'\n\n'
-          BODY+="Builder changed and verified only the current pattern work listed below. No unrelated pattern media is included."$'\n\n'
-          BODY+="- DocC: **${docc_status}**"$'\n'
-          overall="ready"
-          ATTACHMENTS=()
-          for pair in $CHANGED_PATTERNS; do
-            slug="${pair%%:*}"
-            stem="${pair##*:}"
-            score=$(printf '%s\n' "$RESULTS" | awk -F'|' -v wanted="$slug" '$2 ~ "^[[:space:]]*" wanted "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $3); print $3; exit}')
-            sanity=$(printf '%s\n' "$RESULTS" | awk -F'|' -v wanted="$slug" '$2 ~ "^[[:space:]]*" wanted "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $4); print $4; exit}')
-            [ "$sanity" = "pass" ] || overall="failed"
-            BODY+="### ${stem}"$'\n\n'
-            BODY+="Changed: \`app/Swami/Patterns/${stem}.swift\` · Origami ${ORIGAMI_VERSION} · normalized SSIM ${score:-unavailable} · catastrophic sanity **${sanity:-failed}**"$'\n\n'
-            BODY+="| Swami | Origami | Diff |"$'\n'"|---|---|---|"$'\n'
-            BODY+="| ![Swami ${stem}](${EVIDENCE_ROOT}/swami/${slug}.png) | ![Origami ${stem}](${EVIDENCE_ROOT}/origami/${slug}.png) | ![Difference for ${stem}](${EVIDENCE_ROOT}/diff/${slug}.png) |"$'\n\n'
-            ATTACHMENTS+=(--attach "${EVIDENCE_ROOT}/swami/${slug}.png" --attach "${EVIDENCE_ROOT}/origami/${slug}.png" --attach "${EVIDENCE_ROOT}/diff/${slug}.png")
-            if [ -s "${EVIDENCE_ROOT}/recordings/${slug}.mp4" ]; then
-              BODY+="#### Interaction recording"$'\n\n'"![](${EVIDENCE_ROOT}/recordings/${slug}.mp4)"$'\n\n'
-              ATTACHMENTS+=(--attach "${EVIDENCE_ROOT}/recordings/${slug}.mp4")
-            elif [ "$slug" = "drag" ]; then
-              BODY+="Interaction recording: **missing**"$'\n\n'
-              overall="failed"
-            fi
-          done
-          [ "$docc_status" = "ready" ] || overall="failed"
-          printf '%s' "$BODY" > /tmp/builder-delivery.md
-          cd "$GITHUB_WORKSPACE/factory-delivery"
-          PYTHONPATH=src python3 -m agent_factory.github_delivery \
-            --repo "$REPO" --pr "$PR" --head "$SHA" --status "$overall" \
-            --body-file /tmp/builder-delivery.md "${ATTACHMENTS[@]}"
 
 # NEXT (per ADR-0013): (a) parser-verification step that reads Origami's Inspector via AX
 # attributes and diffs against the parser's IR; (b) interaction gate — XCUITest-drives-both-sides

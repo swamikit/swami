@@ -1,0 +1,169 @@
+name: publish-builder-delivery
+
+on:
+  workflow_run:
+    workflows: [verify]
+    types: [completed]
+
+concurrency:
+  group: publish-builder-delivery-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+env:
+  FACTORY_REF: ed99cb3eca0d51c26cde524bfbd72680a645c73e
+
+jobs:
+  publish:
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Download this verification run's evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: builder-evidence
+          path: ${{ runner.temp }}/evidence
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate run, head, manifest, and evidence paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/evidence
+        run: |
+          set -euo pipefail
+          PR=$(jq -r .pr "$EVIDENCE_ROOT/delivery/manifest.json")
+          test "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)" = "$SHA"
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" --jq '.[].number' | grep -Fxq "$PR"
+          python3 - "$PR" "$SHA" "$EVIDENCE_ROOT" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[3]).resolve()
+          manifest = json.loads((root / "delivery/manifest.json").read_text(encoding="utf-8"))
+          if manifest.get("pr") != int(sys.argv[1]) or manifest.get("sha") != sys.argv[2]:
+              raise SystemExit("evidence manifest does not match the triggering PR head")
+          changed = str(manifest.get("changed_patterns") or "")
+          if not re.fullmatch(r"[a-z0-9_]+:[A-Za-z0-9_]+(?: [a-z0-9_]+:[A-Za-z0-9_]+)*", changed):
+              raise SystemExit("invalid changed-pattern manifest")
+          version = str(manifest.get("origami_version") or "")
+          if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", version):
+              raise SystemExit("invalid Origami version manifest")
+          results = str(manifest.get("results") or "")
+          rows = {}
+          for line in results.splitlines():
+              match = re.fullmatch(r"\| ([a-z0-9_]+) \| ([0-9]+(?:\.[0-9]+)?) \| (pass|fail) \|", line.strip())
+              if match:
+                  rows[match.group(1)] = (match.group(2), match.group(3))
+          for pair in changed.split():
+              slug, _ = pair.split(":", 1)
+              if slug not in rows:
+                  raise SystemExit(f"missing verification result for {slug}")
+              for relative in (f"swami/{slug}.png", f"origami/{slug}.png", f"diff/{slug}.png"):
+                  path = (root / relative).resolve()
+                  if root not in path.parents or not path.is_file():
+                      raise SystemExit(f"missing or unsafe evidence path: {relative}")
+          PY
+          files=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --paginate --jq '.[].filename')
+          for pair in $(jq -r .changed_patterns "$EVIDENCE_ROOT/delivery/manifest.json"); do
+            stem="${pair##*:}"
+            printf '%s\n' "$files" | grep -Fxq "app/Swami/Patterns/${stem}.swift"
+          done
+
+      - name: Checkout exact Agent Factory publisher
+        uses: actions/checkout@v4
+        with:
+          repository: samuelalake/agent-factory
+          ref: ${{ env.FACTORY_REF }}
+          path: factory-delivery
+          persist-credentials: false
+
+      - name: Validate trusted publisher
+        run: |
+          set -euo pipefail
+          test "$(git -C factory-delivery rev-parse HEAD)" = "$FACTORY_REF"
+          test -z "$(git -C factory-delivery status --porcelain)"
+          resolved=$(cd factory-delivery && PYTHONPATH=src python3 -c \
+            'from pathlib import Path; import agent_factory.github_delivery as module; print(Path(module.__file__).resolve())')
+          test "$resolved" = "$GITHUB_WORKSPACE/factory-delivery/src/agent_factory/github_delivery.py"
+
+      - name: Mint Builder installation token
+        id: builder-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AGENT_FACTORY_BUILDER_APP_ID }}
+          private-key: ${{ secrets.AGENT_FACTORY_BUILDER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Publish canonical Builder delivery into the PR description
+        env:
+          GH_TOKEN: ${{ steps.builder-token.outputs.token }}
+          AGENT_FACTORY_MEDIA_UPLOAD_TOKEN: ${{ secrets.AGENT_FACTORY_MEDIA_UPLOAD_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          VERIFY_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -euo pipefail
+          EVIDENCE_ROOT="$RUNNER_TEMP/evidence"
+          PR=$(jq -r .pr "$EVIDENCE_ROOT/delivery/manifest.json")
+          CHANGED_PATTERNS=$(jq -r .changed_patterns "$EVIDENCE_ROOT/delivery/manifest.json")
+          RESULTS=$(jq -r .results "$EVIDENCE_ROOT/delivery/manifest.json")
+          ORIGAMI_VERSION=$(jq -r .origami_version "$EVIDENCE_ROOT/delivery/manifest.json")
+          SITE_REPO="${REPO#*/}"
+          DOCC_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/documentation/swami/"
+          DOCC_HEAD_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/pr-${PR}/.agent-factory-head"
+          docc_status="failed"
+          for attempt in $(seq 1 180); do
+            published_head=$(curl -fsSL "$DOCC_HEAD_URL" 2>/dev/null || true)
+            if [ "$published_head" = "$SHA" ] && [ "$(curl -sL -o /dev/null -w '%{http_code}' "$DOCC_URL")" = "200" ]; then
+              docc_status="ready"
+              break
+            fi
+            sleep 10
+          done
+
+          BODY="Current head: \`${SHA:0:7}\` · [DocC preview](${DOCC_URL})"$'\n\n'
+          BODY+="Builder changed and verified only the current pattern work listed below. No unrelated pattern media is included."$'\n\n'
+          BODY+="- DocC: **${docc_status}**"$'\n'
+          overall="ready"
+          [ "$VERIFY_CONCLUSION" = "success" ] || overall="failed"
+          ATTACHMENTS=()
+          for pair in $CHANGED_PATTERNS; do
+            slug="${pair%%:*}"
+            stem="${pair##*:}"
+            score=$(printf '%s\n' "$RESULTS" | awk -F'|' -v wanted="$slug" '$2 ~ "^[[:space:]]*" wanted "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $3); print $3; exit}')
+            sanity=$(printf '%s\n' "$RESULTS" | awk -F'|' -v wanted="$slug" '$2 ~ "^[[:space:]]*" wanted "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $4); print $4; exit}')
+            [ "$sanity" = "pass" ] || overall="failed"
+            BODY+="### ${stem}"$'\n\n'
+            BODY+="Changed: \`app/Swami/Patterns/${stem}.swift\` · Origami ${ORIGAMI_VERSION} · normalized SSIM ${score:-unavailable} · catastrophic sanity **${sanity:-failed}**"$'\n\n'
+            BODY+="| Swami | Origami | Diff |"$'\n'"|---|---|---|"$'\n'
+            BODY+="| ![Swami ${stem}](${EVIDENCE_ROOT}/swami/${slug}.png) | ![Origami ${stem}](${EVIDENCE_ROOT}/origami/${slug}.png) | ![Difference for ${stem}](${EVIDENCE_ROOT}/diff/${slug}.png) |"$'\n\n'
+            ATTACHMENTS+=(--attach "${EVIDENCE_ROOT}/swami/${slug}.png" --attach "${EVIDENCE_ROOT}/origami/${slug}.png" --attach "${EVIDENCE_ROOT}/diff/${slug}.png")
+            if [ -s "${EVIDENCE_ROOT}/recordings/${slug}.mp4" ]; then
+              BODY+="#### Interaction recording"$'\n\n'"![](${EVIDENCE_ROOT}/recordings/${slug}.mp4)"$'\n\n'
+              ATTACHMENTS+=(--attach "${EVIDENCE_ROOT}/recordings/${slug}.mp4")
+            elif [ "$slug" = "drag" ]; then
+              BODY+="Interaction recording: **missing**"$'\n\n'
+              overall="failed"
+            fi
+          done
+          [ "$docc_status" = "ready" ] || overall="failed"
+          printf '%s' "$BODY" > /tmp/builder-delivery.md
+          cd "$GITHUB_WORKSPACE/factory-delivery"
+          PYTHONPATH=src python3 -m agent_factory.github_delivery \
+            --repo "$REPO" --pr "$PR" --head "$SHA" --status "$overall" \
+            --body-file /tmp/builder-delivery.md "${ATTACHMENTS[@]}"
