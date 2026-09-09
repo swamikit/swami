@@ -22,7 +22,23 @@ jobs:
     secrets:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
 
-  openrouter:
+  openrouter-primary:
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@65ec647c1af331e5126db099f6f37c218c45704c
+    with:
+      factory_ref: 65ec647c1af331e5126db099f6f37c218c45704c
+      provider: openrouter
+      models: qwen/qwen3.8-max-0902
+      max_candidates: 1
+      builder_shape: true
+      max_output_tokens: 2048
+      prompt_bytes: 70000
+      visual_input: true
+      input_cost_per_million: 2
+      output_cost_per_million: 10
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+  openrouter-fallback:
     uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@65ec647c1af331e5126db099f6f37c218c45704c
     with:
       factory_ref: 65ec647c1af331e5126db099f6f37c218c45704c
