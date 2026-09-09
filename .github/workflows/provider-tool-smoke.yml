@@ -27,7 +27,7 @@ jobs:
     with:
       factory_ref: 65ec647c1af331e5126db099f6f37c218c45704c
       provider: openrouter
-      models: qwen/qwen3.8-max-0902
+      models: z-ai/glm-5.3-flash
       max_candidates: 1
       builder_shape: true
       max_output_tokens: 2048
