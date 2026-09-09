@@ -28,6 +28,7 @@ public struct Drag: ViewModifier {
     @State private var previousTranslation: CGSize = .zero
     @State private var previousSampleTime: Date?
     @State private var sampledVelocity: CGSize = .zero
+    @State private var lastMotionVelocity: CGSize = .zero
 
     public func body(content: Content) -> some View {
         content
@@ -37,6 +38,7 @@ public struct Drag: ViewModifier {
             // pulse so repeated resets do not depend on returning a latch to false.
             .onChange(of: reset) { _, _ in
                 sampledVelocity = .zero
+                lastMotionVelocity = .zero
                 settle(to: .zero)
                 origin = .zero
             }
@@ -50,6 +52,7 @@ public struct Drag: ViewModifier {
                     origin = current
                     previousTranslation = value.translation
                     sampledVelocity = .zero
+                    lastMotionVelocity = .zero
                 } else if let previousSampleTime {
                     let elapsed = value.time.timeIntervalSince(previousSampleTime)
                     if elapsed > 0 {
@@ -57,6 +60,9 @@ public struct Drag: ViewModifier {
                             width: (value.translation.width - previousTranslation.width) / elapsed,
                             height: (value.translation.height - previousTranslation.height) / elapsed
                         )
+                        if sampledVelocity != .zero {
+                            lastMotionVelocity = sampledVelocity
+                        }
                     }
                     previousTranslation = value.translation
                 }
@@ -71,26 +77,53 @@ public struct Drag: ViewModifier {
                 position?.wrappedValue = current
                 velocity?.wrappedValue = sampledVelocity
             }
-            .onEnded { _ in
+            .onEnded { value in
+                // onEnded can carry a newer translation and timestamp than the
+                // final onChanged callback. Sample that endpoint before clearing
+                // touch state. SwiftUI also commonly repeats the final translation
+                // at touch-up; that zero-delta callback must not erase the last
+                // actual motion sample used by Origami's Add Momentum stage.
+                if let previousSampleTime {
+                    let elapsed = value.time.timeIntervalSince(previousSampleTime)
+                    if elapsed > 0 {
+                        sampledVelocity = CGSize(
+                            width: (value.translation.width - previousTranslation.width) / elapsed,
+                            height: (value.translation.height - previousTranslation.height) / elapsed
+                        )
+                        if sampledVelocity != .zero {
+                            lastMotionVelocity = sampledVelocity
+                        }
+                    }
+                }
+                let releaseVelocity = lastMotionVelocity
+                let released = resist(CGSize(
+                    width: origin.width + value.translation.width,
+                    height: origin.height + value.translation.height
+                ))
+                current = released
+                position?.wrappedValue = released
+
+                previousTranslation = .zero
                 previousSampleTime = nil
                 translation?.wrappedValue = .zero
-                velocity?.wrappedValue = sampledVelocity
+                velocity?.wrappedValue = releaseVelocity
 
                 // Publish the Drag position at Interaction touch-up. This hook lets
                 // a translated graph wire its separate Interaction → Pulse chain to
                 // Reset without installing a second gesture recognizer.
-                onRelease?(current)
+                onRelease?(released)
 
                 // Add Momentum integrates dv/dt = -friction*v, so remaining
                 // displacement at touch-up is velocity / friction.
                 let target = momentum
-                    ? CGSize(width: current.width + sampledVelocity.width / momentumFriction,
-                             height: current.height + sampledVelocity.height / momentumFriction)
-                    : current
+                    ? CGSize(width: released.width + releaseVelocity.width / momentumFriction,
+                             height: released.height + releaseVelocity.height / momentumFriction)
+                    : released
                 let boundedTarget = clamp(target)
                 settle(to: boundedTarget)
                 origin = boundedTarget
                 sampledVelocity = .zero
+                lastMotionVelocity = .zero
             }
     }
 

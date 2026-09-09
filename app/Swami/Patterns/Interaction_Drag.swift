@@ -24,58 +24,57 @@ public struct Interaction_DragView: View {
     // Measured from the runner's 750×1334 Origami capture and represented at
     // the reference device's 2×, 375×667-point viewport.
     private static let referenceSize = CGSize(width: 375, height: 667)
-    private static let interactionInset: CGFloat = 30
-    private static let interactionCornerRadius: CGFloat = 20
+    private static let screenSize = CGSize(width: 315, height: 607)
+    private static let screenCornerRadius: CGFloat = 20
     private static let layerSize: CGFloat = 120
     private static let layerCornerRadius: CGFloat = 15
     private static let resetTolerance: CGFloat = 100
 
-    // ColorKit Purple and the source interaction-area fill, respectively.
-    private static let canvasColor = Color(
+    // ColorKit Purple and the source screen fill, respectively.
+    private static let artboardColor = Color(
         red: 221.0 / 255.0,
         green: 112.0 / 255.0,
         blue: 223.0 / 255.0
     )
-    private static let interactionAreaColor = Color(
+    private static let screenColor = Color(
         red: 229.0 / 255.0,
         green: 166.0 / 255.0,
         blue: 230.0 / 255.0
     )
 
     public var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Self.canvasColor
+        ZStack {
+            // These are separate source layers. In particular, the rounded
+            // screen must not replace the Purple artboard background.
+            Self.artboardColor
 
-                RoundedRectangle(
-                    cornerRadius: Self.interactionCornerRadius,
-                    style: .continuous
-                )
-                .fill(Self.interactionAreaColor)
-                .padding(Self.interactionInset)
+            RoundedRectangle(
+                cornerRadius: Self.screenCornerRadius,
+                style: .continuous
+            )
+            .fill(Self.screenColor)
+            .frame(width: Self.screenSize.width, height: Self.screenSize.height)
 
-                RoundedRectangle(
-                    cornerRadius: Self.layerCornerRadius,
-                    style: .continuous
-                )
-                .fill(.white)
-                .frame(width: Self.layerSize, height: Self.layerSize)
-                .accessibilityIdentifier("interaction-drag-layer")
-                .drag(
-                    momentum: true,
-                    bounds: Self.dragBounds(in: geometry.size),
-                    position: $position,
-                    reset: resetPulse,
-                    momentumFriction: 8,
-                    rubberBandFriction: 8,
-                    rubberBandTension: 100,
-                    onRelease: sendResetPulseIfNeeded
-                )
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
+            RoundedRectangle(
+                cornerRadius: Self.layerCornerRadius,
+                style: .continuous
+            )
+            .fill(.white)
+            .frame(width: Self.layerSize, height: Self.layerSize)
+            .accessibilityIdentifier("interaction-drag-layer")
+            .drag(
+                momentum: true,
+                bounds: Self.dragBounds,
+                position: $position,
+                reset: resetPulse,
+                momentumFriction: 8,
+                rubberBandFriction: 8,
+                rubberBandTension: 100,
+                onRelease: sendResetPulseIfNeeded
+            )
         }
         .frame(width: Self.referenceSize.width, height: Self.referenceSize.height)
-        .background(Self.canvasColor)
+        .background(Self.artboardColor)
         .ignoresSafeArea(.all)
         .statusBarHidden(true)
     }
@@ -89,11 +88,9 @@ public struct Interaction_DragView: View {
         resetPulse.toggle()
     }
 
-    private static func dragBounds(in viewport: CGSize) -> (min: CGSize, max: CGSize) {
-        let width = viewport.width - (interactionInset * 2)
-        let height = viewport.height - (interactionInset * 2)
-        let horizontal = (width - layerSize) / 2
-        let vertical = (height - layerSize) / 2
+    private static var dragBounds: (min: CGSize, max: CGSize) {
+        let horizontal = (screenSize.width - layerSize) / 2
+        let vertical = (screenSize.height - layerSize) / 2
         return (
             min: CGSize(width: -horizontal, height: -vertical),
             max: CGSize(width: horizontal, height: vertical)
