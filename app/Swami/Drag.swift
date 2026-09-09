@@ -11,6 +11,8 @@ import SwiftUI
 /// - inputs → `enable`, `momentum`, `bounds`, `start`, `reset`
 /// - outputs → `position`, `translation`, `velocity`
 ///
+/// `onRelease` observes the Drag lifecycle without installing a second gesture;
+/// callers can use it to drive graph logic connected to the patch's Reset input.
 /// Rubber-band friction uses Origami's documented default of `0.15`. Momentum uses
 /// SwiftUI's gesture projection rather than an iOS scroll default; this preserves the
 /// gesture's measured direction and magnitude before the bounded spring settles it.
@@ -24,6 +26,7 @@ public struct Drag: ViewModifier {
     var translation: Binding<CGSize>?
     var velocity: Binding<CGSize>?
     var reset: Bool
+    var onRelease: ((CGSize) -> Void)?
 
     @State private var origin: CGSize = .zero
     @State private var current: CGSize = .zero
@@ -73,6 +76,7 @@ public struct Drag: ViewModifier {
                     height: value.predictedEndTranslation.height - value.translation.height
                 )
                 velocity?.wrappedValue = measuredVelocity
+                onRelease?(current)
                 let projected = momentum
                     ? CGSize(
                         width: origin.width + value.predictedEndTranslation.width,
@@ -130,7 +134,8 @@ public extension View {
         position: Binding<CGSize>? = nil,
         translation: Binding<CGSize>? = nil,
         velocity: Binding<CGSize>? = nil,
-        reset: Bool = false
+        reset: Bool = false,
+        onRelease: ((CGSize) -> Void)? = nil
     ) -> some View {
         modifier(Drag(
             enable: enable,
@@ -140,7 +145,8 @@ public extension View {
             position: position,
             translation: translation,
             velocity: velocity,
-            reset: reset
+            reset: reset,
+            onRelease: onRelease
         ))
     }
 }

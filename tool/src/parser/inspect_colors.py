@@ -1,95 +1,154 @@
 #!/usr/bin/env python3
-"""Lightweight inspector: scan the placed region for color tokens.
+"""Lightweight inspector for color tokens in an Origami placed graph.
 
-Walks FlatBuffers tables in the placed subtree looking for known-shaped records:
-- Color tokens: a table with both a string `name` and an 8-char ASCII `hex`
-  field. Origami's ColorKit stores colors as a struct that the parser does not
-  decode yet (a parser TODO) — we use this script only to gather evidence
-  for the fidelity debts the issue asks us to resolve.
+The inspector recognizes only FlatBuffers strings and tables with both a
+``name`` and an eight-character ``hex`` field. It intentionally does not infer
+colors from arbitrary 32-bit values.
 """
-import zipfile, struct, sys, json
+import struct
+import sys
+import zipfile
+
 
 def read_graph_bytes(path):
     if zipfile.is_zipfile(path):
-        with zipfile.ZipFile(path) as z:
-            name = next(n for n in z.namelist() if n.endswith("graph"))
-            return z.read(name)
-    return open(path, 'rb').read()
+        with zipfile.ZipFile(path) as archive:
+            name = next(name for name in archive.namelist() if name.endswith("graph"))
+            return archive.read(name)
+    with open(path, "rb") as graph_file:
+        return graph_file.read()
 
-def decode_table(g, t):
-    if t + 16 > len(g): return None
-    try:
-        vt = t - struct.unpack_from('<i', g, t)[0]
-        if vt < 0 or vt + 8 > len(g): return None
-        vs = struct.unpack_from('<H', g, vt)[0]
-        ts = struct.unpack_from('<H', g, vt + 2)[0]
-        if vs < 4 or vs % 2 or vt + vs > len(g): return None
-        if ts < 8 or ts > 2000 or t + ts > len(g): return None
-    except Exception:
+
+def decode_string(graph, table, table_size, slot):
+    """Decode a forward FlatBuffers string reference without crossing objects."""
+    if slot + 4 > len(graph):
         return None
-    rec = {'table': t}
-    for i in range((vs - 4) // 2):
-        fo = struct.unpack_from('<H', g, vt + 4 + i * 2)[0]
-        if fo and fo < ts and t + fo + 4 <= len(g):
-            slot = t + fo
-            v = struct.unpack_from('<I', g, slot)[0]
-            if 0 < v and slot + v + 4 <= len(g):
-                ln = struct.unpack_from('<I', g, slot + v)[0]
-                if 1 < ln < 200 and slot + v + 4 + ln <= len(g):
-                    s = g[slot + v + 4:slot + v + 4 + ln]
-                    if all(32 <= b < 127 for b in s):
-                        rec[str(i)] = s.decode()
-    return rec
 
-def find_color_tables(g, placed_root):
-    out = []
-    for t in range(placed_root, len(g) - 32):
-        rec = decode_table(g, t)
-        if rec is None: continue
-        if 'hex' in rec and isinstance(rec.get('hex'), str) and len(rec['hex']) == 8 and all(c in '0123456789ABCDEFabcdef' for c in rec['hex']):
-            out.append(rec)
-    return out
+    relative_offset = struct.unpack_from("<I", graph, slot)[0]
+    string_offset = slot + relative_offset
 
-def find_radius_tables(g, placed_root):
-    out = []
-    for t in range(placed_root, len(g) - 32):
-        rec = decode_table(g, t)
-        if rec is None: continue
-        if any(k in rec for k in ('radius', 'cornerRadius')):
-            out.append(rec)
-    return out
+    # FlatBuffers uoffsets point forward to a four-byte-aligned object. A field
+    # in this table cannot point into the table object itself.
+    if (
+        relative_offset == 0
+        or string_offset < table + table_size
+        or string_offset % 4 != 0
+        or string_offset + 4 > len(graph)
+    ):
+        return None
+
+    length = struct.unpack_from("<I", graph, string_offset)[0]
+    if not 1 < length < 200:
+        return None
+
+    payload_start = string_offset + 4
+    payload_end = payload_start + length
+    # FlatBuffers strings include a trailing NUL that is not part of length.
+    if payload_end >= len(graph) or graph[payload_end] != 0:
+        return None
+
+    payload = graph[payload_start:payload_end]
+    if not all(32 <= byte < 127 for byte in payload):
+        return None
+    return payload.decode("ascii")
+
+
+def decode_table(graph, table):
+    if table + 16 > len(graph):
+        return None
+    try:
+        vtable = table - struct.unpack_from("<i", graph, table)[0]
+        if vtable < 0 or vtable + 8 > len(graph):
+            return None
+        vtable_size = struct.unpack_from("<H", graph, vtable)[0]
+        table_size = struct.unpack_from("<H", graph, vtable + 2)[0]
+        if vtable_size < 4 or vtable_size % 2 or vtable + vtable_size > len(graph):
+            return None
+        if table_size < 8 or table_size > 2000 or table + table_size > len(graph):
+            return None
+    except struct.error:
+        return None
+
+    record = {"table": table}
+    for index in range((vtable_size - 4) // 2):
+        field_offset = struct.unpack_from("<H", graph, vtable + 4 + index * 2)[0]
+        if not field_offset or field_offset + 4 > table_size:
+            continue
+        value = decode_string(graph, table, table_size, table + field_offset)
+        if value is not None:
+            record[str(index)] = value
+    return record
+
+
+def find_color_tables(graph, placed_root):
+    colors = []
+    for table in range(placed_root, len(graph) - 32):
+        record = decode_table(graph, table)
+        if record is None:
+            continue
+        strings = [value for value in record.values() if isinstance(value, str)]
+        has_hex = any(
+            len(value) == 8
+            and all(character in "0123456789ABCDEFabcdef" for character in value)
+            for value in strings
+        )
+        has_name = any(
+            not (
+                len(value) == 8
+                and all(character in "0123456789ABCDEFabcdef" for character in value)
+            )
+            for value in strings
+        )
+        if has_hex and has_name:
+            colors.append(record)
+    return colors
+
+
+def find_radius_tables(graph, placed_root):
+    radii = []
+    for table in range(placed_root, len(graph) - 32):
+        record = decode_table(graph, table)
+        if record is not None and any(
+            value in ("radius", "cornerRadius") for value in record.values()
+        ):
+            radii.append(record)
+    return radii
+
 
 def main():
-    path = sys.argv[1]
-    data = read_graph_bytes(path)
-    g = data
-    N = len(g)
-    assert g[4:8] == b'ORGM', "not an ORGM FlatBuffers document"
-    root = struct.unpack_from('<I', g, 0)[0]
-    vt0 = root - struct.unpack_from('<i', g, root)[0]
-    vs0 = struct.unpack_from('<H', g, vt0)[0]
-    if 14*2 + 4 < vs0:
-        fo = struct.unpack_from('<H', g, vt0 + 4 + 14*2)[0]
-        slot = root + fo
-        vec = slot + struct.unpack_from('<I', g, slot)[0]
-        cnt = struct.unpack_from('<I', g, vec)[0]
-        offsets = [vec + 4 + i*4 + struct.unpack_from('<I', g, vec + 4 + i*4)[0] for i in range(cnt)]
+    graph = read_graph_bytes(sys.argv[1])
+    graph_size = len(graph)
+    assert graph[4:8] == b"ORGM", "not an ORGM FlatBuffers document"
+    root = struct.unpack_from("<I", graph, 0)[0]
+    root_vtable = root - struct.unpack_from("<i", graph, root)[0]
+    root_vtable_size = struct.unpack_from("<H", graph, root_vtable)[0]
+    if 14 * 2 + 4 < root_vtable_size:
+        field_offset = struct.unpack_from("<H", graph, root_vtable + 4 + 14 * 2)[0]
+        slot = root + field_offset
+        vector = slot + struct.unpack_from("<I", graph, slot)[0]
+        count = struct.unpack_from("<I", graph, vector)[0]
+        offsets = [
+            vector + 4 + index * 4
+            + struct.unpack_from("<I", graph, vector + 4 + index * 4)[0]
+            for index in range(count)
+        ]
         offsets.sort(reverse=True)
         placed_root = offsets[0]
-        print(f"placed_root = {placed_root}, file size = {N}")
+        print(f"placed_root = {placed_root}, file size = {graph_size}")
     else:
         placed_root = 0
-        print(f"(no field-14 vector; scanning whole file, size = {N})")
+        print(f"(no field-14 vector; scanning whole file, size = {graph_size})")
 
-    colors = find_color_tables(g, placed_root)
+    colors = find_color_tables(graph, placed_root)
     print(f"\nColor-like tables in placed region: {len(colors)}")
-    for c in colors[:30]:
-        print(f"  table={c['table']} {c}")
+    for color in colors[:30]:
+        print(f"  table={color['table']} {color}")
 
-    print(f"\nRadius-like tables in placed region:")
-    radii = find_radius_tables(g, placed_root)
-    for r in radii[:30]:
-        print(f"  table={r['table']} {r}")
+    print("\nRadius-like tables in placed region:")
+    radii = find_radius_tables(graph, placed_root)
+    for radius in radii[:30]:
+        print(f"  table={radius['table']} {radius}")
+
 
 if __name__ == "__main__":
     main()

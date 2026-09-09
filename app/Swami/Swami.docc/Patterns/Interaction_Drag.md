@@ -13,7 +13,7 @@ area, and a centered 120×120-point white card.
 ## Interaction
 
 Touching the card engages a zero-distance drag. While the card is moving,
-``View/drag(enable:momentum:bounds:start:position:translation:velocity:reset:)``:
+``View/drag(enable:momentum:bounds:start:position:translation:velocity:reset:onRelease:)``:
 
 - publishes position, translation, and velocity;
 - applies rubber-band resistance beyond the inset area's boundaries;

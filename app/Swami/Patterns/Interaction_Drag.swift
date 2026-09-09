@@ -54,11 +54,9 @@ public struct Interaction_DragView: View {
                         position: $position,
                         translation: $translation,
                         velocity: $velocity,
-                        reset: reset
+                        reset: reset,
+                        onRelease: { handleRelease(at: $0) }
                     )
-                    // The zero-distance gesture makes touch-down part of the driven
-                    // interaction and schedules the pattern's Reset input on release.
-                    .simultaneousGesture(releaseResetGesture)
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
@@ -68,19 +66,14 @@ public struct Interaction_DragView: View {
         .onAppear(perform: resetToCenter)
     }
 
-    private var releaseResetGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onEnded { _ in
-                guard Self.shouldReset(position) else { return }
-                // Origami pulses Reset when interaction turns off and both Position
-                // axes are within the placed graph's 100-point center tolerance.
-                DispatchQueue.main.async {
-                    reset = true
-                    DispatchQueue.main.async {
-                        reset = false
-                    }
-                }
-            }
+    private func handleRelease(at releasedPosition: CGSize) {
+        guard Self.shouldReset(releasedPosition) else { return }
+        // Origami pulses Reset when interaction turns off and both Position axes
+        // are within the placed graph's 100-point center tolerance.
+        reset = true
+        DispatchQueue.main.async {
+            reset = false
+        }
     }
 
     static func shouldReset(_ position: CGSize) -> Bool {
