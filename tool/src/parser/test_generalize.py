@@ -176,22 +176,44 @@ class TestInteractionCorpus(unittest.TestCase):
                             for color in out["decoded_colors"]),
                         f"Interaction_Drag missing decoded Purple RGBA token: {out['decoded_colors']}")
 
-        # A Color is accepted only when the FlatBuffers value union declares both
-        # discriminator field 0 and payload field 4. Ordinary graph tables and a
-        # payload with a corrupted tag must not be decoded as color values.
+        # A Color is accepted only through a typed value wrapper whose tag agrees
+        # with payload field 17. Even the genuine color table is rejected without
+        # owner metadata or with an unrelated tag, proving color-like bytes alone
+        # cannot be misclassified. A corrupted union discriminator is also rejected.
         graph = Graph(read_graph_bytes(p))
         self.assertIsNone(graph.decode_value(settings["table"]))
-        purple_offset = next(
-            offset for offset in range(graph.placed_root_offset(), graph.N - 40)
-            if (value := graph.decode_value(offset)) is not None
-            and value.get("type") == "color"
+
+        settings_info = graph.table(settings["table"])
+        ports = graph.vector_entries(graph.field_uoffset_target(settings_info, 5))
+        momentum_port = next(
+            graph.table(offset) for offset in ports
+            if graph.astr(graph.field_uoffset_target(graph.table(offset), 2))
+            == "Momentum Friction"
+        )
+        number_offset = graph.field_uoffset_target(momentum_port, 4)
+        number_tag = graph.field_u32(momentum_port, 0)
+        self.assertIsNone(graph.decode_value(number_offset))
+        self.assertIsNone(graph.decode_value(number_offset, number_tag ^ 0xFFFFFFFF))
+        self.assertEqual(graph.decode_value(number_offset, number_tag),
+                         {"type": "number", "value": 8.0})
+
+        purple_offset, purple_value = next(
+            (offset, value) for offset, value in graph.typed_value_payloads(
+                graph.placed_root_offset())
+            if value.get("type") == "color"
             and abs(value["red"] - 221 / 255) < 1e-12
             and abs(value["green"] - 112 / 255) < 1e-12
             and abs(value["blue"] - 223 / 255) < 1e-12
         )
+        purple_info = graph.table(purple_offset)
+        purple_tag = graph.field_u32(purple_info, 17)
+        self.assertIsNone(graph.decode_value(purple_offset))
+        self.assertIsNone(graph.decode_value(purple_offset, purple_tag ^ 0xFFFFFFFF))
+        self.assertEqual(graph.decode_value(purple_offset, purple_tag), purple_value)
+
         corrupted = bytearray(graph.d)
-        corrupted[purple_offset + 7] = 2
-        self.assertIsNone(Graph(bytes(corrupted)).decode_value(purple_offset))
+        corrupted[purple_offset + graph.field_offset(purple_info, 0)] = 2
+        self.assertIsNone(Graph(bytes(corrupted)).decode_value(purple_offset, purple_tag))
 
 
 class TestStabilityAcrossCorpus(unittest.TestCase):

@@ -39,41 +39,45 @@ public struct Interaction_DragView: View {
     )
 
     public var body: some View {
-        purple
-            .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(screenColor)
-                    .frame(width: screenSize.width, height: screenSize.height)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 15, style: .continuous)
-                            .fill(.white)
-                            .frame(width: layerSize.width, height: layerSize.height)
-                            .drag(
-                                momentum: true,
-                                bounds: dragBounds,
-                                position: $position,
-                                reset: resetPulse,
-                                momentumFriction: 8,
-                                rubberBandFriction: 8,
-                                rubberBandTension: 100
-                            )
-                            // Interaction → Equals (100-point tolerance) → Pulse → Reset.
-                            // Toggling models a pulse edge, so consecutive qualifying
-                            // releases each reset rather than leaving a latched Bool.
-                            .simultaneousGesture(
-                                DragGesture(minimumDistance: 0)
-                                    .onEnded { _ in
-                                        if abs(position.width) <= 100,
-                                           abs(position.height) <= 100 {
-                                            resetPulse.toggle()
-                                        }
+        ZStack {
+            // The Purple artboard remains visible as an exact 30-point frame.
+            purple
+
+            // The rounded screen is an explicit primary shape rather than a
+            // background modifier, preserving its inset edge in captured output.
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(screenColor)
+                .frame(width: screenSize.width, height: screenSize.height)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        .fill(.white)
+                        .frame(width: layerSize.width, height: layerSize.height)
+                        .drag(
+                            momentum: true,
+                            bounds: dragBounds,
+                            position: $position,
+                            reset: resetPulse,
+                            momentumFriction: 8,
+                            rubberBandFriction: 8,
+                            rubberBandTension: 100
+                        )
+                        // Interaction → Equals (100-point tolerance) → Pulse → Reset.
+                        // Toggling models a pulse edge, so consecutive qualifying
+                        // releases each reset rather than leaving a latched Bool.
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 0)
+                                .onEnded { _ in
+                                    if abs(position.width) <= 100,
+                                       abs(position.height) <= 100 {
+                                        resetPulse.toggle()
                                     }
-                            )
-                    }
-            }
-            .frame(width: referenceSize.width, height: referenceSize.height)
-            .ignoresSafeArea()
-            .statusBarHidden(true)
+                                }
+                        )
+                }
+        }
+        .frame(width: referenceSize.width, height: referenceSize.height)
+        .ignoresSafeArea()
+        .statusBarHidden(true)
     }
 
     // The 120×120 moving layer remains inside the 315×607 rounded screen.

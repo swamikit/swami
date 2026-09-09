@@ -117,27 +117,41 @@ class Graph:
         target = slot + self.u32(slot)
         return target if 0 <= target < self.N else None
 
-    def decode_value(self, value_off):
-        """Decode an Origami inline value-union payload.
+    def field_u32(self, tinfo, field_idx):
+        """Read a present 32-bit scalar field without treating it as a uoffset."""
+        t, _, _, ts = tinfo
+        fo = self.field_offset(tinfo, field_idx)
+        if fo is None or fo + 4 > ts or t + fo + 4 > self.N: return None
+        return self.u32(t + fo)
 
-        These payload tables use a shared value vtable. A Number stores its Float64 in
-        field 1 at table offset 4. A Color stores union discriminator 3 in field 0 and
-        its inline payload in field 4; that payload is a four-Float64 RGBA struct.
-        Checking the declared fields (rather than only byte positions) prevents an
-        unrelated table with color-like bytes from being accepted as a Color value.
+    def decode_value(self, value_off, expected_tag=None):
+        """Decode a typed Origami value-union payload.
+
+        `expected_tag` comes from the union owner (a port record or value wrapper).
+        Origami repeats that tag in payload field 17. Requiring the two tags to agree
+        is the structural type boundary: a table is never classified from a convenient
+        vtable/byte pattern alone.
+
+        Once authenticated, a Number stores its Float64 in field 1 at table offset 4.
+        A Color additionally declares discriminator 3 in field 0 and stores its inline
+        four-Float64 RGBA struct in field 4.
         """
         info = self.table(value_off)
-        if not info: return None
+        if not info or expected_tag is None: return None
         t, _, _, ts = info
+        payload_tag = self.field_u32(info, 17)
+        if payload_tag is None or payload_tag != expected_tag: return None
+
         f0, f1 = self.field_offset(info, 0), self.field_offset(info, 1)
-        if f1 == 4 and ts >= 12:
-            value = struct.unpack_from('<d', self.d, t + 4)[0]
+        if f0 is None and f1 == 4 and ts >= 12:
+            value = struct.unpack_from('<d', self.d, t + f1)[0]
             if value == value and abs(value) != float('inf'):
                 return {"type": "number", "value": value}
+
         color_payload = self.field_offset(info, 4)
         next_field = min(
             (offset for idx in range(5, (info[2] - 4) // 2)
-             if (offset := self.field_offset(info, idx)) is not None),
+             if idx != 17 and (offset := self.field_offset(info, idx)) is not None),
             default=ts,
         )
         if (f0 == 7 and self.d[t + f0] == 3 and color_payload == 8
@@ -148,6 +162,12 @@ class Graph:
                         "red": channels[0], "green": channels[1],
                         "blue": channels[2], "alpha": channels[3]}
         return None
+
+    def decode_port_value(self, port_info):
+        """Decode field 4 using the value-union tag carried by port field 0."""
+        value_off = self.field_uoffset_target(port_info, 4)
+        tag = self.field_u32(port_info, 0)
+        return self.decode_value(value_off, tag) if value_off is not None else None
 
     def node_port_defaults(self, node_table):
         """Decode named port defaults from a placed node's field-5 port vector."""
@@ -161,9 +181,8 @@ class Graph:
             port = self.table(port_off)
             if not port: continue
             name_off = self.field_uoffset_target(port, 2)
-            value_off = self.field_uoffset_target(port, 4)
             name = self.astr(name_off) if name_off is not None else None
-            value = self.decode_value(value_off) if value_off is not None else None
+            value = self.decode_port_value(port)
             if name and value is not None:
                 defaults[name] = value
         return defaults
@@ -176,19 +195,34 @@ class Graph:
             # Port records in this format have a 16-byte vtable and 40-byte table.
             if not port or port[2:4] != (16, 40): continue
             name_off = self.field_uoffset_target(port, 2)
-            value_off = self.field_uoffset_target(port, 4)
             name = self.astr(name_off) if name_off is not None else None
-            value = self.decode_value(value_off) if value_off is not None else None
+            value = self.decode_port_value(port)
             if name and value is not None:
                 defaults[name] = value
         return defaults
 
+    def typed_value_payloads(self, start=0):
+        """Yield payload offsets and values reached through typed value wrappers.
+
+        Wrapper tables carry the tag in field 0 and the payload uoffset in field 1.
+        Restricting discovery to that relationship avoids probing every byte offset as
+        though it might be a value table.
+        """
+        for off in range(max(0, start), self.N):
+            wrapper = self.table(off)
+            if not wrapper or wrapper[2:4] != (8, 16): continue
+            tag = self.field_u32(wrapper, 0)
+            payload = self.field_uoffset_target(wrapper, 1)
+            if tag is None or payload is None: continue
+            value = self.decode_value(payload, tag)
+            if value is not None:
+                yield payload, value
+
     def color_values(self, start=0):
-        """Return unique RGBA payloads at or above `start`, in serialized order."""
+        """Return unique typed RGBA payloads at or above `start`, in serialized order."""
         seen, colors = set(), []
-        for off in range(max(0, start), self.N - 40):
-            value = self.decode_value(off)
-            if not value or value["type"] != "color": continue
+        for _, value in self.typed_value_payloads(start):
+            if value["type"] != "color": continue
             key = tuple(value[k] for k in ("red", "green", "blue", "alpha"))
             if key not in seen:
                 seen.add(key); colors.append(value)
