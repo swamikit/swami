@@ -18,8 +18,32 @@ env:
   FACTORY_REF: ed99cb3eca0d51c26cde524bfbd72680a645c73e
 
 jobs:
-  publish:
+  locate:
     if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      present: ${{ steps.artifact.outputs.present }}
+    steps:
+      - name: Locate this run's typed evidence artifact
+        id: artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          count=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts?name=builder-evidence" --jq .total_count)
+          test "$count" -le 1
+          if [ "$count" = "1" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: locate
+    if: needs.locate.outputs.present == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
@@ -40,13 +64,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           EVIDENCE_ROOT: ${{ runner.temp }}/evidence
         run: |
           set -euo pipefail
           PR=$(jq -r .pr "$EVIDENCE_ROOT/delivery/manifest.json")
-          test "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)" = "$SHA"
+          pr_meta=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}")
+          test "$(jq -r .head.sha <<<"$pr_meta")" = "$SHA"
+          run_meta=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")
+          jq -e --argjson pr "$PR" '.pull_requests | map(.number) | index($pr) != null' <<<"$run_meta" >/dev/null
           gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" --jq '.[].number' | grep -Fxq "$PR"
-          python3 - "$PR" "$SHA" "$EVIDENCE_ROOT" <<'PY'
+          artifact=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts?name=builder-evidence")
+          test "$(jq -r .total_count <<<"$artifact")" = "1"
+          test "$(jq -r '.artifacts[0].workflow_run.id' <<<"$artifact")" = "$RUN_ID"
+          test "$(jq -r '.artifacts[0].workflow_run.head_sha' <<<"$artifact")" = "$SHA"
+          python3 - "$PR" "$SHA" "$EVIDENCE_ROOT" "$RUN_ID" "$RUN_ATTEMPT" <<'PY'
           import json
           import re
           import sys
@@ -56,6 +89,8 @@ jobs:
           manifest = json.loads((root / "delivery/manifest.json").read_text(encoding="utf-8"))
           if manifest.get("pr") != int(sys.argv[1]) or manifest.get("sha") != sys.argv[2]:
               raise SystemExit("evidence manifest does not match the triggering PR head")
+          if manifest.get("run_id") != int(sys.argv[4]) or manifest.get("run_attempt") != int(sys.argv[5]):
+              raise SystemExit("evidence manifest does not match the triggering run attempt")
           changed = str(manifest.get("changed_patterns") or "")
           if not re.fullmatch(r"[a-z0-9_]+:[A-Za-z0-9_]+(?: [a-z0-9_]+:[A-Za-z0-9_]+)*", changed):
               raise SystemExit("invalid changed-pattern manifest")
@@ -67,9 +102,15 @@ jobs:
           for line in results.splitlines():
               match = re.fullmatch(r"\| ([a-z0-9_]+) \| ([0-9]+(?:\.[0-9]+)?) \| (pass|fail) \|", line.strip())
               if match:
+                  if match.group(1) in rows:
+                      raise SystemExit("duplicate verification result in evidence manifest")
                   rows[match.group(1)] = (match.group(2), match.group(3))
+          pairs = []
           for pair in changed.split():
-              slug, _ = pair.split(":", 1)
+              slug, stem = pair.split(":", 1)
+              if slug in {item[0] for item in pairs} or stem in {item[1] for item in pairs}:
+                  raise SystemExit("duplicate slug or pattern stem in evidence manifest")
+              pairs.append((slug, stem))
               if slug not in rows:
                   raise SystemExit(f"missing verification result for {slug}")
               for relative in (f"swami/{slug}.png", f"origami/{slug}.png", f"diff/{slug}.png"):
@@ -78,6 +119,11 @@ jobs:
                       raise SystemExit(f"missing or unsafe evidence path: {relative}")
           PY
           files=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --paginate --jq '.[].filename')
+          test "$(printf '%s\n' "$files" | sed '/^$/d' | wc -l | tr -d ' ')" = "$(jq -r .changed_files <<<"$pr_meta")"
+          expected_stems=$(printf '%s\n' "$files" | sed -nE 's#^app/Swami/Patterns/([A-Za-z0-9_]+)[.]swift$#\1#p' | sort -u)
+          declared_stems=$(jq -r '.changed_patterns | split(" ")[] | split(":")[1]' "$EVIDENCE_ROOT/delivery/manifest.json" | sort -u)
+          test -n "$expected_stems"
+          test "$declared_stems" = "$expected_stems"
           for pair in $(jq -r .changed_patterns "$EVIDENCE_ROOT/delivery/manifest.json"); do
             stem="${pair##*:}"
             printf '%s\n' "$files" | grep -Fxq "app/Swami/Patterns/${stem}.swift"
