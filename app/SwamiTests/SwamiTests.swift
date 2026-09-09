@@ -1,10 +1,19 @@
+import SwiftUI
 import Testing
 @testable import Swami
 
 struct SwamiTests {
-    @Test func interactionDragUsesExpectedDimensions() async throws {
-        let view = InteractionDragView()
-        _ = view
-        #expect(true)
+    @Test func interactionDragMatchesRunnerGeometry() {
+        #expect(Interaction_DragView.interactionAreaInset == 30)
+        #expect(Interaction_DragView.interactionAreaCornerRadius == 20)
+        #expect(Interaction_DragView.cardSize == 120)
+        #expect(Interaction_DragView.cardCornerRadius == 15)
+        #expect(Interaction_DragView.resetTolerance == 100)
+        #expect(Interaction_DragView.shouldReset(CGSize(width: 100, height: -100)))
+        #expect(!Interaction_DragView.shouldReset(CGSize(width: 101, height: 0)))
+
+        let bounds = Interaction_DragView.dragBounds(in: CGSize(width: 375, height: 667))
+        #expect(bounds.min == CGSize(width: -97.5, height: -243.5))
+        #expect(bounds.max == CGSize(width: 97.5, height: 243.5))
     }
 }

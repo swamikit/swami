@@ -1,18 +1,37 @@
-# Interaction Drag
+# Interaction — Drag
 
-`Interaction_Drag` is the faithful SwiftUI rendering of the Origami drag pattern.
-It uses the exact 888×1212 artboard framing, centered 220×140 rounded card, tan card
-fill, and full-bleed presentation required by the runner evidence for issue #140.
+@Metadata {
+    @PageKind(sampleCode)
+    @PageImage(purpose: card, source: "Interaction_Drag")
+}
 
-## Behavior
+`Interaction_DragView` translates the Interaction Drag pattern into a full-screen
+SwiftUI composition. At the runner's 2× render scale, its 375×667-point canvas
+matches Origami's 750×1334 image: a purple canvas, a 30-point inset interaction
+area, and a centered 120×120-point white card.
 
-- Press and drag the card with touch or pointer input.
-- Motion is bounded within the artboard with rubber-band resistance while dragging.
-- Release settles the card with momentum-aware spring animation.
-- A fresh appearance resets the card to the centered resting position.
+## Interaction
 
-## Evidence
+Touching the card engages a zero-distance drag. While the card is moving,
+``View/drag(enable:momentum:bounds:start:position:translation:velocity:reset:)``:
 
-This page is bound to the current head and is intended to render useful content,
-not an empty shell. See the Builder sticky comment for the Swami / Origami / diff
-image triplet and the H.264 interaction recording from the GitHub macOS runner.
+- publishes position, translation, and velocity;
+- applies rubber-band resistance beyond the inset area's boundaries;
+- projects release momentum and settles within those boundaries; and
+- accepts a reset pulse after a release within 100 points of center on both axes.
+
+The reset condition comes from the placed graph's `Snap to origin` branch: two
+approximately-equal comparisons feed an And, which pulses Drag's Reset input when
+interaction turns off.
+
+## Verification media
+
+The pull-request delivery generated from the same commit supplies the native
+Swami, Origami, and difference screenshots plus the H.264 Maestro recording.
+The page image is populated by the documentation publication pipeline from the
+verified Swami render; it is not a hand-authored substitute.
+
+## See Also
+
+- ``Interaction_DragView``
+- ``Drag``

@@ -17,19 +17,19 @@ agent — the cloud loop does not write there.
   (b) INTERACTION undriven — static shot can't verify the 100×100 oval growing from the touch point
       on press/tap. Needs a driven gesture in the sim (touch-injection tool) or Samuel driving live.
 - **drag() helper (origami.Drag)** — implemented with faithful ports (Position/Translation/Velocity
-  out; Enable/Momentum/bounds/Reset in). Physics constants (Rubber Band Friction: 0.15, Momentum
-  Friction: 0.2) use Origami-documented defaults verified against runner Inspector readout. Drive:
-  fling → momentum decay matches Origami feel; over-drag past bounds → rubber-band resists then
-  settles; release at rest → clamps; velocity reset on fresh touch.
-- **Interaction_Drag** — **ITEM 2 OF 69** (2026-09-07): Artboard 888×1212, tan card
-  (0xFFD3B4FF = rgba(255,211,180,255)), 220×140 centered, corner radius 20, drag with
-  momentum + rubber-band bounds, snap-to-center. Parser generalized via `placed_root_offset()`
-  (ADR-0013 structural walk). TRANSLATION COMPLETE — fidelity debts resolved (Issue #140):
-  - Card color: resolved via parser hex scan — solid tan 0xFFD3B4FF at pos 518344 confirmed.
-  - Artboard background: semi-transparent warm fill (geometric evidence).
-  - Drag bounds: symmetric limits from centered card geometry documented.
-  - Physics constants: Origami-documented defaults (Rubber Band Friction: 0.15, Momentum: 0.2).
-  Pending: runner pixel triplet (verify.yml) + interaction recording (Maestro H.264) + DocC PNG (post-merge.yml)
+  out; Enable/Momentum/bounds/Reset in). Rubber-band friction uses Origami's documented 0.15
+  default; release momentum comes from the gesture's measured projection rather than an iOS
+  scroll default. Drive: fling → bounded momentum settle; over-drag → rubber-band resistance;
+  reset → origin and all outputs clear; fresh touch → stale velocity clears.
+- **Interaction_Drag** — **ITEM 2 OF 69** (Issue #140 corrective delivery): the runner-produced
+  reference is 750×1334 pixels (375×667 points at 2×). It shows an `#DD70DF` full-screen canvas,
+  an inset 315×607-point `#E5A6E6` rounded interaction area, and a centered 120×120-point white
+  card with a 15-point radius. These values are read from the reference PNG's decoded RGBA pixels
+  and boundaries; they do not depend on an unproven packed-color channel interpretation.
+  The placed graph confirms `origami.Drag`, calculated layer-edge bounds, and a `Snap to origin`
+  branch that pulses Reset when both position axes are within 100 points of center on touch-up.
+  Implementation and DocC are complete; exact-head runner screenshots, Maestro H.264 recording,
+  and Reviewer verdict remain the integration gate. Resolve this item when that head merges.
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
 - **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches
@@ -96,12 +96,8 @@ agent — the cloud loop does not write there.
 
 ## Generalization Gap (Issue #83 learning)
 
-The parser successfully uses `placed_root_offset()` to structurally isolate the placed graph from embedded component internals. Issue #140 delivers Interaction_Drag with these gaps addressed:
+The parser successfully uses `placed_root_offset()` to isolate the placed graph from embedded component internals. Interaction Drag's corrected composition does not treat arbitrary 32-bit words as colors: its rendered RGBA values and geometry come from the runner reference, while structural parsing confirms the Drag, bounds, and snap-to-origin nodes.
 
-**Resolved (port values)**: Drag physics constants use Origami-documented defaults (Rubber Band Friction: 0.15, Momentum Friction: 0.2) with runner Inspector verification pending. Full parser port-value decoding is deferred until the runner produces evidence.
+Input-port union decoding remains a parser generalization task. Interaction Drag does not block on a guessed momentum-friction constant because its SwiftUI mapping uses the driven gesture's measured projection.
 
-**Resolved (color channels)**: Card fill `0xFFD3B4FF` confirmed as ARGB → rgba(255,211,180,255) via parser hex scan at pos 518344. The earlier `#B0E0B27B` reading was from the wrong byte region.
-
-**Pattern delivery complete** (per issue scope): Interaction_Drag is the first corpus entry. Parser, codegen, and DocC improvements are by-products recorded here.
-
-**Supersession**: Issue #140 supersedes #119 for Interaction_Drag. Verified merge: <merged PR link TBD>, verify run: <run link TBD>.-products recorded here.
+Issue #140 supersedes #119 only after Steward records the merged PR and exact-head verify run.
