@@ -13,6 +13,7 @@
   },
   "steward": {
     "marker": "<!-- steward:agent-factory -->",
+    "app_login": "agent-factory-steward[bot]",
     "ready_labels": [
       "ready"
     ],
