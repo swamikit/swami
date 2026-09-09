@@ -30,6 +30,7 @@
   },
   "builder": {
     "marker": "<!-- builder:agent-factory -->",
+    "app_login": "agent-factory-builder[bot]",
     "provider": "openrouter",
     "harness": "openai-compatible",
     "model": "openai/gpt-5.6-sol",
