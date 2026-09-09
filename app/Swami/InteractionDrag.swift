@@ -10,20 +10,20 @@ public struct InteractionDragView: View {
     private let artboardSize = CGSize(width: 888, height: 1212)
     private let cardSize = CGSize(width: 220, height: 140)
     private let artboardColor = Color(red: 221/255.0, green: 112/255.0, blue: 223/255.0)
-    private let cardColor = Color(red: 255/255.0, green: 255/255.0, blue: 255/255.0)
+    private let cardColor = Color.white
 
     public var body: some View {
         ZStack {
             artboardColor
-                .frame(width: artboardSize.width, height: artboardSize.height)
+                .ignoresSafeArea()
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(cardColor)
                 .frame(width: cardSize.width, height: cardSize.height)
                 .position(x: artboardSize.width / 2 + position.width, y: artboardSize.height / 2 + position.height)
+                .scaleEffect(isPressed ? 1.0 : 1.0)
                 .gesture(dragGesture)
         }
         .frame(width: artboardSize.width, height: artboardSize.height)
-        .ignoresSafeArea(.all)
         .onAppear {
             position = .zero
             restingPosition = .zero

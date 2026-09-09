@@ -7,11 +7,6 @@
 // - Card color: solid tan at pos 518344: 0xFFD3B4FF = rgba(255, 211, 180, 255).
 // - Artboard background: warm purple canvas, rendered full-bleed with no chrome.
 // - Interaction evidence: Maestro-driven press/drag/release/reset recording from the GitHub macOS runner.
-//
-// Issue #140 fidelity resolution (supersedes #119):
-// - Card color: resolved via parser hex scan — solid tan 0xFFD3B4FF confirmed.
-// - Artboard background: warm full-bleed canvas matching the runner capture.
-// - Drag bounds: symmetric limits from centered card geometry.
 import SwiftUI
 import Swami
 
