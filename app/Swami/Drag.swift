@@ -12,7 +12,9 @@ import SwiftUI
 /// - outputs → `position`, `translation`, `velocity`
 ///
 /// Reset policy remains outside this helper: graph composition pulses the faithful
-/// `reset` input, just as a patch connected to Drag's Reset port does in Origami.
+/// `reset` input, just as a patch connected to Drag's Reset port does in Origami. The
+/// `resetCount` adapter gives every pulse a distinct identity when the graph can fire
+/// repeatedly; the Boolean input remains available for direct level-to-pulse wiring.
 /// Rubber-band friction uses Origami's documented default of `0.15`. Momentum uses
 /// SwiftUI's gesture projection rather than an iOS scroll default; this preserves the
 /// gesture's measured direction and magnitude before the bounded spring settles it.
@@ -28,6 +30,8 @@ public struct Drag: ViewModifier {
     var translation: Binding<CGSize>?
     var velocity: Binding<CGSize>?
     var reset: Bool
+    /// Monotonic pulse identity for graph branches that can fire more than once.
+    var resetCount: UInt
 
     @State private var origin: CGSize = .zero
     @State private var current: CGSize = .zero
@@ -44,9 +48,11 @@ public struct Drag: ViewModifier {
             }
             .onChange(of: reset) { _, requested in
                 if requested {
-                    resetOutputs()
-                    settle(to: start)
+                    performReset()
                 }
+            }
+            .onChange(of: resetCount) { _, _ in
+                performReset()
             }
     }
 
@@ -117,9 +123,10 @@ public struct Drag: ViewModifier {
         (1 - (1 / ((overshoot * friction / span) + 1))) * span
     }
 
-    private func resetOutputs() {
+    private func performReset() {
         translation?.wrappedValue = .zero
         velocity?.wrappedValue = .zero
+        settle(to: start)
     }
 
     private func settle(to target: CGSize) {
@@ -140,7 +147,8 @@ public extension View {
         position: Binding<CGSize>? = nil,
         translation: Binding<CGSize>? = nil,
         velocity: Binding<CGSize>? = nil,
-        reset: Bool = false
+        reset: Bool = false,
+        resetCount: UInt = 0
     ) -> some View {
         modifier(Drag(
             enable: enable,
@@ -150,7 +158,8 @@ public extension View {
             position: position,
             translation: translation,
             velocity: velocity,
-            reset: reset
+            reset: reset,
+            resetCount: resetCount
         ))
     }
 }
