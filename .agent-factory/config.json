@@ -14,6 +14,9 @@
   "steward": {
     "marker": "<!-- steward:agent-factory -->",
     "app_login": "agent-factory-steward[bot]",
+    "trusted_operator_logins": [
+      "samuelalake"
+    ],
     "ready_labels": [
       "ready"
     ],
