@@ -26,6 +26,12 @@
     "model": "MiniMax-M2.7",
     "fallback_provider": "openrouter",
     "fallback_model": "cohere/north-mini-code:free",
+    "arbitration_provider": "gemini",
+    "arbitration_model": "gemini-2.5-flash-lite",
+    "arbitration_visual_evidence": true,
+    "arbitration_fallback_provider": "openrouter",
+    "arbitration_fallback_model": "openai/gpt-5.4-mini",
+    "arbitration_fallback_visual_evidence": true,
     "max_subtasks": 3
   },
   "builder": {
