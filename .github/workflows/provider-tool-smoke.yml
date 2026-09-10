@@ -27,14 +27,14 @@ jobs:
     with:
       factory_ref: fcd120d0a457304e3add5af2d08ff39dec394f32
       provider: openrouter
-      models: openai/gpt-5.6-sol
+      models: openai/gpt-6-astra
       max_candidates: 1
       builder_shape: true
       max_output_tokens: 2048
       prompt_bytes: 70000
       visual_input: true
-      input_cost_per_million: 2
-      output_cost_per_million: 10
+      input_cost_per_million: 10
+      output_cost_per_million: 50
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
@@ -43,13 +43,13 @@ jobs:
     with:
       factory_ref: fcd120d0a457304e3add5af2d08ff39dec394f32
       provider: openrouter
-      models: z-ai/glm-5.3-flash
+      models: openai/gpt-5.6-sol
       max_candidates: 1
       builder_shape: true
       max_output_tokens: 2048
       prompt_bytes: 70000
       visual_input: true
-      input_cost_per_million: 2
-      output_cost_per_million: 10
+      input_cost_per_million: 10
+      output_cost_per_million: 50
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
