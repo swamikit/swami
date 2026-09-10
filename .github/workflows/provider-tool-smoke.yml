@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   minimax:
-    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@a666e2d3788d8360bdfc625fbd3594ed03042a07
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@4cedf7986466993db55a62ba3da69debe09170c9
     with:
-      factory_ref: a666e2d3788d8360bdfc625fbd3594ed03042a07
+      factory_ref: 4cedf7986466993db55a62ba3da69debe09170c9
       provider: minimax
       models: MiniMax-M2.7
       max_candidates: 1
@@ -23,9 +23,9 @@ jobs:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
 
   openrouter-primary:
-    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@a666e2d3788d8360bdfc625fbd3594ed03042a07
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@4cedf7986466993db55a62ba3da69debe09170c9
     with:
-      factory_ref: a666e2d3788d8360bdfc625fbd3594ed03042a07
+      factory_ref: 4cedf7986466993db55a62ba3da69debe09170c9
       provider: openrouter
       models: openai/gpt-6-astra
       max_candidates: 1
@@ -39,9 +39,9 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
   openrouter-fallback:
-    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@a666e2d3788d8360bdfc625fbd3594ed03042a07
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@4cedf7986466993db55a62ba3da69debe09170c9
     with:
-      factory_ref: a666e2d3788d8360bdfc625fbd3594ed03042a07
+      factory_ref: 4cedf7986466993db55a62ba3da69debe09170c9
       provider: openrouter
       models: openai/gpt-5.6-sol
       max_candidates: 1
