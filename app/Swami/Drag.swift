@@ -28,7 +28,6 @@ public struct Drag: ViewModifier {
     @State private var previousTranslation: CGSize = .zero
     @State private var previousSampleTime: Date?
     @State private var sampledVelocity: CGSize = .zero
-    @State private var lastMotionVelocity: CGSize = .zero
 
     public func body(content: Content) -> some View {
         content
@@ -38,7 +37,6 @@ public struct Drag: ViewModifier {
             // pulse so repeated resets do not depend on returning a latch to false.
             .onChange(of: reset) { _, _ in
                 sampledVelocity = .zero
-                lastMotionVelocity = .zero
                 settle(to: .zero)
                 origin = .zero
             }
@@ -52,7 +50,6 @@ public struct Drag: ViewModifier {
                     origin = current
                     previousTranslation = value.translation
                     sampledVelocity = .zero
-                    lastMotionVelocity = .zero
                 } else if let previousSampleTime {
                     let elapsed = value.time.timeIntervalSince(previousSampleTime)
                     if elapsed > 0 {
@@ -60,9 +57,6 @@ public struct Drag: ViewModifier {
                             width: (value.translation.width - previousTranslation.width) / elapsed,
                             height: (value.translation.height - previousTranslation.height) / elapsed
                         )
-                        if sampledVelocity != .zero {
-                            lastMotionVelocity = sampledVelocity
-                        }
                     }
                     previousTranslation = value.translation
                 }
@@ -78,29 +72,17 @@ public struct Drag: ViewModifier {
                 velocity?.wrappedValue = sampledVelocity
             }
             .onEnded { value in
-                // The release seed must come from the FINAL VALID touch-up sample.
-                // onEnded can carry a newer translation and timestamp than the last
-                // onChanged callback, so derive the velocity from that endpoint
-                // delta/time pair whenever it is timed. A timed zero-delta touch-up
-                // means the finger was at rest: momentum must be zero, not an
-                // earlier motion vector preserved in lastMotionVelocity. The last
-                // non-zero sample is used only when the touch-up carries no new
-                // timing (elapsed <= 0), because then there is no valid endpoint
-                // sample to prefer.
-                var releaseVelocity = lastMotionVelocity
-                if let previousSampleTime {
-                    let elapsed = value.time.timeIntervalSince(previousSampleTime)
-                    if elapsed > 0 {
-                        releaseVelocity = CGSize(
-                            width: (value.translation.width - previousTranslation.width) / elapsed,
-                            height: (value.translation.height - previousTranslation.height) / elapsed
-                        )
-                        sampledVelocity = releaseVelocity
-                        if releaseVelocity != .zero {
-                            lastMotionVelocity = releaseVelocity
-                        }
-                    }
-                }
+                // Prefer the touch-up endpoint whenever it is newer than the last
+                // onChanged sample. A timed zero-delta endpoint is a valid rest sample
+                // and must produce zero momentum. If touch-up has no newer timestamp,
+                // retain the final sampled velocity rather than an older non-zero one.
+                let releaseVelocity = Self.releaseVelocity(
+                    previousTranslation: previousTranslation,
+                    previousSampleTime: previousSampleTime,
+                    finalTranslation: value.translation,
+                    finalSampleTime: value.time,
+                    sampledVelocity: sampledVelocity
+                )
                 let released = resist(CGSize(
                     width: origin.width + value.translation.width,
                     height: origin.height + value.translation.height
@@ -128,8 +110,24 @@ public struct Drag: ViewModifier {
                 settle(to: boundedTarget)
                 origin = boundedTarget
                 sampledVelocity = .zero
-                lastMotionVelocity = .zero
             }
+    }
+
+    /// Select the final valid release sample without reviving stale motion.
+    static func releaseVelocity(
+        previousTranslation: CGSize,
+        previousSampleTime: Date?,
+        finalTranslation: CGSize,
+        finalSampleTime: Date,
+        sampledVelocity: CGSize
+    ) -> CGSize {
+        guard let previousSampleTime else { return sampledVelocity }
+        let elapsed = finalSampleTime.timeIntervalSince(previousSampleTime)
+        guard elapsed > 0 else { return sampledVelocity }
+        return CGSize(
+            width: (finalTranslation.width - previousTranslation.width) / elapsed,
+            height: (finalTranslation.height - previousTranslation.height) / elapsed
+        )
     }
 
     /// Stick To Boundaries / Clip Position.

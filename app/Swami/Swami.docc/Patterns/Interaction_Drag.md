@@ -11,11 +11,11 @@ same momentum, rubber-band, and reset stages.
 ## Composition
 
 ``Interaction_DragView`` fills the 375×667-point reference viewport with
-Purple (`#DD70DF`) and hides application and status-bar chrome. A pale
-`#E5A6E6` rounded screen is inset by 30 points. Its centered 120×120 white
-layer is the drag target. These dimensions and rendered colors are pinned to the current runner's
-Origami reference rather than inferred from simulator chrome or an unrelated
-library definition.
+Purple (`#DD70DF`) and hides application and status-bar chrome. The centered
+120×120 white layer is the only visible shape and is the drag target; there is
+no inset interaction-area rectangle. These dimensions and rendered colors are
+pinned to the current runner's Origami reference rather than inferred from
+simulator chrome or an unrelated library definition.
 
 ## Interaction
 
