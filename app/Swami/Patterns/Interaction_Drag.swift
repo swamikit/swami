@@ -24,36 +24,21 @@ public struct Interaction_DragView: View {
     // Measured from the runner's 750×1334 Origami capture and represented at
     // the reference device's 2×, 375×667-point viewport.
     private static let referenceSize = CGSize(width: 375, height: 667)
-    private static let screenSize = CGSize(width: 315, height: 607)
-    private static let screenCornerRadius: CGFloat = 20
     private static let layerSize: CGFloat = 120
     private static let layerCornerRadius: CGFloat = 15
     private static let resetTolerance: CGFloat = 100
 
-    // ColorKit Purple and the source screen fill, respectively.
+    // ColorKit Purple. The reference composition is a plain purple artboard with
+    // only the white draggable layer visible — no inset screen layer.
     private static let artboardColor = Color(
         red: 221.0 / 255.0,
         green: 112.0 / 255.0,
         blue: 223.0 / 255.0
     )
-    private static let screenColor = Color(
-        red: 229.0 / 255.0,
-        green: 166.0 / 255.0,
-        blue: 230.0 / 255.0
-    )
 
     public var body: some View {
         ZStack {
-            // These are separate source layers. In particular, the rounded
-            // screen must not replace the Purple artboard background.
             Self.artboardColor
-
-            RoundedRectangle(
-                cornerRadius: Self.screenCornerRadius,
-                style: .continuous
-            )
-            .fill(Self.screenColor)
-            .frame(width: Self.screenSize.width, height: Self.screenSize.height)
 
             RoundedRectangle(
                 cornerRadius: Self.layerCornerRadius,
@@ -89,8 +74,8 @@ public struct Interaction_DragView: View {
     }
 
     private static var dragBounds: (min: CGSize, max: CGSize) {
-        let horizontal = (screenSize.width - layerSize) / 2
-        let vertical = (screenSize.height - layerSize) / 2
+        let horizontal = (referenceSize.width - layerSize) / 2
+        let vertical = (referenceSize.height - layerSize) / 2
         return (
             min: CGSize(width: -horizontal, height: -vertical),
             max: CGSize(width: horizontal, height: vertical)

@@ -276,6 +276,41 @@ class TestTypedValueShapes(unittest.TestCase):
         # Field 17 starts before all four channels fit, so this is not a Color.
         self.assertIsNone(graph.decode_value(table, 73))
 
+    def test_extra_field_breaks_the_variant_shape(self):
+        """Per-variant field-set validation: any unexpected field rejects the table."""
+        # A Number-shaped table with an extra unrelated field is not a Number.
+        data, table = self._value_table({1: 16, 2: 24, 17: 32})
+        struct.pack_into('<d', data, table + 16, 8.0)
+        struct.pack_into('<I', data, table + 24, 0)
+        struct.pack_into('<I', data, table + 32, 41)
+        self.assertIsNone(Graph(bytes(data)).decode_value(table, 41))
+        # A Color-shaped table with an extra unrelated field is not a Color.
+        data, table = self._value_table({0: 6, 4: 16, 9: 48, 17: 56})
+        data[table + 6] = 3
+        struct.pack_into('<dddd', data, table + 16, 0.1, 0.2, 0.3, 1.0)
+        struct.pack_into('<I', data, table + 56, 73)
+        self.assertIsNone(Graph(bytes(data)).decode_value(table, 73))
+
+    def test_wrong_discriminator_presence_rejects_each_variant(self):
+        """A Number must lack the discriminator; a Color must carry subtype 3."""
+        # Discriminator present on a Number-shaped table -> not a Number.
+        data, table = self._value_table({0: 6, 1: 16, 17: 32})
+        data[table + 6] = 0
+        struct.pack_into('<d', data, table + 16, 8.0)
+        struct.pack_into('<I', data, table + 32, 41)
+        self.assertIsNone(Graph(bytes(data)).decode_value(table, 41))
+        # Discriminator absent on a Color-shaped table -> not a Color.
+        data, table = self._value_table({4: 16, 17: 48})
+        struct.pack_into('<dddd', data, table + 16, 0.1, 0.2, 0.3, 1.0)
+        struct.pack_into('<I', data, table + 48, 73)
+        self.assertIsNone(Graph(bytes(data)).decode_value(table, 73))
+        # Discriminator present but not 3 -> not a Color.
+        data, table = self._value_table({0: 6, 4: 16, 17: 48})
+        data[table + 6] = 2
+        struct.pack_into('<dddd', data, table + 16, 0.1, 0.2, 0.3, 1.0)
+        struct.pack_into('<I', data, table + 48, 73)
+        self.assertIsNone(Graph(bytes(data)).decode_value(table, 73))
+
 
 class TestStabilityAcrossCorpus(unittest.TestCase):
     """Every Interaction pattern locates SOME placed root — no silent failure."""

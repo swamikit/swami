@@ -161,30 +161,46 @@ class Graph:
         is the structural type boundary: a table is never classified from a convenient
         vtable/byte pattern alone.
 
-        Once authenticated, a Number is the payload shape with no field-0 subtype
-        discriminator and one inline Float64 in field 1. A Color declares subtype 3
-        in field 0 and carries an inline four-Float64 RGBA struct in field 4. Vtable
-        offsets and field spans are read structurally; they are not corpus constants.
+        Once authenticated, a Number is the payload shape whose complete field set is
+        exactly {1, 17}: no field-0 subtype discriminator, one inline Float64 in
+        field 1, and the repeated union tag in field 17. A Color's complete field set
+        is exactly {0, 4, 17}: subtype byte 3 in field 0, an inline four-Float64 RGBA
+        struct in field 4, and the tag in field 17. Any additional or missing field
+        fails the per-variant shape proof and the table is not decoded — a table is
+        never classified from a convenient vtable/byte pattern alone. Vtable offsets
+        and field spans are read structurally; they are not corpus constants.
         """
         info = self.table(value_off)
         if not info or expected_tag is None: return None
         payload_tag = self.field_u32(info, 17)
         if payload_tag is None or payload_tag != expected_tag: return None
 
+        present = self.present_fields(info)
         subtype = self.field_u8(info, 0)
+
+        # Number variant: full field set {1, 17}, discriminator absent, and the
+        # Float64 field's structural span must cover a complete Float64.
         number = self.field_inline_float64s(info, 1, 1)
-        if subtype is None and number is not None:
+        if present == {1, 17} and number is not None:
             value = number[0]
             if value == value and abs(value) != float('inf'):
                 return {"type": "number", "value": value}
 
+        # Color variant: full field set {0, 4, 17}, discriminator byte present and
+        # equal to 3, and the RGBA field's span must cover four complete Float64s.
         channels = self.field_inline_float64s(info, 4, 4)
-        if subtype == 3 and channels is not None:
+        if present == {0, 4, 17} and subtype == 3 and channels is not None:
             if all(c == c and 0.0 <= c <= 1.0 for c in channels):
                 return {"type": "color", "space": "sRGB", "channels": "RGBA",
                         "red": channels[0], "green": channels[1],
                         "blue": channels[2], "alpha": channels[3]}
         return None
+
+    def present_fields(self, info):
+        """Indices of the fields a table's vtable actually populates."""
+        _, vt, vs, _ = info
+        return {i for i in range((vs - 4) // 2)
+                if self.field_offset(info, i) is not None}
 
     def decode_port_value(self, port_info):
         """Decode field 4 using the value-union tag carried by port field 0."""

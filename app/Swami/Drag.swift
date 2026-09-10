@@ -78,24 +78,29 @@ public struct Drag: ViewModifier {
                 velocity?.wrappedValue = sampledVelocity
             }
             .onEnded { value in
-                // onEnded can carry a newer translation and timestamp than the
-                // final onChanged callback. Sample that endpoint before clearing
-                // touch state. SwiftUI also commonly repeats the final translation
-                // at touch-up; that zero-delta callback must not erase the last
-                // actual motion sample used by Origami's Add Momentum stage.
+                // The release seed must come from the FINAL VALID touch-up sample.
+                // onEnded can carry a newer translation and timestamp than the last
+                // onChanged callback, so derive the velocity from that endpoint
+                // delta/time pair whenever it is timed. A timed zero-delta touch-up
+                // means the finger was at rest: momentum must be zero, not an
+                // earlier motion vector preserved in lastMotionVelocity. The last
+                // non-zero sample is used only when the touch-up carries no new
+                // timing (elapsed <= 0), because then there is no valid endpoint
+                // sample to prefer.
+                var releaseVelocity = lastMotionVelocity
                 if let previousSampleTime {
                     let elapsed = value.time.timeIntervalSince(previousSampleTime)
                     if elapsed > 0 {
-                        sampledVelocity = CGSize(
+                        releaseVelocity = CGSize(
                             width: (value.translation.width - previousTranslation.width) / elapsed,
                             height: (value.translation.height - previousTranslation.height) / elapsed
                         )
-                        if sampledVelocity != .zero {
-                            lastMotionVelocity = sampledVelocity
+                        sampledVelocity = releaseVelocity
+                        if releaseVelocity != .zero {
+                            lastMotionVelocity = releaseVelocity
                         }
                     }
                 }
-                let releaseVelocity = lastMotionVelocity
                 let released = resist(CGSize(
                     width: origin.width + value.translation.width,
                     height: origin.height + value.translation.height
