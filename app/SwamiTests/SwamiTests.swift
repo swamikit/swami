@@ -74,15 +74,35 @@ struct DragTests {
         ) == .zero)
     }
 
-    @Test func outOfOrderTouchUpKeepsLastValidVelocity() {
+    @Test func outOfOrderTouchUpKeepsLastValidSample() {
         let time = Date(timeIntervalSinceReferenceDate: 100)
+        let lastTranslation = CGSize(width: 20, height: 30)
+        let staleTouchUp = CGSize(width: 10, height: 40)
         let lastVelocity = CGSize(width: -120, height: 80)
-        #expect(Drag.releaseVelocity(
-            previousTranslation: CGSize(width: 20, height: 30),
+        let finalTranslation = Drag.finalValidTranslation(
+            previousTranslation: lastTranslation,
             previousSampleTime: time,
-            finalTranslation: CGSize(width: 10, height: 40),
+            touchUpTranslation: staleTouchUp,
+            touchUpTime: time.addingTimeInterval(-0.1)
+        )
+        #expect(finalTranslation == lastTranslation)
+        #expect(Drag.releaseVelocity(
+            previousTranslation: lastTranslation,
+            previousSampleTime: time,
+            finalTranslation: finalTranslation,
             finalSampleTime: time.addingTimeInterval(-0.1),
             sampledVelocity: lastVelocity
         ) == lastVelocity)
+    }
+
+    @Test func newerTouchUpSuppliesReleasedPosition() {
+        let time = Date(timeIntervalSinceReferenceDate: 100)
+        let touchUp = CGSize(width: 30, height: 25)
+        #expect(Drag.finalValidTranslation(
+            previousTranslation: CGSize(width: 20, height: 30),
+            previousSampleTime: time,
+            touchUpTranslation: touchUp,
+            touchUpTime: time.addingTimeInterval(0.05)
+        ) == touchUp)
     }
 }

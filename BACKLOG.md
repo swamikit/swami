@@ -20,9 +20,10 @@ agent — the cloud loop does not write there.
   Rubber Band Friction 8, and Rubber Band Tension 100. Issue #215 drives fling decay,
   over-drag resistance, boundary settlement, release-at-rest, and fresh-touch velocity reset.
 - **Interaction_Drag** — **ITEM 2 OF 69**, UNVERIFIED pending the refreshed Issue #215
-  runner verdict. The current implementation targets the oracle's plain Purple `#DD70DF`
-  375×667 artboard with only the centered 120×120 white drag layer, momentum,
-  rubber-band bounds, and near-origin reset pulse. Parser regression coverage pins the
+  runner verdict. The current implementation targets the oracle's Purple `#DD70DF`
+  375×667 artboard and its inset lighter-lavender rounded canvas, with the centered
+  120×120 white drag layer, momentum, canvas-edge rubber-band bounds, and near-origin
+  reset pulse. Parser regression coverage pins the
   Drag constants (Momentum Friction 8, Rubber Band Friction 8, Rubber Band Tension 100).
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)

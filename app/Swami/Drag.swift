@@ -79,16 +79,22 @@ public struct Drag: ViewModifier {
                 // onChanged sample. A timed zero-delta endpoint is a valid rest sample
                 // and must produce zero momentum. If touch-up has no newer timestamp,
                 // retain the final sampled velocity rather than an older non-zero one.
+                let finalTranslation = Self.finalValidTranslation(
+                    previousTranslation: previousTranslation,
+                    previousSampleTime: previousSampleTime,
+                    touchUpTranslation: value.translation,
+                    touchUpTime: value.time
+                )
                 let releaseVelocity = Self.releaseVelocity(
                     previousTranslation: previousTranslation,
                     previousSampleTime: previousSampleTime,
-                    finalTranslation: value.translation,
+                    finalTranslation: finalTranslation,
                     finalSampleTime: value.time,
                     sampledVelocity: sampledVelocity
                 )
                 let released = resist(CGSize(
-                    width: origin.width + value.translation.width,
-                    height: origin.height + value.translation.height
+                    width: origin.width + finalTranslation.width,
+                    height: origin.height + finalTranslation.height
                 ))
                 current = released
                 position?.wrappedValue = released
@@ -114,6 +120,21 @@ public struct Drag: ViewModifier {
                 origin = boundedTarget
                 sampledVelocity = .zero
             }
+    }
+
+    /// Use touch-up only when it is at least as recent as the last accepted move.
+    /// An out-of-order callback must not rewind the released position while its
+    /// velocity comes from a different sample.
+    static func finalValidTranslation(
+        previousTranslation: CGSize,
+        previousSampleTime: Date?,
+        touchUpTranslation: CGSize,
+        touchUpTime: Date
+    ) -> CGSize {
+        guard let previousSampleTime, touchUpTime < previousSampleTime else {
+            return touchUpTranslation
+        }
+        return previousTranslation
     }
 
     /// Select the final valid release sample without reviving stale motion.
