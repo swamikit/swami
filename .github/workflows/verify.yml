@@ -29,7 +29,7 @@ permissions:
 env:
   APP_PROJECT: app/Swami.xcodeproj
   SCHEME: SwamiHost
-  FACTORY_REF: fcd120d0a457304e3add5af2d08ff39dec394f32
+  FACTORY_REF: a666e2d3788d8360bdfc625fbd3594ed03042a07
   MAESTRO_VERSION: 2.7.0
   VISUAL_SANITY_FLOOR: "0.50"
 
