@@ -45,21 +45,24 @@ public struct Drag: ViewModifier {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
+                // Keep the translation and timestamp from the same valid sample.
+                // A duplicate or out-of-order callback must not move the baseline
+                // used to compute touch-up velocity.
+                if let previousSampleTime, value.time <= previousSampleTime { return }
                 if previousSampleTime == nil {
                     // Reset remaining velocity on every new touch-down.
                     origin = current
-                    previousTranslation = value.translation
                     sampledVelocity = .zero
-                } else if let previousSampleTime {
-                    let elapsed = value.time.timeIntervalSince(previousSampleTime)
-                    if elapsed > 0 {
-                        sampledVelocity = CGSize(
-                            width: (value.translation.width - previousTranslation.width) / elapsed,
-                            height: (value.translation.height - previousTranslation.height) / elapsed
-                        )
-                    }
-                    previousTranslation = value.translation
+                } else {
+                    sampledVelocity = Self.releaseVelocity(
+                        previousTranslation: previousTranslation,
+                        previousSampleTime: previousSampleTime,
+                        finalTranslation: value.translation,
+                        finalSampleTime: value.time,
+                        sampledVelocity: sampledVelocity
+                    )
                 }
+                previousTranslation = value.translation
                 previousSampleTime = value.time
 
                 let raw = CGSize(
@@ -121,7 +124,8 @@ public struct Drag: ViewModifier {
         finalSampleTime: Date,
         sampledVelocity: CGSize
     ) -> CGSize {
-        guard let previousSampleTime else { return sampledVelocity }
+        // Without a touch-down baseline there is no valid velocity for this drag.
+        guard let previousSampleTime else { return .zero }
         let elapsed = finalSampleTime.timeIntervalSince(previousSampleTime)
         guard elapsed > 0 else { return sampledVelocity }
         return CGSize(

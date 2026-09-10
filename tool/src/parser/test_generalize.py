@@ -311,6 +311,45 @@ class TestTypedValueShapes(unittest.TestCase):
         struct.pack_into('<I', data, table + 48, 73)
         self.assertIsNone(Graph(bytes(data)).decode_value(table, 73))
 
+    def test_malformed_populated_offsets_are_not_absent_fields(self):
+        for extra_offset in (1, 80, 255):
+            with self.subTest(extra_offset=extra_offset):
+                data, table = self._value_table({1: 16, 2: extra_offset, 17: 32})
+                struct.pack_into('<d', data, table + 16, 8.0)
+                struct.pack_into('<I', data, table + 32, 41)
+                self.assertIsNone(Graph(bytes(data)).decode_value(table, 41))
+
+    def test_rejects_aliases_header_overlap_and_truncated_fields(self):
+        for fields in ({1: 16, 17: 16}, {1: 16, 17: 14},
+                       {1: 2, 17: 32}, {1: 76, 17: 32},
+                       {1: 16, 17: 78}, {0: 16, 4: 16, 17: 48}):
+            with self.subTest(fields=fields):
+                data, table = self._value_table(fields)
+                self.assertIsNone(Graph(bytes(data)).decode_value(table, 0))
+
+    def test_rejects_nonfinite_numbers_and_invalid_color_channels(self):
+        for value in (float('nan'), float('inf'), -float('inf')):
+            with self.subTest(number=value):
+                data, table = self._value_table({1: 16, 17: 32})
+                struct.pack_into('<d', data, table + 16, value)
+                struct.pack_into('<I', data, table + 32, 41)
+                self.assertIsNone(Graph(bytes(data)).decode_value(table, 41))
+        for channel in range(4):
+            for value in (-0.01, 1.01, float('nan'), float('inf')):
+                with self.subTest(channel=channel, value=value):
+                    data, table = self._value_table({0: 7, 4: 8, 17: 40})
+                    data[table + 7] = 3
+                    channels = [0.0, 0.5, 1.0, 1.0]
+                    channels[channel] = value
+                    struct.pack_into('<dddd', data, table + 8, *channels)
+                    struct.pack_into('<I', data, table + 40, 73)
+                    self.assertIsNone(Graph(bytes(data)).decode_value(table, 73))
+
+    def test_missing_and_truncated_value_tables_fail_closed(self):
+        data, table = self._value_table({1: 16, 17: 32})
+        self.assertIsNone(Graph(bytes(data)).decode_value(None, 41))
+        self.assertIsNone(Graph(bytes(data[:table + 20])).decode_value(table, 41))
+
 
 class TestStabilityAcrossCorpus(unittest.TestCase):
     """Every Interaction pattern locates SOME placed root — no silent failure."""

@@ -30,10 +30,16 @@ The view maps the placed graph in the same order:
    are within 100 points of the origin. There is only one gesture recognizer, so
    the pulse cannot race a second local drag gesture.
 
-The parser reads the three Drag Settings values from typed Number payloads. Its
-Color decoder requires matching owner and payload union tags, then uses vtable
-field spans rather than corpus-specific byte offsets. Regression coverage checks
-multiple valid layouts and independently decodes Purple in Touch and Drag.
+Release velocity uses the final newer touch-up sample, including zero movement
+when the finger stops before release. Duplicate or older timestamps preserve the
+last valid sample; a new touch starts with zero velocity.
+
+The parser reads the three Drag Settings values from typed Number payloads. It
+accepts only Number fields `{1, 17}` and Color fields `{0, 4, 17}`, with matching
+owner and payload tags. Color requires subtype 3 and four Float64 RGBA channels.
+Populated fields must fit inside the table without overlapping each other or its
+header. Regression tests cover the corpus values, relocated fields, unexpected
+fields, invalid offsets, truncation, and nonfinite values.
 
 ## Evidence
 

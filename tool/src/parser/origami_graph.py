@@ -170,8 +170,23 @@ class Graph:
         never classified from a convenient vtable/byte pattern alone. Vtable offsets
         and field spans are read structurally; they are not corpus constants.
         """
+        if value_off is None: return None
         info = self.table(value_off)
         if not info or expected_tag is None: return None
+        # Validate every populated slot before reading values. Invalid offsets must
+        # not disappear as "absent" fields, and no scalar may alias another field
+        # or the table's signed vtable pointer.
+        _, vt, vs, ts = info
+        offsets = {i: self.u16(vt + 4 + i * 2) for i in range((vs - 4) // 2)
+                   if self.u16(vt + 4 + i * 2)}
+        widths = ({1: 8, 17: 4} if set(offsets) == {1, 17}
+                  else {0: 1, 4: 32, 17: 4} if set(offsets) == {0, 4, 17}
+                  else None)
+        if widths is None: return None
+        spans = sorted((offsets[i], offsets[i] + width) for i, width in widths.items())
+        if any(start < 4 or end > ts for start, end in spans): return None
+        if any(end > next_start for (_, end), (next_start, _) in zip(spans, spans[1:])):
+            return None
         payload_tag = self.field_u32(info, 17)
         if payload_tag is None or payload_tag != expected_tag: return None
 
