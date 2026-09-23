@@ -40,10 +40,13 @@ iOS stand-in. Node/edge counts are unchanged (24 / 19). Regression guard:
 - **Union tag.** The populated *slot* within `f[4]` encodes the value *type* (scalar number
   vs Point vs Color-RGBA). Only the scalar case is decoded; a slot→type map is needed for
   multi-component values.
-- **Color channel order** (ARGB vs RGBA) is not determinable from the bytes alone — the same
-  ambiguity `BACKLOG.md` records for the card fill `#B0E0B27B`. Locking it in requires an
-  Origami Inspector AX readout (the macOS runner / Samuel's Mac), so Color decoding is
-  intentionally deferred rather than guessed.
+- **Color is a packed `uint32`.** The card fill `#B0E0B27B` appears in the placed region as
+  the bytes `7B B2 E0 B0` (little-endian `0xB0E0B27B`) — not four doubles, not a hex string,
+  not a ColorKit name reference in the graph. So decoding a color to a hex is a `u32` read;
+  the only open question is the **channel order** (ARGB vs RGBA), which is not determinable
+  from the bytes alone (the ambiguity `BACKLOG.md` records). Locking the order in requires an
+  Origami Inspector AX readout (the macOS runner / Samuel's Mac), so the order — not the
+  extraction — is what stays deferred rather than guessed.
 - **Geometry is not a stored literal.** The card size (220×140) and artboard (888×1212)
   appear nowhere in the buffer as f32 or f64 — they are derived or device-preset, so layout
   geometry needs separate handling from scalar port defaults.
