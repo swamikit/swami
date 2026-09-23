@@ -254,6 +254,41 @@ class TestPlacedGraphIsolation(unittest.TestCase):
         if checked == 0:
             self.skipTest("no screen-bearing corpus fetchable (no network / origami.design down)")
 
+    def test_screen_candidate_always_outranks_density(self):
+        """Invariant (ADR-0017, phase-1 selection): if ANY candidate node-vector owns a
+        `*.Screen`, `placed_node_vector()` MUST select a screen-bearing vector — a denser
+        non-screen library component can never win. This is the general guarantee (proven
+        against every candidate on the file), stronger than `test_selector_picks_artboard_
+        vector`'s "the chosen vector happens to have a screen": it fails if the density
+        heuristic ever overrides a real artboard on the same document."""
+        def owns_screen(g, base, count):
+            return any((g._owns_type(e) or "").endswith(".Screen")
+                       for e in g.vec_elems(base, count))
+
+        checked = 0
+        for name in ("Animation_Delay.origami", "Logic_Counter.origami",
+                     "Interaction_Drag.origami", "Interaction_Touch.origami"):
+            p = _fetch_corpus_file(name)
+            if not p:
+                continue
+            checked += 1
+            with self.subTest(pattern=name):
+                g = Graph(read_graph_bytes(p))
+                cands = g.node_vectors()
+                any_candidate_has_screen = any(
+                    owns_screen(g, b, c) for (_p, c, b) in cands)
+                nv = g.placed_node_vector()
+                self.assertIsNotNone(nv, f"{name}: no placed node vector")
+                base, count = nv
+                if any_candidate_has_screen:
+                    self.assertTrue(
+                        owns_screen(g, base, count),
+                        f"{name}: a screen-bearing candidate exists but the selector chose "
+                        f"a non-screen vector — visual density outranked the real artboard "
+                        f"(the P1 failure mode phase-1 selection must prevent).")
+        if checked == 0:
+            self.skipTest("no screen-bearing corpus fetchable (no network / origami.design down)")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -52,7 +52,9 @@ oracle — means, not a deliverable.
 - The placed graph is found **structurally** (ADR-0017), not by byte offset: scan
   for node-vectors (FlatBuffers vectors of patch-type tables) and select the one
   owning the artboard (a `*.Screen` node) — library patch-defs never contain a
-  screen. Touch → **51 placed nodes / 41 edges** (the ~25 functional patches plus
+  screen. (This **supersedes** the earlier `tail=360000` byte-offset and the
+  `placed_root_offset()` field-14 boundary heuristics — both are historical and no
+  longer used; see ADR-0017's *Supersedes*. Do not treat them as current behavior.) Touch → **51 placed nodes / 41 edges** (the ~25 functional patches plus
   comments/bindings/layers), vs 356/395 library-inclusive; `Interaction_Drag` →
   24 nodes / 19 edges with `origami.Drag` as ONE node. The parser now decodes edges.
   A document with no detected `*.Screen` (some patterns, or non-iOS artboards like

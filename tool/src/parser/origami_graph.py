@@ -169,6 +169,16 @@ class Graph:
 
         Offset-reachability from the library root is NOT used: components reference their
         nodes by id, so it fails to bound the library (see ADR-0017).
+
+        Selection is two explicit phases so the artboard anchor is a hard filter, never
+        merely a sort weight that a denser vector could tie-break past:
+          Phase 1 (exact). If ANY candidate owns an artboard (`*.Screen`), the placed
+            graph is among the screen-bearing candidates only — a library patch-definition
+            never contains a screen. A merely-denser non-screen vector therefore CANNOT be
+            selected while a real artboard exists. Screen-bearing candidates are ranked by
+            density/visual/offset to disambiguate multi-screen docs.
+          Phase 2 (heuristic). Only when NO candidate owns a screen, fall back to highest
+            visual-layer density (provisional; parse() flags it via `selection_warning`).
         """
         cands = self.node_vectors()
         if not cands: return None
@@ -179,8 +189,12 @@ class Graph:
             visual = sum(1 for t in typed if t in VISUAL_LAYERS)
             density = visual / len(typed) if typed else 0.0
             scored.append((has_screen, density, visual, b, c))
-        scored.sort(key=lambda s: (s[0], s[1], s[2], s[3]), reverse=True)
-        best = scored[0]
+        # Phase 1: restrict to artboard-bearing candidates when any exist; else (phase 2)
+        # rank the whole set by density. Within the chosen pool, density > visual > offset.
+        screen_cands = [s for s in scored if s[0]]
+        pool = screen_cands if screen_cands else scored
+        pool.sort(key=lambda s: (s[1], s[2], s[3]), reverse=True)
+        best = pool[0]
         return (best[3], best[4])
 
     def decode_nodes(self, base, count):
