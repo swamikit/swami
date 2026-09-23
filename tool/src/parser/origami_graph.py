@@ -183,6 +183,31 @@ class Graph:
         best = scored[0]
         return (best[3], best[4])
 
+    def _port_default(self, pinfo):
+        """A port's default value: inline f64 double(s) in its `f[4]` value-table.
+
+        A port stores its default as an inline IEEE-754 double; the slot within the
+        `f[4]` value-table encodes the value type (scalar / Point / Color-RGBA).
+        First cut: return the clean inline doubles found there (one for a scalar
+        port — validated against Origami defaults: Opacity 1.0, Scale 1.0, Pivot 0.5).
+        Multi-component type tagging (Point/Color) and geometry (derived, not stored
+        as literals) are follow-ups — see BACKLOG.
+        """
+        vslot = self.slots(pinfo).get(4)
+        if vslot is None: return None
+        f = self.field(vslot)
+        if f[0] != "tab": return None
+        vt = self.table(f[1])
+        if not vt: return None
+        out = []
+        for s in self.slots(vt).values():
+            if s + 8 <= self.N:
+                dv = struct.unpack_from('<d', self.d, s)[0]
+                # keep only clean finite magnitudes; a uoffset read as f64 is huge/denormal
+                if dv == dv and -1e12 < dv < 1e12 and (dv == 0 or abs(dv) >= 1e-4):
+                    out.append(round(dv, 6))
+        return out or None
+
     def decode_nodes(self, base, count):
         nodes, ports = {}, {}
         for e in self.vec_elems(base, count):
@@ -198,6 +223,7 @@ class Graph:
             nid = self.scalar(info, 0)
             name = next((s for s in strs if s != typ
                          and not s.startswith(("builtin", "origami", "ios", "com."))), None)
+            node_ports = []
             for slot in self.slots(info).values():        # ports = child vectors of tables w/ an id
                 f = self.field(slot)
                 if f[0] == "vec":
@@ -209,8 +235,13 @@ class Graph:
                             pf = self.field(psl)
                             if pf[0] == "str" and not TYPE_RE.match(pf[1]): pname = pf[1]; break
                         if pid is not None: ports[pid] = (name or typ, pname)
+                        dflt = self._port_default(pinfo)
+                        if pname and dflt is not None:
+                            node_ports.append({"port": pname, "default": dflt})
             if nid is not None:
-                nodes[nid] = {"id": nid, "type": typ, "name": name}
+                rec = {"id": nid, "type": typ, "name": name}
+                if node_ports: rec["ports"] = node_ports
+                nodes[nid] = rec
         return nodes, ports
 
     def connection_vector(self, nodes, min_count=4):
