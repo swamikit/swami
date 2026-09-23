@@ -1,14 +1,16 @@
 # ADR-0018: Decode input-port default values (inline f64 in the port value-table)
 
-- Status: Proposed — encoding characterized (below); the decoder is DEFERRED to its own PR.
-  A scalar-only reader was prototyped and validated (Opacity 1.0, Scale 1.0, Pivot 0.5,
-  DragSettings Momentum Friction 8.0) but **reverted** after review: without decoding the
-  value-type union it cannot distinguish scalar / Point / Color ports, so it mis-typed or
-  silently dropped non-scalar defaults. This ADR keeps the encoding findings; the reader
-  returns once the union tag is decoded (that is the gating work).
+- Status: Accepted (scalar arm). The value-type **union tag is decoded**, and a **type-gated
+  scalar-number reader** is implemented (`Graph._port_scalar_default`) and oracle-validated. The
+  first attempt was reverted because, without the union tag, it emitted a double for every slot
+  and so mis-typed Point/Color ports; the tag now gates it, so only confident scalar-number
+  defaults are emitted and every Point/Color/enum port is skipped rather than mis-read. Point,
+  Color, and integer/enum arms remain **deferred** (color additionally needs an Inspector
+  channel-order oracle — see Consequences).
 - Date: 2026-09-23
-- Follows: ADR-0017 (structural placed-graph detection). Addresses the constants half of the
-  ADR-0009 `drag()` TODO (research; implementation pending).
+- Follows: ADR-0017 (structural placed-graph detection). Delivers the scalar half of the
+  constants side of the ADR-0009 `drag()` TODO (DragSettings Momentum Friction is now read
+  from the graph).
 
 ## Context
 
@@ -22,34 +24,39 @@ the value is not where a flat scalar read expects it.
 ## Decision
 
 A port's default value is stored **inline as an IEEE-754 f64 double** in the port's `f[4]`
-value-table:
+value-table. The value-type **union is discriminated by that value-table's own vtable**:
 
-- A node's ports are its `f[5]` (and `f[6]`) child vectors.
-- Each port table is `f[1]` = ordinal id, `f[2]` = name, `f[4]` = value-table, `f[5]` =
-  compiled doc metadata.
-- The default lives in `f[4]` as an inline double. A reader *would* take the clean inline
-  doubles from `f[4]`'s field slots (a uoffset misread as f64 is huge or denormal, filtered
-  by magnitude) and attach them to each node's `ports`. This encoding is **characterized, not
-  implemented**: the prototype `_port_default()` reader was **reverted** (see Status) because
-  it could not classify the value-type union, so it is NOT in the tree today. It returns in a
-  follow-up PR once the union tag is decoded; that addition would be additive (edge decoding
-  is unchanged).
+- A node's ports are its child vectors; each port table carries the port `id`, `name`, and an
+  `f[4]` value-table.
+- **The union tag is vtable field 0 of the value-table.** When field 0 is present it holds a
+  small-int type tag — observed `1`/`2` for point-like (2-component) values and `3` for Color
+  (the packed-`u32` color case) — and the value is multi-component, so it is **not** a scalar
+  number.
+- **The scalar-number case is: field 0 ABSENT, and field 1 present as an inline finite double
+  at table offset 4.** `Graph._port_scalar_default()` reads exactly that and returns the float;
+  for every tagged (Point/Color) or otherwise-shaped table it returns `None`. Decoded scalars
+  are attached to each node as `scalar_port_defaults: {port_name: float}` in the parser output
+  (additive — node/edge decoding is unchanged). This is the type-gating whose absence caused
+  the first attempt to be reverted: a Point/Color port can no longer be emitted as a bogus
+  scalar, because its field-0 tag excludes it.
 
 ## Validation
 
-A prototype scalar reader — **since reverted** (see Status), so not present in the code — did
-reproduce Origami's documented defaults on `Interaction_Drag`: `builtin.layer.layer` Opacity
-**1.0**, Scale **1.0**, Pivot **0.5**, and `origami.DragSettings` **Momentum Friction 8.0**
-(read from the graph rather than an iOS stand-in), with node/edge counts unchanged (24 / 19).
-That validated the scalar *encoding* only. The reader and its regression guard
-(`TestPortDefaults`) are **not** in `origami_graph.py` / `test_generalize.py` yet — they land
-with the follow-up PR that decodes the value-type union.
+On `Interaction_Drag` the reader reproduces Origami's documented defaults **from the graph**,
+not iOS stand-ins: `origami.DragSettings` **Momentum Friction 8.0** and `builtin.layer.layer`
+**Opacity 1.0** / **End 1.0**, with node/edge counts unchanged (24 / 19). Corpus sanity across
+12 diverse private fixtures: 243 scalar defaults decoded, **0 out-of-range / garbage values**,
+and every Point/Color port (3124 tagged across the sample) correctly skipped. Regression guard:
+`TestScalarPortDefaults` in `test_generalize.py` (oracle assertions + a corpus-wide check that
+no decoded value is NaN/∞ or of implausible magnitude). `Scale`/`Pivot` are stored as tagged
+2-component values in this buffer (tag `2`), so they are intentionally **not** emitted as
+scalars — skipping is the safe behavior.
 
 ## Consequences / deferred
 
-- **Union tag.** The populated *slot* within `f[4]` encodes the value *type* (scalar number
-  vs Point vs Color-RGBA). Only the scalar case is decoded; a slot→type map is needed for
-  multi-component values.
+- **Point / integer-enum arms.** Point-like (tag `1`/`2`) and integer/enum defaults are not
+  decoded yet — the tag is identified, but the per-component layout (and the enum value map)
+  are follow-up work. The scalar reader deliberately leaves them untouched.
 - **Color is a packed `uint32` in a color-object table.** The card fill `#B0E0B27B` is stored
   as `0xB0E0B27B` (LE bytes `7B B2 E0 B0`) at field `f[4]` of a small color-object table — NOT
   inline in the port's value table (which carries only a type tag `3`), not four doubles, not a

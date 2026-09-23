@@ -91,15 +91,17 @@ agent — the cloud loop does not write there.
   `Utilities_Grid` 276→56. `parse()` marks every fallback result `selection:
   "visual-density-fallback"` **plus** a `selection_warning`, so callers treat it as provisional;
   the screen→vector linkage for the general no-artboard case is the residual open problem.
-- **Input-port default-value decoding** (M2, encoding cracked — impl pending): a port's default
-  lives INLINE as an **f64 double** in the port's `f[4]` value-table. Ports are the node's `f[5]`
-  (and `f[6]`) child vectors; each port table is `f[1]`=ordinal, `f[2]`=name, `f[4]`=value-table.
-  Verified on Interaction_Drag: layer `Opacity`=1.0, `Scale`=1.0, `Pivot`=0.5 (exact Origami
-  defaults), `origami.DragSettings` `Momentum Friction`=8.0. REMAINING: the populated slot within
-  `f[4]` is the union tag (scalar number vs Point vs Color-RGBA) — map slot→type so multi-component
-  values decode, then oracle-check the `drag()` physics constants. NOTE: card/artboard dimensions
-  (220×140, 888×1212) are NOT stored as literal doubles anywhere in the buffer — they're derived or
-  device-preset, so geometry needs separate handling from scalar port defaults.
+- **Input-port default-value decoding** (M2): SCALAR arm ✅ DONE (ADR-0018). The value-type union
+  tag is the value-table's vtable **field 0**: present → a tag (`1`/`2` point-like, `3` Color);
+  absent + field 1 = inline **f64** at offset 4 → a scalar number. `Graph._port_scalar_default()`
+  reads only that arm and attaches `scalar_port_defaults: {port: float}` to each node; Point/Color
+  ports are skipped (not mis-typed). Oracle-checked: `origami.DragSettings` `Momentum Friction`=8.0,
+  layer `Opacity`=1.0 — read from the graph, replacing iOS stand-ins for the `drag()` physics
+  constant. REMAINING: Point (tag `1`/`2`) + integer/enum arms (per-component layout / enum map);
+  Color (tag `3`) is a packed `u32` in a separate color-object table whose linkage and channel
+  order (ARGB vs RGBA) still need an Origami Inspector oracle (macOS runner / Samuel's Mac). NOTE:
+  card/artboard dimensions (220×140, 888×1212) are NOT stored as literal doubles anywhere in the
+  buffer — they're derived or device-preset, so geometry needs separate handling from scalar defaults.
 
 ## Infra self-healing loop (V4 prerequisites)
 - **`.github/ISSUE_TEMPLATE/infra-blocker.md`** (landed in PR #24) — structured evidence template for when a Builder or Review GA hits a runner-level failure (Origami install broken, sim boot fails, ImageMagick not available, etc.). Template auto-applies `label: infra-blocker` so downstream queries are label-based.

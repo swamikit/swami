@@ -329,5 +329,59 @@ class TestPlacedGraphIsolation(unittest.TestCase):
             self.skipTest("no screen-bearing corpus fetchable (no network / origami.design down)")
 
 
+class TestScalarPortDefaults(unittest.TestCase):
+    """Type-gated scalar input-port default decoding (ADR-0018).
+
+    The parser decodes ONLY the scalar-number arm of the value-type union — a port
+    whose value-table has no field-0 union tag and a finite double at field 1. It
+    must (a) reproduce documented oracle values and (b) never emit a garbage or
+    mis-typed value (the failure that got the first attempt reverted).
+    """
+
+    def test_drag_settings_and_layer_oracle(self):
+        """Oracle: Interaction_Drag decodes DragSettings Momentum Friction 8.0 and
+        layer Opacity 1.0 — read from the graph, not iOS stand-ins."""
+        p = _fetch_corpus_file("Interaction_Drag.origami")
+        if not p:
+            self.skipTest("Interaction_Drag.origami not fetchable (no network / origami.design down)")
+        out = parse(str(p))
+        # Node/edge topology is unchanged by the additive decoder.
+        self.assertEqual(out["placed_node_count"], 24, f"node count drifted: {out['placed_node_count']}")
+        self.assertEqual(out["edge_count"], 19, f"edge count drifted: {out['edge_count']}")
+        ds = [n for n in out["nodes"] if n["type"] == "origami.DragSettings"]
+        self.assertTrue(ds, "no origami.DragSettings node")
+        self.assertAlmostEqual(
+            ds[0].get("scalar_port_defaults", {}).get("Momentum Friction"), 8.0, places=6,
+            msg=f"DragSettings Momentum Friction != 8.0: {ds[0].get('scalar_port_defaults')}")
+        opacity_layers = [n for n in out["nodes"]
+                          if n["type"] == "builtin.layer.layer"
+                          and n.get("scalar_port_defaults", {}).get("Opacity") == 1.0]
+        self.assertTrue(opacity_layers, "no builtin.layer.layer decoded Opacity = 1.0")
+
+    def test_decoded_scalars_are_sane_and_typed(self):
+        """Across the corpus: every decoded default is a finite float in a sane range
+        (a uoffset/pointer misread as f64 is huge or denormal) — the decoder never
+        emits garbage, and it only ever attaches numeric scalars (Point/Color ports,
+        which carry a union tag, are skipped, not mis-typed)."""
+        checked = 0
+        for name in ISOLATION_CORPUS + INTERACTION_CORPUS:
+            p = _fetch_corpus_file(name)
+            if not p:
+                continue
+            checked += 1
+            out = parse(str(p))
+            with self.subTest(pattern=name):
+                for n in out["nodes"]:
+                    for pname, v in n.get("scalar_port_defaults", {}).items():
+                        self.assertIsInstance(v, float, f"{name}: {n['type']}.{pname} not a float: {v!r}")
+                        self.assertEqual(v, v, f"{name}: {n['type']}.{pname} is NaN")
+                        self.assertTrue(
+                            v == 0.0 or 1e-9 <= abs(v) <= 1e9,
+                            f"{name}: {n['type']}.{pname} out of sane range: {v} "
+                            f"(likely a mis-typed pointer, not a real scalar default)")
+        if checked == 0:
+            self.skipTest("no corpus fetchable (no network / origami.design down)")
+
+
 if __name__ == "__main__":
     unittest.main()

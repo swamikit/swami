@@ -236,12 +236,17 @@ entries. Run it before you push.
   Linux VM. Project: `app/Swami.xcodeproj`, scheme `SwamiHost`, sims are
   iOS 26.2. Compile gate is live; visual gate is the runner job per ADR-0013
   (SSIM informational per ADR-0014).
-- **Parser TODO** (unblocks faithful constants): decode a node's **input-port
-  default values** (schema-less FlatBuffers union), not just node types/names.
-  Needed to read exact patch defaults — e.g. origami.DragSettings' Momentum
-  Friction / Rubber Band Friction — instead of iOS-standard stand-ins.
-  `drag()` has faithful ports (Position/Translation/Velocity out;
-  Enable/Momentum/bounds/Reset in) but TODO constants until this lands.
+- **Input-port default values** (schema-less FlatBuffers union) — SCALAR arm
+  decoded (ADR-0018): the value-type union tag is the value-table's vtable
+  field 0 (present = tag: `1`/`2` point-like, `3` Color; absent + field 1 = an
+  inline `f64` scalar). The parser now emits `scalar_port_defaults` per node and
+  reads exact scalar patch constants from the graph — e.g. origami.DragSettings'
+  **Momentum Friction 8.0** instead of an iOS stand-in. REMAINING: Point/enum
+  arms, and Color (packed `u32` in a color-object table; channel order needs an
+  Origami Inspector oracle — macOS runner / Samuel's Mac). `drag()` has faithful
+  ports (Position/Translation/Velocity out; Enable/Momentum/bounds/Reset in);
+  its scalar constant now reads from the graph, Rubber Band Friction pending the
+  Point/tagged arms.
 
 ---
 
