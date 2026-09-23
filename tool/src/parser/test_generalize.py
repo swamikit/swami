@@ -286,6 +286,18 @@ class TestPlacedGraphIsolation(unittest.TestCase):
                         f"{name}: a screen-bearing candidate exists but the selector chose "
                         f"a non-screen vector — visual density outranked the real artboard "
                         f"(the P1 failure mode phase-1 selection must prevent).")
+                    # Stronger: the selected vector must be one of the ENUMERATED
+                    # screen-bearing candidates, tying the selection to the candidate pool.
+                    # This catches a regression where phase-1 is relaxed or the scoring pool
+                    # is widened (a non-screen candidate slipping in) even if the chosen
+                    # region coincidentally contains a screen — no non-screen candidate is
+                    # eligible once any screen-bearing candidate exists.
+                    screen_bases = {b for (_p, c, b) in cands if owns_screen(g, b, c)}
+                    self.assertIn(
+                        base, screen_bases,
+                        f"{name}: selected vector base {base} is not among the screen-bearing "
+                        f"candidates {sorted(screen_bases)} — the phase-1 artboard filter was "
+                        f"bypassed (a non-screen candidate was considered).")
         if checked == 0:
             self.skipTest("no screen-bearing corpus fetchable (no network / origami.design down)")
 
