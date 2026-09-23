@@ -76,17 +76,19 @@ PUBLIC_EXAMPLE = REPO_ROOT / "tool" / "examples" / "TouchOrigamiExample.origami"
 
 
 class TestPlacedRootStructural(unittest.TestCase):
-    """The structural locator picks a stable byte offset for every valid document."""
+    """The structural locator finds the placed node-vector for every valid document."""
 
     def test_public_touch_example_locates_placed_root(self):
         if not PUBLIC_EXAMPLE.exists():
             self.skipTest(f"{PUBLIC_EXAMPLE} not present")
         g = Graph(read_graph_bytes(PUBLIC_EXAMPLE))
-        off = g.placed_root_offset()
-        self.assertIsNotNone(off, "placed_root_offset returned None on TouchOrigamiExample")
-        # Sanity bounds: root is inside the file and above the file start.
-        self.assertGreater(off, 0x1000)
-        self.assertLess(off, g.N)
+        nv = g.placed_node_vector()
+        self.assertIsNotNone(nv, "placed_node_vector returned None on TouchOrigamiExample")
+        base, count = nv
+        # Sanity bounds: the node vector is inside the file and non-empty.
+        self.assertGreater(base, 0)
+        self.assertLess(base, g.N)
+        self.assertGreater(count, 0)
 
     def test_public_touch_example_kinds_match_oracle_shape(self):
         """The Touch demo's placed graph is dominated by layer patches + LongPress/DoubleTap."""
@@ -169,10 +171,12 @@ class TestStabilityAcrossCorpus(unittest.TestCase):
         for f in fetched:
             with self.subTest(pattern=f.name):
                 g = Graph(read_graph_bytes(f))
-                off = g.placed_root_offset()
-                self.assertIsNotNone(off, f"{f.name}: placed_root_offset returned None")
-                self.assertGreater(off, 0)
-                self.assertLess(off, g.N)
+                nv = g.placed_node_vector()
+                self.assertIsNotNone(nv, f"{f.name}: placed_node_vector returned None")
+                base, count = nv
+                self.assertGreater(base, 0)
+                self.assertLess(base, g.N)
+                self.assertGreater(count, 0)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,8 @@ agent — the cloud loop does not write there.
   rubber-band resists then settles; release at rest → clamps; velocity reset on fresh touch.
 - **Interaction_Drag** — **ITEM 2 OF 69** (2026-09-07): Artboard 888×1212, tan card
   #B0E0B27B, 220×140 centered, corner radius 20, drag with momentum + rubber-band bounds,
-  snap-to-center. Parser generalized via `placed_root_offset()` (ADR-0013 structural walk).
+  snap-to-center. Parser generalized via node-vector/artboard detection (ADR-0017):
+  24 placed nodes / 19 edges, `origami.Drag` as ONE node.
   TRANSLATION COMPLETE — pending runner verification (pixel triplet + Reviewer verdict).
   Card color channel order unproven; marked as TODO in source until parser confirms.
 
@@ -35,9 +36,12 @@ agent — the cloud loop does not write there.
   Registry drives the verify gate: `.github/patterns.txt` lists slugs → stems; the `changes`
   job reads it and passes `PATTERNS` to the pixel-gate. Each new pattern adds one entry to
   the registry AND one `case` to the ContentView switch — both in the same commit.
-- **Parser generalization** — ✅ landed with Interaction_Drag. `placed_root_offset()` now
-  structurally isolates the placed graph from embedded component internals. Pattern N+1
-  ready for translation.
+- **Parser generalization** — ✅ landed (ADR-0017). Node-vector scan + artboard
+  (`*.Screen`) anchoring structurally isolates the placed graph from embedded component
+  internals, and the parser now decodes edges. Validated head-to-head across the corpus
+  (Interaction_Drag 24 nodes / 19 edges; Animation/Logic/Scroll patterns collapse from
+  148–205 nodes / 3 phantom screens to ~17–24 / 1 screen). Supersedes the earlier
+  `placed_root_offset()` boundary. Pattern N+1 ready for translation.
 
 ## Follow-up ADRs on the same runner substrate (ADR-0013 enables)
 - **Parser verification via Origami Inspector** — osascript can read AX attributes of
@@ -66,12 +70,21 @@ agent — the cloud loop does not write there.
 - **ADRs 0001–0003 accounting**: the ADR directory jumps from 0004 to 0011 with no 0001-0003.
   Either recover them from history or explicitly note they were archived — silent gaps read
   as "you forgot how to number files."
+- **Regenerate the Touch example artifacts** — `tool/examples/TouchOrigamiExample.graph.json`
+  (and downstream `.ir.json` / `.generated.swift`) predate ADR-0017's parser and still carry the
+  old 49-node / no-edge shape. Regenerate from the Touch `.origami` (Mac-side; the fixture is
+  gitignored out of this repo) with the new parser and re-verify.
 
 ## Parser TODOs blocking faithful output
-- **Placed-vs-library generalization** (core challenge): fixed tail offset (360000) is tuned to the
-  Touch example; on Interaction_Drag (534 KB) it captures Drag's component internals as false
-  "placed" nodes. Need a structural way to find the document's placed graph (root reference), not a
-  byte offset. Blocks trustworthy translation of any pattern embedding composite patches.
+- **Placed-vs-library generalization** (core challenge) — ✅ RESOLVED (ADR-0017). Structural
+  node-vector + artboard (`*.Screen`) anchoring replaces the `tail=360000` byte offset and the
+  later `placed_root_offset()` boundary; `origami.Drag` now reads as one placed node and the
+  parser decodes edges.
+- **No-artboard fallback** (NEW, from the ADR-0017 corpus head-to-head): patterns where no
+  `*.Screen` is detected (observed `Loops_Sum`, `Layers_List`) fall back to the largest
+  non-library node-vector, which can grab a big library component (Layers_List → 140 nodes /
+  164 edges / 0 screens). Investigate why those patterns don't surface a `*.Screen` (different
+  artboard representation?) and harden the fallback.
 - **Input-port default-value decoding**: DragSettings port defaults (Momentum/Rubber Band Friction,
   Clip) are NOT reachable by naive vtable field-offset walking (returns zeros / canvas coords).
   Values are a typed value-union stored indirectly — needs real union tag→payload decoding. Blocks
@@ -93,7 +106,7 @@ agent — the cloud loop does not write there.
 
 ## Generalization Gap (Issue #83 learning)
 
-The parser now successfully uses `placed_root_offset()` to structurally isolate the placed graph from embedded component internals. However, the following gaps remain:
+The parser now uses structural node-vector + artboard (`*.Screen`) detection (ADR-0017) to isolate the placed graph from embedded component internals, and decodes edges. However, the following gaps remain:
 
 **Unresolved (port values)**: Exact drag physics constants (Momentum Friction, Rubber Band Friction, decel rate) are still placeholders from iOS defaults. These live as port default *values* inside origami.DragSettings — reading them needs FlatBuffers port-value decoding, which the parser doesn't implement yet.
 
