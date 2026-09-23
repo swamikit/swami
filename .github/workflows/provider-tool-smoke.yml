@@ -12,9 +12,9 @@ permissions:
 
 jobs:
   minimax:
-    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@4a65843726c4bd4ddc7191e2204d85d6b7d03374
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@9fd45842a57d26b184725f0f73d119f398eebd7a
     with:
-      factory_ref: 4a65843726c4bd4ddc7191e2204d85d6b7d03374
+      factory_ref: 9fd45842a57d26b184725f0f73d119f398eebd7a
       provider: minimax
       models: MiniMax-M2.7
       max_candidates: 1
@@ -25,9 +25,9 @@ jobs:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
 
   openrouter:
-    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@4a65843726c4bd4ddc7191e2204d85d6b7d03374
+    uses: samuelalake/agent-factory/.github/workflows/provider-smoke.yml@9fd45842a57d26b184725f0f73d119f398eebd7a
     with:
-      factory_ref: 4a65843726c4bd4ddc7191e2204d85d6b7d03374
+      factory_ref: 9fd45842a57d26b184725f0f73d119f398eebd7a
       provider: openrouter
       models: cohere/north-mini-code:free
       max_candidates: 1
