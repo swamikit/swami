@@ -87,10 +87,15 @@ agent — the cloud loop does not write there.
   was broadened to recognize non-iOS artboards. Full-corpus sweep (64 fixtures): 0 blobs (was
   33 of 64 over 150 nodes), every placed graph carries a visual layer tree. `Layers_List`
   171→15, `Loops_Sum` 36→11, `Logic_Counter` 205→20, `Utilities_Grid` 276→56.
-- **Input-port default-value decoding**: DragSettings port defaults (Momentum/Rubber Band Friction,
-  Clip) are NOT reachable by naive vtable field-offset walking (returns zeros / canvas coords).
-  Values are a typed value-union stored indirectly — needs real union tag→payload decoding. Blocks
-  faithful momentum constants in drag().
+- **Input-port default-value decoding** (M2, encoding cracked — impl pending): a port's default
+  lives INLINE as an **f64 double** in the port's `f[4]` value-table. Ports are the node's `f[5]`
+  (and `f[6]`) child vectors; each port table is `f[1]`=ordinal, `f[2]`=name, `f[4]`=value-table.
+  Verified on Interaction_Drag: layer `Opacity`=1.0, `Scale`=1.0, `Pivot`=0.5 (exact Origami
+  defaults), `origami.DragSettings` `Momentum Friction`=8.0. REMAINING: the populated slot within
+  `f[4]` is the union tag (scalar number vs Point vs Color-RGBA) — map slot→type so multi-component
+  values decode, then oracle-check the `drag()` physics constants. NOTE: card/artboard dimensions
+  (220×140, 888×1212) are NOT stored as literal doubles anywhere in the buffer — they're derived or
+  device-preset, so geometry needs separate handling from scalar port defaults.
 
 ## Infra self-healing loop (V4 prerequisites)
 - **`.github/ISSUE_TEMPLATE/infra-blocker.md`** (landed in PR #24) — structured evidence template for when a Builder or Review GA hits a runner-level failure (Origami install broken, sim boot fails, ImageMagick not available, etc.). Template auto-applies `label: infra-blocker` so downstream queries are label-based.
