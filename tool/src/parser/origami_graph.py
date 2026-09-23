@@ -292,14 +292,24 @@ def parse(origami_path):
         "edges": edges,
         "_todo": "layer values vs oracle; input-port default-value union decoding",
     }
-    # A *.Screen exists in the document but not inside the selected vector: the density
-    # fallback may not have found the true artboard. Flag as provisional (ADR-0017).
-    if not anchored and re.search(rb'\.Screen', g.d):
-        result["selection_warning"] = (
-            "no candidate node-vector owned a *.Screen but the document contains one; "
-            "the placed graph was chosen by visual-layer density and may not be the true "
-            "artboard — treat as provisional (ADR-0017 no-artboard fallback)."
-        )
+    # The density fallback is a heuristic that can pick a non-artboard vector, so its
+    # provisional nature is part of the returned contract: EVERY visual-density-fallback
+    # result carries a selection_warning (not only when a *.Screen exists elsewhere), so no
+    # downstream consumer can treat a heuristically-selected graph as authoritative. The two
+    # sub-cases differ only in wording (ADR-0017 no-artboard fallback).
+    if not anchored:
+        if re.search(rb'\.Screen', g.d):
+            result["selection_warning"] = (
+                "no candidate node-vector owned a *.Screen but the document contains one; "
+                "the placed graph was chosen by visual-layer density and may not be the true "
+                "artboard — treat as provisional (ADR-0017 no-artboard fallback)."
+            )
+        else:
+            result["selection_warning"] = (
+                "no *.Screen node was found in the document; the placed graph was chosen by "
+                "visual-layer density and is provisional (ADR-0017 no-artboard fallback) — "
+                "verify against the source before relying on it."
+            )
     return result
 
 

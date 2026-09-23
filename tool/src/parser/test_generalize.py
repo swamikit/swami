@@ -229,6 +229,33 @@ class TestPlacedGraphIsolation(unittest.TestCase):
             with self.subTest(pattern=name):
                 self._assert_isolated(name, parse(str(p)))
 
+    def test_fallback_result_is_flagged_provisional(self):
+        """Parser-contract invariant: a graph reached via the visual-density fallback
+        (`selection == "visual-density-fallback"`) MUST carry a `selection_warning`, and an
+        artboard-anchored result must NOT — so a downstream consumer can never treat a
+        heuristically-selected graph as authoritative. Tests the returned contract itself,
+        not corpus-specific node counts (ADR-0017 no-artboard fallback)."""
+        checked = 0
+        for name in ISOLATION_CORPUS + ("Interaction_Drag.origami",):
+            p = _fetch_corpus_file(name)
+            if not p:
+                continue
+            checked += 1
+            out = parse(str(p))
+            with self.subTest(pattern=name):
+                sel = out.get("selection")
+                if sel == "visual-density-fallback":
+                    self.assertIn(
+                        "selection_warning", out,
+                        f"{name}: fallback result has no selection_warning — its provisional "
+                        f"nature is not part of the parser contract.")
+                elif sel == "artboard-anchored":
+                    self.assertNotIn(
+                        "selection_warning", out,
+                        f"{name}: artboard-anchored result should not carry a fallback warning.")
+        if checked == 0:
+            self.skipTest("no isolation corpus fetchable (no network / origami.design down)")
+
     def test_selector_picks_artboard_vector(self):
         """When a `*.Screen` artboard exists, the SELECTED vector must contain it — not
         merely produce a small node count. Guards the visual-density fallback from choosing

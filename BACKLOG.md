@@ -80,13 +80,17 @@ agent — the cloud loop does not write there.
   node-vector + artboard (`*.Screen`) anchoring replaces the `tail=360000` byte offset and the
   later `placed_root_offset()` boundary; `origami.Drag` now reads as one placed node and the
   parser decodes edges.
-- **No-artboard fallback** — ✅ RESOLVED (M1, ADR-0017 amended). When no candidate node-vector
-  owns a `*.Screen` (the artboard node isn't always serialized inside a clean patch vector, and
-  some patterns use a non-iOS artboard like `desktop.Screen`), the selector now falls back to
-  the node-vector with the highest **visual-layer density**, not the largest vector; `TYPE_RE`
-  was broadened to recognize non-iOS artboards. Full-corpus sweep (64 fixtures): 0 blobs (was
-  33 of 64 over 150 nodes), every placed graph carries a visual layer tree. `Layers_List`
-  171→15, `Loops_Sum` 36→11, `Logic_Counter` 205→20, `Utilities_Grid` 276→56.
+- **No-artboard fallback** — ✅ RESOLVED FOR THE CORPUS (M1, ADR-0017 amended); a **heuristic**,
+  provisional where the artboard isn't serialized in a candidate vector — not a settled general
+  guarantee. When no candidate node-vector owns a `*.Screen` (the artboard node isn't always
+  serialized inside a clean patch vector, and some patterns use a non-iOS artboard like
+  `desktop.Screen`), the selector falls back to the node-vector with the highest **visual-layer
+  density**, not the largest vector; `TYPE_RE` was broadened to recognize non-iOS artboards.
+  Full-corpus sweep (64 fixtures): 0 blobs (was 33 of 64 over 150 nodes), every placed graph
+  carries a visual layer tree. `Layers_List` 171→15, `Loops_Sum` 36→11, `Logic_Counter` 205→20,
+  `Utilities_Grid` 276→56. `parse()` marks every fallback result `selection:
+  "visual-density-fallback"` **plus** a `selection_warning`, so callers treat it as provisional;
+  the screen→vector linkage for the general no-artboard case is the residual open problem.
 - **Input-port default-value decoding** (M2, encoding cracked — impl pending): a port's default
   lives INLINE as an **f64 double** in the port's `f[4]` value-table. Ports are the node's `f[5]`
   (and `f[6]`) child vectors; each port table is `f[1]`=ordinal, `f[2]`=name, `f[4]`=value-table.
