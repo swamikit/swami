@@ -37,9 +37,9 @@
   "builder": {
     "marker": "<!-- builder:agent-factory -->",
     "app_login": "agent-factory-builder[bot]",
-    "provider": "openrouter",
-    "harness": "openai-compatible",
-    "model": "openai/gpt-6-astra",
+    "provider": "claude-code",
+    "harness": "claude-code",
+    "model": "claude-opus-4-8",
     "cli_version": "0.55.1",
     "timeout_seconds": 1800,
     "branch_prefix": "agent-factory/issue-",
@@ -53,8 +53,8 @@
     "max_model_cost_usd": 2.0,
     "input_cost_per_million": 10.0,
     "output_cost_per_million": 50.0,
-    "visual_revision_context": true,
-    "fallback_visual_revision_context": true
+    "visual_revision_context": false,
+    "fallback_visual_revision_context": false
   },
   "review": {
     "marker": "<!-- reviewer:agent-factory -->",
