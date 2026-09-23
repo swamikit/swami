@@ -1,0 +1,60 @@
+name: reviewer-tag
+
+# On-demand entry point for the unified Agent Factory Reviewer.
+#
+# Comment "/review" (or "@reviewer" / "@agent-factory-reviewer") on a pull request
+# to re-run the Reviewer on its CURRENT head without pushing a commit. This is only
+# an ENTRY POINT: it dispatches the same .github/workflows/agent-review.yml (the one
+# Reviewer path consolidated in PR #254) via workflow_dispatch — it does not run any
+# review logic itself, so there is still exactly one Reviewer implementation.
+#
+# NOTE: issue_comment workflows always execute the copy of this file on the default
+# branch, so this only takes effect once merged to main (that is the point — it is
+# for future PRs).
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write        # dispatch agent-review.yml
+  pull-requests: read
+
+jobs:
+  dispatch:
+    # Gate on three things so the paid subscription Reviewer can't be spent by
+    # arbitrary users:
+    #   1. the comment is on a PR (not a plain issue),
+    #   2. it contains the trigger phrase, and
+    #   3. the commenter is a maintainer (OWNER / MEMBER / COLLABORATOR).
+    # Fork-head secret safety is still enforced inside agent-review.yml itself.
+    if: >-
+      github.event.issue.pull_request &&
+      (contains(github.event.comment.body, '/review') ||
+       contains(github.event.comment.body, '@reviewer') ||
+       contains(github.event.comment.body, '@agent-factory-reviewer')) &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Acknowledge the request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
+      - name: Dispatch the unified Reviewer for this PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.issue.number;
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'agent-review.yml',
+              ref: context.payload.repository.default_branch,
+              inputs: { pr: String(pr) },
+            });
+            core.notice(`Dispatched agent-review for PR #${pr}`);
