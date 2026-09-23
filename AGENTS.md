@@ -55,8 +55,9 @@ oracle — means, not a deliverable.
   screen. Touch → **51 placed nodes / 41 edges** (the ~25 functional patches plus
   comments/bindings/layers), vs 356/395 library-inclusive; `Interaction_Drag` →
   24 nodes / 19 edges with `origami.Drag` as ONE node. The parser now decodes edges.
-  A document with no detected `*.Screen` falls back to the largest non-library
-  node-vector — a known soft spot (see BACKLOG, ADR-0017).
+  A document with no detected `*.Screen` (some patterns, or non-iOS artboards like
+  `desktop.Screen`) falls back to the node-vector with the highest visual-layer density
+  (ADR-0017). Full-corpus sweep: all 64 fixtures isolate a real artboard graph, 0 blobs.
 - Design tokens follow Origami's ColorKit/TypeKit model: a color is
   `{name, hex, alpha}` plus `colorUsages` (semantic roles); type styles
   likewise. Preserve these names in the IR (ADR-0007).

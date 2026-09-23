@@ -80,11 +80,13 @@ agent — the cloud loop does not write there.
   node-vector + artboard (`*.Screen`) anchoring replaces the `tail=360000` byte offset and the
   later `placed_root_offset()` boundary; `origami.Drag` now reads as one placed node and the
   parser decodes edges.
-- **No-artboard fallback** (NEW, from the ADR-0017 corpus head-to-head): patterns where no
-  `*.Screen` is detected (observed `Loops_Sum`, `Layers_List`) fall back to the largest
-  non-library node-vector, which can grab a big library component (Layers_List → 140 nodes /
-  164 edges / 0 screens). Investigate why those patterns don't surface a `*.Screen` (different
-  artboard representation?) and harden the fallback.
+- **No-artboard fallback** — ✅ RESOLVED (M1, ADR-0017 amended). When no candidate node-vector
+  owns a `*.Screen` (the artboard node isn't always serialized inside a clean patch vector, and
+  some patterns use a non-iOS artboard like `desktop.Screen`), the selector now falls back to
+  the node-vector with the highest **visual-layer density**, not the largest vector; `TYPE_RE`
+  was broadened to recognize non-iOS artboards. Full-corpus sweep (64 fixtures): 0 blobs (was
+  33 of 64 over 150 nodes), every placed graph carries a visual layer tree. `Layers_List`
+  171→15, `Loops_Sum` 36→11, `Logic_Counter` 205→20, `Utilities_Grid` 276→56.
 - **Input-port default-value decoding**: DragSettings port defaults (Momentum/Rubber Band Friction,
   Clip) are NOT reachable by naive vtable field-offset walking (returns zeros / canvas coords).
   Values are a typed value-union stored indirectly — needs real union tag→payload decoding. Blocks

@@ -28,7 +28,7 @@ import pathlib, sys, unittest, urllib.request, urllib.error
 HERE = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tool" / "src"))
-from parser.origami_graph import parse, Graph, read_graph_bytes  # noqa: E402
+from parser.origami_graph import parse, Graph, read_graph_bytes, VISUAL_LAYERS  # noqa: E402
 
 # Where fetched corpus files live locally (gitignored).
 CACHE_DIR = HERE / ".cache"
@@ -41,6 +41,18 @@ CORPUS_URL_BASE = "https://origami.design/public/origami_files/patterns"
 INTERACTION_CORPUS = (
     "Interaction_Touch.origami",
     "Interaction_Drag.origami",
+)
+
+# Patterns that exercise the placed-vs-library isolation (ADR-0017 + the no-artboard
+# fallback). Each historically over-counted into an embedded library component:
+#   Layers_List / Logic_Counter — no *.Screen inside the placed patch vector, so the
+#     old selector grabbed a ~140-205 node wireless/binding library component.
+#   Loops_Sum — artboard is desktop.Screen (non-iOS), previously unrecognized.
+ISOLATION_CORPUS = (
+    "Animation_Delay.origami",
+    "Layers_List.origami",
+    "Logic_Counter.origami",
+    "Loops_Sum.origami",
 )
 
 
@@ -177,6 +189,45 @@ class TestStabilityAcrossCorpus(unittest.TestCase):
                 self.assertGreater(base, 0)
                 self.assertLess(base, g.N)
                 self.assertGreater(count, 0)
+
+
+class TestPlacedGraphIsolation(unittest.TestCase):
+    """The placed graph is the artboard's own graph, never an embedded library component.
+
+    Regression guard for the corpus-wide over-count (ADR-0017 + the no-artboard
+    fallback): before the structural selector most patterns resolved to a 140-276 node
+    blob dominated by an embedded scroll/list/logic component's wireless and binding
+    plumbing. The placed graph is small (tens, not hundreds) and is a visual layer tree,
+    not plumbing.
+    """
+
+    def _assert_isolated(self, name, out):
+        n = out["placed_node_count"]
+        kinds = out["kinds"]
+        # Tens, not hundreds. A blob (an embedded library component) is 100+.
+        self.assertGreaterEqual(n, 4, f"{name}: implausibly small placed graph: {n}")
+        self.assertLess(n, 100, f"{name}: placed graph looks library-inclusive: {n} nodes")
+        # Not dominated by an embedded component's internal wireless/binding plumbing.
+        plumbing = sum(v for k, v in kinds.items()
+                       if k in ("builtin.wirelessReceiver", "builtin.wirelessBroadcaster",
+                                "builtin.layer.combinerBinding"))
+        self.assertLess(plumbing, 0.30 * n,
+                        f"{name}: placed graph is mostly wireless/binding plumbing "
+                        f"({plumbing}/{n}) — likely a library component: kinds={kinds}")
+        # It is a real artboard: has a screen node, or visual layers.
+        screens = sum(v for k, v in kinds.items() if k.endswith(".Screen"))
+        visual = sum(v for k, v in kinds.items() if k in VISUAL_LAYERS)
+        self.assertTrue(screens or visual,
+                        f"{name}: placed graph has neither a screen nor visual layers: {kinds}")
+
+    def test_isolation_corpus(self):
+        fetched = [(n, _fetch_corpus_file(n)) for n in ISOLATION_CORPUS]
+        fetched = [(n, p) for (n, p) in fetched if p]
+        if not fetched:
+            self.skipTest("no isolation corpus fetchable (no network / origami.design down)")
+        for name, p in fetched:
+            with self.subTest(pattern=name):
+                self._assert_isolated(name, parse(str(p)))
 
 
 if __name__ == "__main__":

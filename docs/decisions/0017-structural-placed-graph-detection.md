@@ -56,10 +56,22 @@ Detect the placed graph by **structure + semantics**, no byte offset:
   Friction/Tension, Stick To Boundaries, …) are a library definition without an artboard,
   so they are never selected. Across the corpus the artboard-bearing patterns collapse from
   the old 148–205 nodes / 3 phantom screens to ~17–24 nodes / 1 screen.
-- **No-artboard soft spot:** the artboard test keys on a `*.Screen` type; a document with no
-  detected screen (observed on `Loops_Sum`, `Layers_List`) falls back to the largest
-  non-library node-vector, which can grab a big library component. Hardening this fallback
-  (and understanding why some patterns don't surface a `*.Screen`) is tracked in BACKLOG.
+- **No-artboard fallback (hardened):** the artboard test keys on a `*.Screen` type, but some
+  documents don't serialize the artboard node inside a clean patch vector (it lands in a
+  mis-counted over-read vector), and some use a non-iOS artboard (`Loops_Sum` is
+  `desktop.Screen`). When no candidate owns a `*.Screen`, the selector now falls back to the
+  node-vector with the highest **visual-layer density** (VISUAL_LAYERS / typed nodes), not the
+  largest vector. The placed artboard's UI tree is visually dense; an embedded
+  scroll/list/logic component is mostly wireless/binding plumbing with only incidental layers,
+  so its density stays low even when its absolute size is large (`Layers_List`: the real
+  15-node placed tree at density 0.20 beats the 140-node library component at 0.03). `TYPE_RE`
+  was also broadened to Origami's full prefix set (`ios|android|material|desktop|…`) so non-iOS
+  artboards are recognized. `library_tables()` reachability was removed — it never
+  discriminated (every vector read as fully in-library). Full-corpus sweep (64 private
+  fixtures): **0 library-blobs** (down from 33 of 64 over 150 nodes); 63 isolate to under
+  60 nodes and every fixture's placed graph carries a visual layer tree (no-visual: 0). The
+  one file over 80 nodes is `airbnb-passport-interaction` (539 nodes / 502 visual layers), a
+  genuinely large production artboard, not a misfire.
 - **Multi-artboard documents** may expose more than one `*.Screen` node-vector — open
   question whether to merge or scope per artboard.
 - Input-port **default-value** decoding (the typed value-union) is still unsolved and still

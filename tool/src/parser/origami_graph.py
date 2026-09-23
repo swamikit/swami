@@ -7,12 +7,16 @@ origami_graph — schema-less FlatBuffers reader for the .origami graph document
 *placed* graph is a small subset. Separating them is the core challenge (see CLAUDE.md).
 
 Iteration 2 (structural): the placed graph is found by STRUCTURE, not a byte offset.
-  1. Enumerate the library table set by walking root field 14 (the embedded library).
-  2. Scan for "node vectors" — FlatBuffers vectors whose elements are tables that own a
-     patch-type string ("builtin.*"/"origami.*"/"ios.*"). Every component (library or
+  1. Scan for "node vectors" — FlatBuffers vectors whose elements are tables that own a
+     patch-type string ("builtin.*"/"origami.*"/"ios.*"/…). Every component (library or
      placed) has one.
-  3. The PLACED node vector is the one whose elements are NOT in the library set.
-  4. Read its nodes+ports, then find the sibling CONNECTION vector by content
+  2. Pick the PLACED node vector: the one owning the artboard (a "*.Screen" node); or,
+     when the artboard node isn't serialized inside a patch vector (multi-screen docs, or
+     the screen sits in a mis-counted over-read vector), the one richest in visual layer
+     patches (layer.layer/interaction/ellipse/…). Library logic components carry neither.
+     Offset-reachability from the library root is NOT used: components reference their
+     nodes by id, not nested offset, so it fails to bound the library (see ADR-0017).
+  3. Read its nodes+ports, then find the sibling CONNECTION vector by content
      (elements shaped [srcNodeId, srcPortId, dstNodeId, dstPortId]) and decode edges.
 
 This removes the `tail=360000` heuristic (ADR: it was tuned to the Touch example and
@@ -28,10 +32,22 @@ most important correctness lever for a schema-less walk.
 """
 import zipfile, struct, re, json, sys, pathlib
 
-TYPE_RE = re.compile(r'^(builtin|origami|ios)\.[A-Za-z][A-Za-z0-9.]*$')
-LIBRARY_ROOT_FIELD = 14          # root VEC field holding the embedded component library
+TYPE_RE = re.compile(r'^(builtin|origami|ios|android|material|desktop)\.[A-Za-z][A-Za-z0-9.]*$')
 MAX_VTABLE = 240                 # <=118 fields; real tables are small
 MAX_TABLE = 4000
+
+# Visual layer patches — the artboard's UI tree. The placed document always carries
+# these; embedded library logic components (wireless bindings, math, loops) never do.
+# Used to identify the placed graph when its artboard *.Screen node isn't serialized
+# inside the patch vector (see placed_node_vector).
+VISUAL_LAYERS = frozenset({
+    "builtin.layer.layer", "builtin.layer.interaction", "builtin.layer.ellipse",
+    "builtin.layer.text", "builtin.layer.rectangle", "builtin.layer.image",
+    "builtin.layer.video", "builtin.layer.shape", "builtin.layer.path",
+    "builtin.layer.hitArea", "builtin.layer.progress", "builtin.layer.scroll",
+    "builtin.layer.page", "builtin.layer.gradient", "builtin.layer.material",
+    "builtin.layer.clip", "builtin.layer.map",
+})
 
 
 def read_graph_bytes(path):
@@ -109,33 +125,6 @@ class Graph:
 
     # --- structural placed-graph detection ---------------------------------
 
-    def _root_vec(self, field_index):
-        info = self.table(self.root())
-        s = self.slots(info)
-        if field_index not in s: return None
-        f = self.field(s[field_index])
-        return (f[1], f[2]) if f[0] == "vec" else None
-
-    def library_tables(self, budget=400000):
-        """Offset-reachable table set under the embedded library (root field 14)."""
-        lib = self._root_vec(LIBRARY_ROOT_FIELD)
-        if not lib: return set()
-        count, base = lib
-        seen, stack, steps = set(), list(self.vec_elems(base, count)), 0
-        while stack and steps < budget:
-            steps += 1
-            t = stack.pop()
-            if t in seen: continue
-            info = self.table(t)
-            if not info: continue
-            seen.add(t)
-            for slot in self.slots(info).values():
-                f = self.field(slot)
-                if f[0] == "tab": stack.append(f[1])
-                elif f[0] == "vec":
-                    for e in self.vec_elems(f[2], f[1])[:4000]: stack.append(e)
-        return seen
-
     def _owns_type(self, t):
         info = self.table(t)
         if not info: return None
@@ -166,24 +155,33 @@ class Graph:
     def placed_node_vector(self):
         """Select the placed-graph node vector.
 
-        The placed document is the graph that owns the artboard (a `*.Screen` node);
-        library patch-definitions never contain one. Prefer that; then a node-vector
-        outside the embedded library; then the largest. (Offset-reachability from the
-        library root can't fully bound the library because components reference their
-        nodes by id, so the artboard test is the load-bearing discriminator.)
+        The placed document is distinguished from embedded library components by two
+        structural signals, in priority order:
+          1. It owns the artboard: a candidate whose elements include a `*.Screen` node.
+             Library patch-definitions never contain a screen.
+          2. Failing an in-vector screen (some documents serialize the artboard node
+             outside the patch vector, or across multiple screens), the candidate with the
+             highest *visual-layer density* (VISUAL_LAYERS / typed nodes). The placed
+             artboard's UI tree is visually dense; an embedded library component (e.g. a
+             scroll/list composite) is mostly wireless/binding/logic plumbing with only a
+             few incidental layers, so its density is low even when its absolute layer
+             count is high. Ties break to the highest byte offset (placed doc last).
+
+        Offset-reachability from the library root is NOT used: components reference their
+        nodes by id, so it fails to bound the library (see ADR-0017).
         """
         cands = self.node_vectors()
         if not cands: return None
-        lib = self.library_tables()
         scored = []
         for (p, c, b) in cands:
-            els = self.vec_elems(b, c)
-            has_screen = any((self._owns_type(e) or "").endswith(".Screen") for e in els)
-            non_library = (sum(1 for e in els if e in lib) / max(1, c)) < 0.30
-            scored.append((has_screen, non_library, c, b))
-        scored.sort(key=lambda s: (s[0], s[1], s[2]), reverse=True)
+            typed = [t for t in (self._owns_type(e) for e in self.vec_elems(b, c)) if t]
+            has_screen = any(t.endswith(".Screen") for t in typed)
+            visual = sum(1 for t in typed if t in VISUAL_LAYERS)
+            density = visual / len(typed) if typed else 0.0
+            scored.append((has_screen, density, visual, b, c))
+        scored.sort(key=lambda s: (s[0], s[1], s[2], s[3]), reverse=True)
         best = scored[0]
-        return (best[3], best[2])
+        return (best[3], best[4])
 
     def decode_nodes(self, base, count):
         nodes, ports = {}, {}
