@@ -1,0 +1,64 @@
+# ADR-0018: Decode input-port default values (inline f64 in the port value-table)
+
+- Status: Proposed — encoding characterized (below); the decoder is DEFERRED to its own PR.
+  A scalar-only reader was prototyped and validated (Opacity 1.0, Scale 1.0, Pivot 0.5,
+  DragSettings Momentum Friction 8.0) but **reverted** after review: without decoding the
+  value-type union it cannot distinguish scalar / Point / Color ports, so it mis-typed or
+  silently dropped non-scalar defaults. This ADR keeps the encoding findings; the reader
+  returns once the union tag is decoded (that is the gating work).
+- Date: 2026-09-23
+- Follows: ADR-0017 (structural placed-graph detection). Addresses the constants half of the
+  ADR-0009 `drag()` TODO (research; implementation pending).
+
+## Context
+
+The parser reads node types, names, and edges (ADR-0017) but not a node's **input-port
+default values**. Without them, faithful patch constants (e.g. `origami.DragSettings`
+Momentum / Rubber Band Friction) fall back to iOS-standard stand-ins, so a translated
+`drag()` does not reproduce Origami's real physics. `AGENTS.md` lists this as the open
+parser TODO. Naive vtable field-offset walking returned zeros or canvas coordinates because
+the value is not where a flat scalar read expects it.
+
+## Decision
+
+A port's default value is stored **inline as an IEEE-754 f64 double** in the port's `f[4]`
+value-table:
+
+- A node's ports are its `f[5]` (and `f[6]`) child vectors.
+- Each port table is `f[1]` = ordinal id, `f[2]` = name, `f[4]` = value-table, `f[5]` =
+  compiled doc metadata.
+- The default lives in `f[4]` as an inline double. A reader *would* take the clean inline
+  doubles from `f[4]`'s field slots (a uoffset misread as f64 is huge or denormal, filtered
+  by magnitude) and attach them to each node's `ports`. This encoding is **characterized, not
+  implemented**: the prototype `_port_default()` reader was **reverted** (see Status) because
+  it could not classify the value-type union, so it is NOT in the tree today. It returns in a
+  follow-up PR once the union tag is decoded; that addition would be additive (edge decoding
+  is unchanged).
+
+## Validation
+
+A prototype scalar reader — **since reverted** (see Status), so not present in the code — did
+reproduce Origami's documented defaults on `Interaction_Drag`: `builtin.layer.layer` Opacity
+**1.0**, Scale **1.0**, Pivot **0.5**, and `origami.DragSettings` **Momentum Friction 8.0**
+(read from the graph rather than an iOS stand-in), with node/edge counts unchanged (24 / 19).
+That validated the scalar *encoding* only. The reader and its regression guard
+(`TestPortDefaults`) are **not** in `origami_graph.py` / `test_generalize.py` yet — they land
+with the follow-up PR that decodes the value-type union.
+
+## Consequences / deferred
+
+- **Union tag.** The populated *slot* within `f[4]` encodes the value *type* (scalar number
+  vs Point vs Color-RGBA). Only the scalar case is decoded; a slot→type map is needed for
+  multi-component values.
+- **Color is a packed `uint32` in a color-object table.** The card fill `#B0E0B27B` is stored
+  as `0xB0E0B27B` (LE bytes `7B B2 E0 B0`) at field `f[4]` of a small color-object table — NOT
+  inline in the port's value table (which carries only a type tag `3`), not four doubles, not a
+  hex string, not a name reference. So color decode is three steps: (1) **link** the color port
+  to its color-object table — the linkage is not a nearby FlatBuffers offset, so it is still
+  open; (2) **read** the packed `u32` — solved; (3) **resolve channel order** (ARGB vs RGBA) —
+  not determinable from the bytes (the ambiguity `BACKLOG.md` records), needs an Origami
+  Inspector AX readout (macOS runner / Samuel's Mac). Steps 1 and 3 stay deferred; the
+  extraction itself is understood.
+- **Geometry is not a stored literal.** The card size (220×140) and artboard (888×1212)
+  appear nowhere in the buffer as f32 or f64 — they are derived or device-preset, so layout
+  geometry needs separate handling from scalar port defaults.

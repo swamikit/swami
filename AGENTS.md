@@ -49,9 +49,17 @@ oracle — means, not a deliverable.
   core parsing challenge.** Root field 14 (EdgeSwipe, Velocity,
   StickyBoundaries, …) is the LIBRARY, not the placed graph — do not mistake
   it for the document (a prior session did, and generated the wrong app).
-- Placed nodes cluster in the file **tail region (~373k–401k)** for the Touch
-  example. ~25 placed nodes / ~44 edges is the real graph (vs 356/395
-  library-inclusive).
+- The placed graph is found **structurally** (ADR-0017), not by byte offset: scan
+  for node-vectors (FlatBuffers vectors of patch-type tables) and select the one
+  owning the artboard (a `*.Screen` node) — library patch-defs never contain a
+  screen. (This **supersedes** the earlier `tail=360000` byte-offset and the
+  `placed_root_offset()` field-14 boundary heuristics — both are historical and no
+  longer used; see ADR-0017's *Supersedes*. Do not treat them as current behavior.) Touch → **51 placed nodes / 41 edges** (the ~25 functional patches plus
+  comments/bindings/layers), vs 356/395 library-inclusive; `Interaction_Drag` →
+  24 nodes / 19 edges with `origami.Drag` as ONE node. The parser now decodes edges.
+  A document with no detected `*.Screen` (some patterns, or non-iOS artboards like
+  `desktop.Screen`) falls back to the node-vector with the highest visual-layer density
+  (ADR-0017). Full-corpus sweep: all 64 fixtures isolate a real artboard graph, 0 blobs.
 - Design tokens follow Origami's ColorKit/TypeKit model: a color is
   `{name, hex, alpha}` plus `colorUsages` (semantic roles); type styles
   likewise. Preserve these names in the IR (ADR-0007).
