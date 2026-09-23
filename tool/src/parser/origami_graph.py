@@ -21,10 +21,10 @@ Iteration 2 (structural): the placed graph is found by STRUCTURE, not a byte off
 
 This removes the `tail=360000` heuristic (ADR: it was tuned to the Touch example and
 over-included embedded composite patches on larger files). Validated on the Touch example
-(51 placed nodes / 40 edges, matching the CLAUDE.md oracle mechanism). NOT YET validated on
-a file that embeds a composite patch (e.g. Interaction_Drag) — but library-exclusion is
-correct by construction there: a placed `origami.Drag` is ONE node; Drag's internals live
-in the library and are excluded. See NEEDS-VERIFY.
+(51 placed nodes / 41 edges, matching the CLAUDE.md oracle mechanism) and on Interaction_Drag,
+a file that embeds a composite patch (24 placed nodes / 19 edges): library-exclusion holds —
+a placed `origami.Drag` is ONE node; Drag's internals live in the library and are excluded.
+See ADR-0017 for the full-corpus sweep (64 fixtures, 0 library-blobs).
 
 Strictness note: table validation caps vtable size (real Origami tables are small). Loose
 validation makes random bytes read as giant fake tables and the walk explodes — the single

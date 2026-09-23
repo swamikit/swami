@@ -27,18 +27,23 @@ value-table:
 - A node's ports are its `f[5]` (and `f[6]`) child vectors.
 - Each port table is `f[1]` = ordinal id, `f[2]` = name, `f[4]` = value-table, `f[5]` =
   compiled doc metadata.
-- The default lives in `f[4]` as an inline double. `_port_default()` reads the clean inline
+- The default lives in `f[4]` as an inline double. A reader *would* take the clean inline
   doubles from `f[4]`'s field slots (a uoffset misread as f64 is huge or denormal, filtered
-  by magnitude) and attaches them to each node's `ports` in the parser output. Additive —
-  edge decoding is unchanged.
+  by magnitude) and attach them to each node's `ports`. This encoding is **characterized, not
+  implemented**: the prototype `_port_default()` reader was **reverted** (see Status) because
+  it could not classify the value-type union, so it is NOT in the tree today. It returns in a
+  follow-up PR once the union tag is decoded; that addition would be additive (edge decoding
+  is unchanged).
 
 ## Validation
 
-On `Interaction_Drag`, decoded values reproduce Origami's documented defaults exactly:
-`builtin.layer.layer` Opacity **1.0**, Scale **1.0**, Pivot **0.5**; and
-`origami.DragSettings` **Momentum Friction 8.0** is now read from the graph rather than an
-iOS stand-in. Node/edge counts are unchanged (24 / 19). Regression guard:
-`TestPortDefaults` in `test_generalize.py`.
+A prototype scalar reader — **since reverted** (see Status), so not present in the code — did
+reproduce Origami's documented defaults on `Interaction_Drag`: `builtin.layer.layer` Opacity
+**1.0**, Scale **1.0**, Pivot **0.5**, and `origami.DragSettings` **Momentum Friction 8.0**
+(read from the graph rather than an iOS stand-in), with node/edge counts unchanged (24 / 19).
+That validated the scalar *encoding* only. The reader and its regression guard
+(`TestPortDefaults`) are **not** in `origami_graph.py` / `test_generalize.py` yet — they land
+with the follow-up PR that decodes the value-type union.
 
 ## Consequences / deferred
 
