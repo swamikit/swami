@@ -197,6 +197,62 @@ class Graph:
         best = pool[0]
         return (best[3], best[4])
 
+    def _vtable_offsets(self, t):
+        """Raw field-index -> in-table byte offset for the (validated) table at t.
+
+        Unlike slots(), this does not filter by table size — it is used only to
+        test which vtable fields EXIST (e.g. whether a union tag field is present),
+        not to dereference them.
+        """
+        vt = t - self.i32(t)
+        vs = self.u16(vt)
+        out = {}
+        for i in range((vs - 4) // 2):
+            fo = self.u16(vt + 4 + i * 2)
+            if fo:
+                out[i] = fo
+        return out
+
+    def _port_scalar_default(self, port_info):
+        """The port's SCALAR (number) input default as a float, or None.
+
+        TYPE-GATED decoding of the value-type union (ADR-0018). A port's default
+        lives in its `f[4]` value-table; the union type is discriminated by that
+        value-table's vtable:
+          - field 0 present  -> a union TAG (1/2 = point-like, 3 = color, …). This
+            is NOT a scalar number, so we return None. Point/Color defaults are
+            deliberately not decoded here — color in particular needs an Origami
+            Inspector channel-order oracle (see ADR-0018 / BACKLOG).
+          - field 0 ABSENT and field 1 = an inline finite double at offset 4 -> the
+            scalar value.
+        Returning None for every non-scalar is the whole point: the reverted first
+        attempt emitted a double for every slot regardless of type. Oracle-validated
+        against documented defaults (DragSettings Momentum Friction 8.0; layer
+        Opacity 1.0).
+        """
+        vslot = self.slots(port_info).get(4)
+        if vslot is None:
+            return None
+        vf = self.field(vslot)
+        if vf[0] != "tab":
+            return None
+        vt = vf[1]                        # value-table position (already validated)
+        off = self._vtable_offsets(vt)
+        if 0 in off:                      # union tag present -> not a scalar number
+            return None
+        if off.get(1) != 4:               # scalar value is field 1 at offset 4
+            return None
+        p = vt + 4
+        if p + 8 > self.N:
+            return None
+        v = struct.unpack_from('<d', self.d, p)[0]
+        if v != v or v in (float("inf"), float("-inf")):
+            return None
+        # A uoffset/garbage misread as f64 is huge or denormal; keep only sane values.
+        if v != 0.0 and not (1e-9 <= abs(v) <= 1e9):
+            return None
+        return v
+
     def decode_nodes(self, base, count):
         nodes, ports = {}, {}
         for e in self.vec_elems(base, count):
@@ -212,6 +268,7 @@ class Graph:
             nid = self.scalar(info, 0)
             name = next((s for s in strs if s != typ
                          and not s.startswith(("builtin", "origami", "ios", "com."))), None)
+            scalar_defaults = {}                           # {port_name: float} — scalar ports only
             for slot in self.slots(info).values():        # ports = child vectors of tables w/ an id
                 f = self.field(slot)
                 if f[0] == "vec":
@@ -223,8 +280,14 @@ class Graph:
                             pf = self.field(psl)
                             if pf[0] == "str" and not TYPE_RE.match(pf[1]): pname = pf[1]; break
                         if pid is not None: ports[pid] = (name or typ, pname)
+                        dv = self._port_scalar_default(pinfo)  # None unless a confident scalar
+                        if dv is not None and pname:
+                            scalar_defaults[pname] = dv
             if nid is not None:
-                nodes[nid] = {"id": nid, "type": typ, "name": name}
+                node = {"id": nid, "type": typ, "name": name}
+                if scalar_defaults:
+                    node["scalar_port_defaults"] = scalar_defaults
+                nodes[nid] = node
         return nodes, ports
 
     def connection_vector(self, nodes, min_count=4):
