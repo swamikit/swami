@@ -17,25 +17,36 @@ on:
 
 permissions:
   actions: write        # dispatch agent-review.yml
+  issues: write         # add the 👀 reaction on the PR conversation comment (an issue comment)
   pull-requests: read
 
 jobs:
   dispatch:
-    # Gate on three things so the paid subscription Reviewer can't be spent by
-    # arbitrary users:
-    #   1. the comment is on a PR (not a plain issue),
-    #   2. it contains the trigger phrase, and
-    #   3. the commenter is a maintainer (OWNER / MEMBER / COLLABORATOR).
-    # Fork-head secret safety is still enforced inside agent-review.yml itself.
+    # Cheap pre-filter: only PR comments from a maintainer that mention a trigger
+    # phrase at all. The EXACT phrase is then matched precisely in "Parse command"
+    # (must lead a line), so incidental prose like "...we should /review this" does
+    # not spend a paid re-review. Fork-head secret safety stays in agent-review.yml.
     if: >-
       github.event.issue.pull_request &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
       (contains(github.event.comment.body, '/review') ||
        contains(github.event.comment.body, '@reviewer') ||
-       contains(github.event.comment.body, '@agent-factory-reviewer')) &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+       contains(github.event.comment.body, '@agent-factory-reviewer'))
     runs-on: ubuntu-latest
     steps:
+      - name: Parse command
+        id: cmd
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.comment.body || '';
+            // The trigger must LEAD a line (slash-command convention), so an
+            // incidental "...we should /review this" in prose does not fire.
+            const re = /^[ \t]*(\/review|@reviewer|@agent-factory-reviewer)\b/m;
+            core.setOutput('match', re.test(body) ? 'yes' : 'no');
       - name: Acknowledge the request
+        if: steps.cmd.outputs.match == 'yes'
+        continue-on-error: true        # a failed reaction must never block the dispatch
         uses: actions/github-script@v7
         with:
           script: |
@@ -46,6 +57,7 @@ jobs:
               content: 'eyes',
             });
       - name: Dispatch the unified Reviewer for this PR
+        if: steps.cmd.outputs.match == 'yes'
         uses: actions/github-script@v7
         with:
           script: |
