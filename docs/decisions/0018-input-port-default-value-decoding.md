@@ -1,9 +1,14 @@
 # ADR-0018: Decode input-port default values (inline f64 in the port value-table)
 
-- Status: Accepted (scalar core validated; Color/Point deferred pending an Inspector oracle)
+- Status: Proposed — encoding characterized (below); the decoder is DEFERRED to its own PR.
+  A scalar-only reader was prototyped and validated (Opacity 1.0, Scale 1.0, Pivot 0.5,
+  DragSettings Momentum Friction 8.0) but **reverted** after review: without decoding the
+  value-type union it cannot distinguish scalar / Point / Color ports, so it mis-typed or
+  silently dropped non-scalar defaults. This ADR keeps the encoding findings; the reader
+  returns once the union tag is decoded (that is the gating work).
 - Date: 2026-09-23
-- Follows: ADR-0017 (structural placed-graph detection). Retires the constants half of the
-  ADR-0009 `drag()` TODO.
+- Follows: ADR-0017 (structural placed-graph detection). Addresses the constants half of the
+  ADR-0009 `drag()` TODO (research; implementation pending).
 
 ## Context
 

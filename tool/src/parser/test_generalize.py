@@ -229,28 +229,30 @@ class TestPlacedGraphIsolation(unittest.TestCase):
             with self.subTest(pattern=name):
                 self._assert_isolated(name, parse(str(p)))
 
-
-class TestPortDefaults(unittest.TestCase):
-    """Input-port default values decode as inline f64 doubles from the port `f[4]` table (M2)."""
-
-    def test_interaction_drag_port_defaults(self):
-        p = _fetch_corpus_file("Interaction_Drag.origami")
-        if not p:
-            self.skipTest("Interaction_Drag not fetchable (no network / origami.design down)")
-        out = parse(str(p))
-        seen = {}
-        for n in out["nodes"]:
-            for d in n.get("ports", []):
-                seen.setdefault((n["type"], d["port"]), d["default"])
-        self.assertTrue(seen, "no port defaults decoded at all")
-        # A layer Opacity default is a fraction in [0, 1] (Origami standard is 1.0).
-        opac = seen.get(("builtin.layer.layer", "Opacity"))
-        self.assertIsNotNone(opac, "no layer Opacity default decoded")
-        self.assertTrue(all(0.0 <= v <= 1.0 for v in opac), f"Opacity out of range: {opac}")
-        # DragSettings Momentum Friction decodes to a positive number read from the graph.
-        mf = seen.get(("origami.DragSettings", "Momentum Friction"))
-        self.assertIsNotNone(mf, "no DragSettings Momentum Friction default decoded")
-        self.assertGreater(mf[0], 0, f"Momentum Friction not positive: {mf}")
+    def test_selector_picks_artboard_vector(self):
+        """When a `*.Screen` artboard exists, the SELECTED vector must contain it — not
+        merely produce a small node count. Guards the visual-density fallback from choosing
+        a dense embedded component over the real artboard (a healthy node count alone is
+        not sufficient evidence the right vector was chosen)."""
+        checked = 0
+        for name in ("Animation_Delay.origami", "Logic_Counter.origami",
+                     "Interaction_Drag.origami"):
+            p = _fetch_corpus_file(name)
+            if not p:
+                continue
+            checked += 1
+            with self.subTest(pattern=name):
+                g = Graph(read_graph_bytes(p))
+                nv = g.placed_node_vector()
+                self.assertIsNotNone(nv, f"{name}: no placed node vector")
+                base, count = nv
+                types = [g._owns_type(e) for e in g.vec_elems(base, count)]
+                self.assertTrue(
+                    any((t or "").endswith(".Screen") for t in types),
+                    f"{name}: selector did not pick the artboard-bearing vector; "
+                    f"selected types={sorted(set(t for t in types if t))}")
+        if checked == 0:
+            self.skipTest("no screen-bearing corpus fetchable (no network / origami.design down)")
 
 
 if __name__ == "__main__":
