@@ -262,9 +262,15 @@ def parse(origami_path):
     kinds = {}
     for n in nodes.values():
         kinds[n["type"]] = kinds.get(n["type"], 0) + 1
-    return {
+    # Selection confidence: did the chosen vector actually own the artboard, or did it
+    # win on the visual-layer-density fallback? The density fallback is a heuristic, not
+    # a guarantee, so surface it rather than trusting it silently.
+    anchored = any((g._owns_type(e) or "").endswith(".Screen")
+                   for e in g.vec_elems(base, count))
+    result = {
         "file": str(origami_path), "size": g.N, "identifier": "ORGM",
         "method": "structural (library-exclusion; no byte offset)",
+        "selection": "artboard-anchored" if anchored else "visual-density-fallback",
         "placed_node_count": len(nodes),
         "edge_count": len(edges),
         "kinds": dict(sorted(kinds.items())),
@@ -272,6 +278,15 @@ def parse(origami_path):
         "edges": edges,
         "_todo": "layer values vs oracle; input-port default-value union decoding",
     }
+    # A *.Screen exists in the document but not inside the selected vector: the density
+    # fallback may not have found the true artboard. Flag as provisional (ADR-0017).
+    if not anchored and re.search(rb'\.Screen', g.d):
+        result["selection_warning"] = (
+            "no candidate node-vector owned a *.Screen but the document contains one; "
+            "the placed graph was chosen by visual-layer density and may not be the true "
+            "artboard — treat as provisional (ADR-0017 no-artboard fallback)."
+        )
+    return result
 
 
 if __name__ == "__main__":

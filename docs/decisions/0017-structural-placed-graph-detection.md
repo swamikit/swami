@@ -50,7 +50,9 @@ Detect the placed graph by **structure + semantics**, no byte offset:
 - Validated on Touch: **51 placed nodes / 41 edges**, and the edges reproduce the documented
   mechanism (Interaction.Down → Sample and Hold → Position/Scale → Oval). The parser now
   emits edges, not just nodes.
-- **Correct by construction for embedded composites**, confirmed on `Interaction_Drag`:
+- **Artboard-anchored selection is exact where a candidate owns the screen** (a
+  `*.Screen`-bearing candidate always outranks library composites, which never contain a
+  screen — `has_screen` is the primary sort key). Confirmed on `Interaction_Drag`:
   **24 placed nodes / 19 edges / 1 artboard**, with `origami.Drag` = a single node and
   `origami.DragSettings` = a single node — Drag's internals (Add Momentum, Rubber Band
   Friction/Tension, Stick To Boundaries, …) are a library definition without an artboard,
@@ -71,7 +73,12 @@ Detect the placed graph by **structure + semantics**, no byte offset:
   fixtures): **0 library-blobs** (down from 33 of 64 over 150 nodes); 63 isolate to under
   60 nodes and every fixture's placed graph carries a visual layer tree (no-visual: 0). The
   one file over 80 nodes is `airbnb-passport-interaction` (539 nodes / 502 visual layers), a
-  genuinely large production artboard, not a misfire.
+  genuinely large production artboard, not a misfire. The density fallback is a **heuristic,
+  not a guarantee**: where no candidate owns a screen, a sufficiently dense embedded composite
+  could in principle outrank the true placed tree, so `parse()` marks such results
+  `selection: "visual-density-fallback"` and adds a `selection_warning` when the document
+  contains a `*.Screen` elsewhere — surfacing the uncertainty rather than trusting it silently.
+  The corpus sweep is a regression guard, not a proof of correctness for all future fixtures.
 - **Multi-artboard documents** may expose more than one `*.Screen` node-vector — open
   question whether to merge or scope per artboard.
 - Input-port **default-value** decoding (the typed value-union) is still unsolved and still
