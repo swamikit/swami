@@ -31,9 +31,9 @@
   "builder": {
     "marker": "<!-- builder:agent-factory -->",
     "app_login": "agent-factory-builder[bot]",
-    "provider": "minimax",
-    "harness": "openai-compatible",
-    "model": "MiniMax-M2.7",
+    "provider": "claude-code",
+    "harness": "claude-code",
+    "model": "claude-opus-4-8",
     "cli_version": "0.55.1",
     "timeout_seconds": 1800,
     "branch_prefix": "agent-factory/issue-",
