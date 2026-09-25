@@ -419,9 +419,29 @@ jobs:
             sleep 3
             xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot "out/swami/${slug}.png"
 
+            # The SwamiHost capture is a full-device simulator screenshot; Origami's
+            # "Take Screenshot" is the artboard at its own pixel size. Comparing them
+            # raw makes `compare` score two differently-sized canvases, so SSIM
+            # collapses to ~0 regardless of visual fidelity — the long-standing
+            # "Origami and the sim aren't the same device" failure (AGENTS.md
+            # "Learned rules — Origami rendering"). Normalize the Swami capture to the
+            # Origami reference's exact dimensions first, so SSIM measures content,
+            # not the size/canvas offset. The published Swami evidence stays the raw
+            # full-device capture; only the comparison input is resized.
+            sw_dims=$(identify -format '%wx%h' "out/swami/${slug}.png" 2>/dev/null || echo '?')
+            read og_w og_h <<< "$(identify -format '%w %h' "out/origami/${slug}.png" 2>/dev/null || echo '')" || true
+            echo "  dims: swami ${sw_dims}  origami ${og_w:-?}x${og_h:-?}"
+            norm_swami="${RUNNER_TEMP:-/tmp}/${slug}.norm.png"
+            if [ -n "${og_w:-}" ] && [ -n "${og_h:-}" ]; then
+              convert "out/swami/${slug}.png" -resize "${og_w}x${og_h}!" "$norm_swami" \
+                || cp "out/swami/${slug}.png" "$norm_swami"
+            else
+              cp "out/swami/${slug}.png" "$norm_swami"
+            fi
+
             # ImageMagick can emit an unnormalized value followed by normalized
             # SSIM in parentheses. Publish and gate on the normalized 0...1 value.
-            raw_score=$(compare -metric SSIM "out/swami/${slug}.png" "out/origami/${slug}.png" "out/diff/${slug}.png" 2>&1 || true)
+            raw_score=$(compare -metric SSIM "$norm_swami" "out/origami/${slug}.png" "out/diff/${slug}.png" 2>&1 || true)
             score=$(printf '%s' "$raw_score" | sed -nE 's/.*\(([0-9]+([.][0-9]+)?)\).*/\1/p')
             if [ -z "$score" ]; then
               score=$(printf '%s' "$raw_score" | grep -oE '[0-9]+([.][0-9]+)?' | tail -1 || true)
