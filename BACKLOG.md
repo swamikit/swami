@@ -28,13 +28,27 @@ agent — the cloud loop does not write there.
   - Card color: explicit `// TODO: parser-decoded token when available` marker (ARGB assumed)
   - Drag bounds: geometric evidence documented inline (centered rest-position verified)
   Pending: pixel triplet from verify.yml + DocC preview PNG from post-merge.yml
+- **Interaction_Pinch** — **ITEM 3 OF 69** (2026-09-25): M3 end-to-end proof, first pattern
+  driven entirely on the Claude subscription (Builder → verify + Reviewer → merge-gate → merge).
+  Parser IR: 9 placed nodes / 5 edges — ios.Screen ×1, builtin.layer.layer ×2,
+  builtin.layer.shape ×1, builtin.layer.binding ×2, origami.PopSwitch ×2, builtin.point3D ×1.
+  Mechanism: a magnification (pinch) gesture flips origami.PopSwitch state, which drives the
+  shape's Transform Scale (builtin.point3D); the resting frame is the shape at base scale on the
+  artboard. TRANSLATION COMPLETE (native-first: MagnifyGesture + @State + withAnimation spring,
+  no new helper — PopSwitch is faithfully native). Fidelity debts flagged, not faked:
+  - Magnified-scale endpoint, shape size: `// TODO: parser-decoded token` — input-port default
+    *values* not decoded yet (same blocker as DragSettings constants).
+  - Artboard + shape colors: `// TODO: parser-decoded token` — parser emits node types/names
+    only, no color value objects (same gap as Interaction_Drag).
+  Pending: pixel triplet from verify.yml + DocC preview PNG from post-merge.yml.
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
 - **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches
   Origami's Sparkle appcast, installs the app, opens each pattern from origami.design's
   public URL, drives `View → Take Screenshot`, then diffs against SwamiHost's sim render.
   No cross-repo dep, no secrets.
-- **PATTERNS growth**: `touch:Interaction_Touch drag:Interaction_Drag` (2 of 69 registered).
+- **PATTERNS growth**: `touch:Interaction_Touch drag:Interaction_Drag pinch:Interaction_Pinch`
+  (3 of 69 registered).
   Registry drives the verify gate: `.github/patterns.txt` lists slugs → stems; the `changes`
   job reads it and passes `PATTERNS` to the pixel-gate. Each new pattern adds one entry to
   the registry AND one `case` to the ContentView switch — both in the same commit.

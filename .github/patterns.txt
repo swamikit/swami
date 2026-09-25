@@ -2,3 +2,4 @@
 # underscores; stems use letters, digits, and underscores, matching current IDs.
 touch:Interaction_Touch
 drag:Interaction_Drag
+pinch:Interaction_Pinch
