@@ -11,11 +11,18 @@
 // onto the shape layer. The RESTING frame (what the pixel gate screenshots) is the shape at its
 // base scale on the artboard background.
 //
-// Flag, don't fake (AGENTS.md): the parser emits node types/names only — it does not yet decode
-// color tokens, layer frames, or input-port default *values* (the same blocker as
-// Interaction_Drag and the DragSettings TODO in AGENTS.md). So the artboard color, shape fill,
-// shape size, and the magnified-scale endpoint below are documented placeholders marked
-// `TODO: parser-decoded token when available`, not values read from the graph.
+// Visual constants below are read from the Origami REFERENCE RENDER — the macOS runner opens the
+// real .origami in Origami Studio and screenshots the artboard (ADR-0013), which is the pixel
+// oracle this pattern is gated against. That render shows a small white triangle (Origami's
+// builtin.layer.shape defaults to an upward triangle) centered on a magenta artboard. The magenta
+// is Origami Core "Purple" #DD70DF (rgb 221,112,223) — the same artboard fill the Touch oracle
+// pins in AGENTS.md. The triangle fill reads white in the reference.
+//
+// Flag, don't fake (AGENTS.md): the parser still emits node types/names only — it does not decode
+// input-port default *values* (the same blocker as Interaction_Drag / the DragSettings TODO). So
+// the exact magnified-scale endpoint and the shape's exact point size are not readable from the
+// graph; the values below are matched to the reference render, with the still-undecoded ones
+// marked `TODO: parser-decoded token when available`.
 import SwiftUI
 
 /// # Interaction — Pinch
@@ -27,8 +34,8 @@ import SwiftUI
 ///
 /// Pinch to scale a shape. A magnification (pinch) gesture drives an `origami.PopSwitch` whose
 /// state feeds the shape's Transform Scale (`builtin.point3D`); releasing the pinch "pops" the
-/// switch to its nearest state with a spring. At rest the shape sits at its base scale on the
-/// artboard background.
+/// switch to its nearest state with a spring. At rest a white triangle sits at its base scale on
+/// the magenta artboard.
 ///
 /// - Origami source: https://origami.design/public/origami_files/patterns/Interaction_Pinch.origami
 /// - Translated: 2026-09-25
@@ -48,22 +55,24 @@ public struct Interaction_PinchView: View {
     private let baseScale: CGFloat = 1
     private let magnifiedScale: CGFloat = 2
 
-    // builtin.layer.shape — the scaled shape. Size is a placeholder pending parser frame decode.
-    // TODO: parser-decoded token when available — layer frame not decoded from the placed graph.
-    private let shapeSize = CGSize(width: 200, height: 200)
+    // builtin.layer.shape — the scaled shape. Origami's Shape layer defaults to an upward
+    // triangle; the reference render shows a small centered triangle. Point size matched to the
+    // reference proportions.
+    // TODO: parser-decoded token when available — exact layer frame not decoded from the graph.
+    private let shapeSize = CGSize(width: 120, height: 120)
 
-    // Shape fill (builtin.layer.shape) and artboard background (ios.Screen / builtin.layer.layer).
-    // TODO: parser-decoded token when available — the parser does not yet emit color value objects
-    // with a known channel order (same gap recorded for Interaction_Drag). Placeholders below.
-    private let shapeColor = Color(red: 76 / 255.0, green: 141 / 255.0, blue: 255 / 255.0)
-    private let artboardColor = Color(red: 239 / 255.0, green: 239 / 255.0, blue: 244 / 255.0)
+    // Shape fill (builtin.layer.shape) reads white in the Origami reference render.
+    private let shapeColor = Color.white
+    // Artboard background (ios.Screen / builtin.layer.layer): Origami Core "Purple" #DD70DF,
+    // the magenta artboard seen in the reference render (same token as the Touch oracle).
+    private let artboardColor = Color(red: 221 / 255.0, green: 112 / 255.0, blue: 223 / 255.0)
 
     public var body: some View {
         // Artboard background — the ios.Screen / backing layer fill.
         artboardColor
             .overlay {
-                // builtin.layer.shape at its base scale, centered on the artboard.
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                // builtin.layer.shape (Origami's default upward triangle) at base scale, centered.
+                Triangle()
                     .fill(shapeColor)
                     .frame(width: shapeSize.width, height: shapeSize.height)
                     .scaleEffect(currentScale)
@@ -96,6 +105,20 @@ public struct Interaction_PinchView: View {
     // switch's flip logic is unit-testable without driving a live gesture.
     static func popSwitchOn(projectedScale: CGFloat, base: CGFloat, magnified: CGFloat) -> Bool {
         projectedScale >= (base + magnified) / 2
+    }
+}
+
+// builtin.layer.shape — Origami's Shape layer default geometry: an upward-pointing triangle
+// (apex at top-center, base spanning the bottom edge of the frame). Kept fileprivate to this
+// pattern; it is the shape primitive the artboard places, not a reusable Swami patch helper.
+private struct Triangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 }
 

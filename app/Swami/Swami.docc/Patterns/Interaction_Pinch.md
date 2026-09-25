@@ -7,8 +7,8 @@
 
 Pinch to scale a shape. A magnification (pinch) gesture drives an `origami.PopSwitch`
 whose state feeds the shape's Transform Scale (`builtin.point3D`); releasing the pinch
-"pops" the switch to its nearest state with a spring. At rest the shape sits at its base
-scale on the artboard background.
+"pops" the switch to its nearest state with a spring. At rest a white triangle sits at
+its base scale on the magenta artboard.
 
 ## Mapping
 
@@ -17,13 +17,15 @@ scale on the artboard background.
 | `origami.PopSwitch` — Pop Switch | `@State` + `withAnimation(.spring)` (native) |
 | Magnification (pinch) gesture | ``MagnifyGesture`` (native) |
 | `builtin.point3D` — Transform Scale | ``View/scaleEffect(_:anchor:)`` (native) |
-| `builtin.layer.shape` — shape | `RoundedRectangle` (native) |
+| `builtin.layer.shape` — shape | `Shape` (upward triangle, native) |
 
 The two `origami.PopSwitch` nodes carry the X and Y components of the scale
 `builtin.point3D`; a uniform pinch flips them together, so a single `@State` Bool models
-both faithfully. The magnified endpoint, shape size, and both colors are documented
-placeholders pending parser input-port and color-token decoding (see the source header),
-not values read from the graph.
+both faithfully. The visible constants — the white triangle (Origami's default Shape
+geometry), the magenta `#DD70DF` artboard, and the shape's proportions — are matched to
+the Origami reference render (the pixel oracle the runner screenshots). The magnified-scale
+endpoint and the exact point size remain documented placeholders pending parser input-port
+decoding (see the source header).
 
 ## Preview
 

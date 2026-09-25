@@ -35,11 +35,12 @@ agent — the cloud loop does not write there.
   Mechanism: a magnification (pinch) gesture flips origami.PopSwitch state, which drives the
   shape's Transform Scale (builtin.point3D); the resting frame is the shape at base scale on the
   artboard. TRANSLATION COMPLETE (native-first: MagnifyGesture + @State + withAnimation spring,
-  no new helper — PopSwitch is faithfully native). Fidelity debts flagged, not faked:
-  - Magnified-scale endpoint, shape size: `// TODO: parser-decoded token` — input-port default
-    *values* not decoded yet (same blocker as DragSettings constants).
-  - Artboard + shape colors: `// TODO: parser-decoded token` — parser emits node types/names
-    only, no color value objects (same gap as Interaction_Drag).
+  no new helper — PopSwitch is faithfully native). Visible constants matched to the Origami
+  reference render (the runner's pixel oracle): a white triangle (builtin.layer.shape's default
+  upward-triangle geometry) centered on the magenta #DD70DF artboard (Origami Core "Purple", the
+  same token the Touch oracle pins). Fidelity debts still flagged, not faked:
+  - Magnified-scale endpoint, exact shape point size: `// TODO: parser-decoded token` — input-port
+    default *values* not decoded yet (same blocker as DragSettings constants).
   Pending: pixel triplet from verify.yml + DocC preview PNG from post-merge.yml.
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
