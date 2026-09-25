@@ -22,6 +22,7 @@ SwiftUI equivalent.
 | Interaction (Tap, Down/press, Double Tap, Long Press) | gesture + `@State` / `@GestureState` |
 | `origami.drag` — Drag | ``drag(enable:momentum:bounds:position:translation:velocity:reset:)`` (helper) |
 | `origami.PopSwitch` — Pop Switch | `@State` + `withAnimation(.spring)` (native) |
+| `origami.PinchScale` — pinch magnification | ``MagnifyGesture`` (native) |
 | State/memory (Switch, Sample and Hold) | `@State` + update logic |
 | Animation (Classic Animation, Pop/Spring) | `withAnimation` / `.animation(.spring)` |
 

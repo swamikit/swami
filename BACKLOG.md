@@ -30,17 +30,26 @@ agent — the cloud loop does not write there.
   Pending: pixel triplet from verify.yml + DocC preview PNG from post-merge.yml
 - **Interaction_Pinch** — **ITEM 3 OF 69** (2026-09-25): M3 end-to-end proof, first pattern
   driven entirely on the Claude subscription (Builder → verify + Reviewer → merge-gate → merge).
-  Parser IR: 9 placed nodes / 5 edges — ios.Screen ×1, builtin.layer.layer ×2,
-  builtin.layer.shape ×1, builtin.layer.binding ×2, origami.PopSwitch ×2, builtin.point3D ×1.
-  Mechanism: a magnification (pinch) gesture flips origami.PopSwitch state, which drives the
-  shape's Transform Scale (builtin.point3D); the resting frame is the shape at base scale on the
-  artboard. TRANSLATION COMPLETE (native-first: MagnifyGesture + @State + withAnimation spring,
-  no new helper — PopSwitch is faithfully native). Visible constants matched to the Origami
-  reference render (the runner's pixel oracle): a white triangle (builtin.layer.shape's default
-  upward-triangle geometry) centered on the magenta #DD70DF artboard (Origami Core "Purple", the
-  same token the Touch oracle pins). Fidelity debts still flagged, not faked:
-  - Magnified-scale endpoint, exact shape point size: `// TODO: parser-decoded token` — input-port
-    default *values* not decoded yet (same blocker as DragSettings constants).
+  Parser IR (current structural walk on the real file): 59 placed nodes — ios.Screen "Artboard 1",
+  a layer "Triangle" wrapping builtin.layer.shape "Content", a "Hard Light" blend layer,
+  builtin.point3D "Point 3D" (Transform Scale) via builtin.layer.binding "Scale", plus the
+  interaction stack: origami.PinchScale ×3, origami.PinchRotate ×3, origami.PinchPan ×3,
+  origami.Slip ×3, origami.Velocity ×3, builtin.momentumScrolling, origami.2PagePaging,
+  origami.PopSwitch ×5. (The earlier "9 nodes / 5 edges" was a stale parser run.)
+  Mechanism: a pinch gesture feeds the shape's Transform Scale, gated by PopSwitch paging; the
+  resting frame is the shape at base scale, centered on the artboard.
+  TRANSLATION COMPLETE (native-first: MagnifyGesture + @State + withAnimation spring, no new
+  helper). Visible constants DECODED BY HAND from the .origami's FlatBuffers value structs
+  (float64 RGBA colors, float64 sizes), cross-checked to their owning layer table — not eyeballed:
+  - Artboard fill (ios.Screen "Artboard 1") = float64 rgba(0.8667,0.4392,0.8745,1.0) = #DD70DF
+    (Origami Core "Purple", the same token the Touch oracle pins). ✓ decoded
+  - Shape "Content" = 300 × 300 pt, white fill rgba(1,1,1,1), corner-radius field 140 (rounded
+    triangle). ✓ decoded  (fixes the earlier 120×120 sharp-triangle mismatch that tanked SSIM.)
+  - Artboard device = iPhone6 (375 × 667). ✓ decoded
+  Fidelity debts still flagged, not faked:
+  - Continuous PinchScale magnitude, PinchRotate, PinchPan, momentum (momentumScrolling) and full
+    2-page paging (PopSwitch ×5) are NOT ported — faithful physics needs input-port default
+    *values* the parser can't decode yet (same blocker as DragSettings constants).
   Pending: pixel triplet from verify.yml + DocC preview PNG from post-merge.yml.
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)

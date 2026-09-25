@@ -5,27 +5,35 @@
     @PageImage(purpose: card, source: "Interaction_Pinch")
 }
 
-Pinch to scale a shape. A magnification (pinch) gesture drives an `origami.PopSwitch`
-whose state feeds the shape's Transform Scale (`builtin.point3D`); releasing the pinch
-"pops" the switch to its nearest state with a spring. At rest a white triangle sits at
-its base scale on the magenta artboard.
+Pinch to scale a rounded triangle. A magnification (pinch) gesture feeds the shape's
+Transform Scale (`builtin.point3D`), gated by `origami.PopSwitch` paging; releasing the
+pinch settles to the nearest state with a spring. At rest a white rounded triangle sits at
+its base scale, centered on the magenta artboard.
 
 ## Mapping
 
 | Origami | SwiftUI |
 |---|---|
-| `origami.PopSwitch` — Pop Switch | `@State` + `withAnimation(.spring)` (native) |
-| Magnification (pinch) gesture | ``MagnifyGesture`` (native) |
+| `origami.PinchScale` — pinch magnification | ``MagnifyGesture`` (native) |
+| `origami.PopSwitch` — Pop Switch (paging) | `@State` + `withAnimation(.spring)` (native) |
 | `builtin.point3D` — Transform Scale | ``View/scaleEffect(_:anchor:)`` (native) |
-| `builtin.layer.shape` — shape | `Shape` (upward triangle, native) |
+| `builtin.layer.shape` "Content" — rounded triangle | `Shape` (rounded triangle, native) |
+| `ios.Screen` "Artboard 1" — artboard | background `Color` (native) |
 
-The two `origami.PopSwitch` nodes carry the X and Y components of the scale
-`builtin.point3D`; a uniform pinch flips them together, so a single `@State` Bool models
-both faithfully. The visible constants — the white triangle (Origami's default Shape
-geometry), the magenta `#DD70DF` artboard, and the shape's proportions — are matched to
-the Origami reference render (the pixel oracle the runner screenshots). The magnified-scale
-endpoint and the exact point size remain documented placeholders pending parser input-port
-decoding (see the source header).
+The placed graph is 59 nodes: an `ios.Screen` "Artboard 1", a layer "Triangle" wrapping a
+`builtin.layer.shape` "Content", a "Hard Light" blend layer, a `builtin.point3D` scale wired
+through a `builtin.layer.binding`, and the interaction stack (`origami.PinchScale`,
+`origami.PinchRotate`, `origami.PinchPan`, `origami.Slip`, `origami.Velocity`,
+`builtin.momentumScrolling`, `origami.2PagePaging`, `origami.PopSwitch` ×5).
+
+The visible constants are decoded by hand from the `.origami`'s FlatBuffers value structs
+(the parser does not decode input-port default *values* yet): the artboard fill is float64
+`rgba(0.8667, 0.4392, 0.8745, 1.0)` = `#DD70DF` (Origami Core "Purple"); the "Content" shape
+is 300 × 300 pt with a white (`rgba(1,1,1,1)`) fill and a corner-radius field decoded as 140;
+the artboard device is iPhone6 (375 × 667). This view renders the resting frame (the pixel
+oracle) exactly. The continuous pinch magnification, rotation, pan, momentum, and full 2-page
+paging are **flagged, not faked** — faithful physics needs the port constants the parser can't
+decode yet (the same blocker as `origami.Drag`); see the source header.
 
 ## Preview
 
