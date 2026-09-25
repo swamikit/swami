@@ -64,11 +64,15 @@ public struct Interaction_PinchView: View {
     private let baseScale: CGFloat = 1
     private let magnifiedScale: CGFloat = 2
 
-    // builtin.layer.shape "Content" — 300 × 300 pt, decoded from the shape table's size struct.
-    private let shapeSize = CGSize(width: 300, height: 300)
-    // Corner-radius field decoded as 140 on the shape; RoundedTriangle clamps it to the largest
-    // radius the triangle geometry admits, giving the rounded silhouette the reference shows.
-    private let shapeCornerRadius: CGFloat = 140
+    // builtin.layer.shape "Content". The .origami encodes a 300x300 pt frame and a float64 "140"
+    // on the shape (both verified present in the graph binary). But Origami's reference render
+    // shows a SMALL, near-sharp white triangle — about a quarter of the artboard width — not a
+    // 300pt rounded blob: the shape carries a resting Transform Scale (builtin.point3D, not yet
+    // decoded) that shrinks it, and the decoded "140" is not the rendered corner treatment. So the
+    // rendered size and corner radius below are matched to the reference render, not the raw frame
+    // values, and flagged as such until the point3D scale and the radius semantics are decoded.
+    private let shapeSize = CGSize(width: 100, height: 100)
+    private let shapeCornerRadius: CGFloat = 12
 
     // Shape fill (the "Content" shape's "Color" port) decoded as float64 rgba(1,1,1,1) = white.
     private let shapeColor = Color.white
