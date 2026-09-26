@@ -23,8 +23,9 @@ struct SwamiTests {
         // Pinch out past the threshold pops in, whatever the prior state.
         #expect(Interaction_PinchView.popped(after: 1.5, current: false, threshold: t) == true)
         #expect(Interaction_PinchView.popped(after: 1.25, current: false, threshold: t) == true)
-        // Pinch in past the reciprocal pops out.
+        // Pinch in at or past the reciprocal threshold pops out.
         #expect(Interaction_PinchView.popped(after: 0.5, current: true, threshold: t) == false)
+        #expect(Interaction_PinchView.popped(after: 1 / t, current: true, threshold: t) == false)
         // In the dead band the switch holds its remembered state.
         #expect(Interaction_PinchView.popped(after: 1.0, current: true, threshold: t) == true)
         #expect(Interaction_PinchView.popped(after: 1.0, current: false, threshold: t) == false)
