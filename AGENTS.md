@@ -183,19 +183,32 @@ the rule and land it here.
 
 **Points vs pixels (render scale)**: the verify sim renders on a 375×667 pt
 device at **@2×** — 750×1334 px, the same size Origami exports. Size shapes in
-SwiftUI **points**; when you take a *pixel* measurement off the Origami
-reference, divide by the 2× render scale to get points (a 153×141 px shape →
-~76×70 pt). Never put a pixel count into a `.frame(...)`. This is the usual
-cause of a shape that is the right form but visibly too large/small in the
-diff. If the reference render dimensions ever change, this ratio changes with
-them — keep it in sync (or read the scale once verify emits it).
+SwiftUI **points**, sized so the *visible* shape hits the Origami target.
+Converting a pixel measurement to points (÷ the 2× scale) gives the target
+*visible* size — which is **not** necessarily the `.frame(...)`. A shape that
+does not fill its frame — a rounded triangle, an inset or stroked path — needs a
+frame **larger** than visible-px ÷ scale. Worked example: `RoundedTriangle(cornerRadius: 20)`
+in a **90×80 pt** frame renders a **~153×142 px** visible triangle (matching
+Origami's measured 153×141), because the 20 pt rounding insets each base corner
+~6.6 pt and trims the apex ~8.7 pt. So: measure the shape's *visible bounds*,
+don't assume it fills its frame — but never put a raw pixel count into a
+`.frame(...)` either. This is the usual cause of a shape that is the right form
+but visibly too large/small in the diff. (If the render device ever changes, the
+2× scale changes with it.)
 
-**System chrome is not fidelity** (reviewer + arbiter rule): the Swami capture
-is a full-device screenshot; the Origami artboard is not. A status bar / home
-indicator / Dynamic Island present on one side and absent on the other is a
-**capture artifact, not a fidelity defect** — do not treat it as a finding or a
-reason to block. Judge the artboard *content* region. (A status bar that is
-part of the Origami design itself is content, not chrome — distinguish the two.)
+**System chrome is not fidelity** (standing reviewer rule): the Swami side of the
+evidence is a full-device simulator capture, so it carries iOS chrome — a status bar
+(carrier/time/battery), and possibly a home indicator or Dynamic Island — that the
+Origami artboard has no equivalent for. `verify.yml` does **not** crop it (cropping
+proved to be the wrong mechanism: a fixed band can asymmetrically shave real content
+off the Origami reference, and the fix is a reviewer that understands chrome, not
+more crop machinery). So the rule is on the reviewer: **any** iOS status bar / home
+indicator / Dynamic Island that shows on one side of the published evidence but not
+the other is a **capture artifact, not a fidelity defect** — do not treat it as a
+finding or a reason to block; judge the artboard *content* region.
+(`.statusBarHidden(true)` does **not** remove it from the simctl framebuffer, so
+residual chrome is never a signal that view code is wrong. A status bar that is part
+of the Origami design itself is content, not chrome — distinguish the two.)
 
 **SSIM is evidence, not a verdict** (ADR-0014, reviewer rule): the ImageMagick
 SSIM number is unreliable on our flat-color, full-bleed renders and routinely
