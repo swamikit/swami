@@ -246,9 +246,11 @@ developer lands on from the gallery. Write it in this order, and stop there:
      `https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift`.
 
    Wire the Origami source as the page's `@CallToAction(purpose: download)` and
-   list both under a `## Downloads` heading. Never leave a downloads TODO — these
-   URLs resolve for every pattern (the `.origami` is public on origami.design; the
-   `.swift` ships in this repo).
+   list both under a `## Downloads` heading. Never leave a downloads TODO — the
+   `.origami` link is the **same public endpoint `verify.yml` downloads for the
+   pixel compare** (`curl -sL … origami.design/public/origami_files/patterns/<PatternID>.origami`,
+   `verify.yml`), so if the gate can render a pattern its `.origami` URL resolves;
+   the `.swift` ships in this repo.
 4. **Behavior** — two or three plain bullets on what the gesture/interaction
    does, in a person's words ("drag it and it keeps moving, then springs back"),
    not the patch graph.
