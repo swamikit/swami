@@ -427,12 +427,26 @@ jobs:
             # Swami capture and the Origami reference so the published triplet and the
             # compare are artboard-to-artboard. Chopping both keeps them the same height
             # (the resize below stays a no-op) and the centered pattern content sits well
-            # below this band. Tune STATUS_BAR_CROP_PX if the render device changes.
+            # below this band. The crop is device-profile-guarded (see below).
             STATUS_BAR_CROP_PX="${STATUS_BAR_CROP_PX:-50}"
-            for side in swami origami; do
-              [ -f "out/${side}/${slug}.png" ] && \
-                convert "out/${side}/${slug}.png" -chop "0x${STATUS_BAR_CROP_PX}" "out/${side}/${slug}.png"
-            done
+            EXPECTED_DEVICE_HEIGHT="${EXPECTED_DEVICE_HEIGHT:-1334}"
+            sw_h=$(identify -format '%h' "out/swami/${slug}.png" 2>/dev/null || echo '?')
+            # The 50 px band is a fixed number calibrated to ONE device profile
+            # (iPhone SE class, 1334 px tall @2×) — its status bar is ~this tall. On any
+            # other capture height that number is unvalidated: it could shave real
+            # artboard content off both sides and still compare clean — a false green.
+            # So only chop when the capture matches the profile the band was tuned for;
+            # otherwise skip and warn loudly rather than blindly crop. If the render
+            # device changes, re-tune STATUS_BAR_CROP_PX and EXPECTED_DEVICE_HEIGHT
+            # together (both are env-overridable) instead of relying on the default.
+            if [ "$sw_h" = "$EXPECTED_DEVICE_HEIGHT" ]; then
+              for side in swami origami; do
+                [ -f "out/${side}/${slug}.png" ] && \
+                  convert "out/${side}/${slug}.png" -chop "0x${STATUS_BAR_CROP_PX}" "out/${side}/${slug}.png"
+              done
+            else
+              echo "::warning::swami capture height ${sw_h} != expected ${EXPECTED_DEVICE_HEIGHT} for ${slug}; skipping the ${STATUS_BAR_CROP_PX}px status-bar crop (band not validated for this device profile — re-tune STATUS_BAR_CROP_PX/EXPECTED_DEVICE_HEIGHT). Residual chrome may show in the triplet; judge the artboard content region (AGENTS.md 'System chrome is not fidelity')."
+            fi
 
             # The SwamiHost capture is a full-device simulator screenshot; Origami's
             # "Take Screenshot" is the artboard at its own pixel size. Comparing them

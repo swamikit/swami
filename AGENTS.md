@@ -198,9 +198,12 @@ but visibly too large/small in the diff. (If the render device ever changes, the
 
 **System chrome is not fidelity** (standing reviewer rule; the verify capture also
 crops it): `verify.yml` chops the top status-bar band off **both** the Swami capture
-and the Origami reference before compare/publish, so the triplet is *normally*
-artboard-to-artboard. That is a convenience, not a guarantee — the crop can be
-absent, misconfigured, or skipped on a future run — so the rule holds regardless:
+and the Origami reference before compare/publish. Treat that as a runner-side
+normalization step expected to remove chrome **on the current device profile** — not
+a blanket guarantee: it only fires when the capture height matches the calibrated
+profile (iPhone SE class, 1334 px @2×), and on any other height it warns and skips
+rather than risk over-cropping real content. So the crop can be absent,
+misconfigured, or skipped on a future run — and the rule holds regardless:
 **any** iOS status bar / home indicator / Dynamic Island that shows on one side of
 the published evidence but not the other is a **capture artifact, not a fidelity
 defect** — do not treat it as a finding or a reason to block; judge the artboard
