@@ -196,21 +196,19 @@ don't assume it fills its frame — but never put a raw pixel count into a
 but visibly too large/small in the diff. (If the render device ever changes, the
 2× scale changes with it.)
 
-**System chrome is not fidelity** (standing reviewer rule; the verify capture also
-crops it): `verify.yml` chops the top status-bar band off **both** the Swami capture
-and the Origami reference before compare/publish. Treat that as a runner-side
-normalization step expected to remove chrome **on the current device profile** — not
-a blanket guarantee: it only fires when the capture height matches the calibrated
-profile (iPhone SE class, 1334 px @2×), and on any other height it warns and skips
-rather than risk over-cropping real content. So the crop can be absent,
-misconfigured, or skipped on a future run — and the rule holds regardless:
-**any** iOS status bar / home indicator / Dynamic Island that shows on one side of
-the published evidence but not the other is a **capture artifact, not a fidelity
-defect** — do not treat it as a finding or a reason to block; judge the artboard
-*content* region. (`.statusBarHidden(true)` does **not** remove it from the simctl
-framebuffer, so residual chrome is never a signal that view code is wrong. A status
-bar that is part of the Origami design itself is content, not chrome — distinguish
-the two.)
+**System chrome is not fidelity** (standing reviewer rule): the Swami side of the
+evidence is a full-device simulator capture, so it carries iOS chrome — a status bar
+(carrier/time/battery), and possibly a home indicator or Dynamic Island — that the
+Origami artboard has no equivalent for. `verify.yml` does **not** crop it (cropping
+proved to be the wrong mechanism: a fixed band can asymmetrically shave real content
+off the Origami reference, and the fix is a reviewer that understands chrome, not
+more crop machinery). So the rule is on the reviewer: **any** iOS status bar / home
+indicator / Dynamic Island that shows on one side of the published evidence but not
+the other is a **capture artifact, not a fidelity defect** — do not treat it as a
+finding or a reason to block; judge the artboard *content* region.
+(`.statusBarHidden(true)` does **not** remove it from the simctl framebuffer, so
+residual chrome is never a signal that view code is wrong. A status bar that is part
+of the Origami design itself is content, not chrome — distinguish the two.)
 
 **SSIM is evidence, not a verdict** (ADR-0014, reviewer rule): the ImageMagick
 SSIM number is unreliable on our flat-color, full-bleed renders and routinely
