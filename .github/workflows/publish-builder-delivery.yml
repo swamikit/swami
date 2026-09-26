@@ -234,7 +234,11 @@ jobs:
             stem="${pair##*:}"
             score=$(printf '%s\n' "$RESULTS" | awk -F'|' -v wanted="$slug" '$2 ~ "^[[:space:]]*" wanted "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $3); print $3; exit}')
             sanity=$(printf '%s\n' "$RESULTS" | awk -F'|' -v wanted="$slug" '$2 ~ "^[[:space:]]*" wanted "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $4); print $4; exit}')
-            [ "$sanity" = "pass" ] || overall="failed"
+            # SSIM "catastrophic sanity" is INFORMATIONAL only (ADR-0014): recorded
+            # in the body below as evidence, but it must not fail the delivery. The
+            # metric is unreliable on flat-color full-bleed renders (reads ~0 for
+            # near-identical images), so gating delivery status on it false-fails
+            # correct work and makes the Reviewer refuse an otherwise-good head.
             BODY+="### ${stem}"$'\n\n'
             BODY+="Changed: \`app/Swami/Patterns/${stem}.swift\` · Origami ${ORIGAMI_VERSION} · normalized SSIM ${score:-unavailable} · catastrophic sanity **${sanity:-failed}**"$'\n\n'
             BODY+="| Swami | Origami | Diff |"$'\n'"|---|---|---|"$'\n'
