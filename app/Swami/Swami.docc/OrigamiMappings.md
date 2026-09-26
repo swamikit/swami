@@ -21,6 +21,9 @@ SwiftUI equivalent.
 | Pure value patch (Add, Transition/interpolate, logic) | computed property / expression |
 | Interaction (Tap, Down/press, Double Tap, Long Press) | gesture + `@State` / `@GestureState` |
 | `origami.drag` — Drag | ``drag(enable:momentum:bounds:position:translation:velocity:reset:)`` (helper) |
+| `builtin.layer.shape` — Shape (triangle) | ``RoundedTriangle`` (helper) |
+| Magnification / Pinch | `MagnifyGesture` (native) |
+| `origami.PopSwitch` — Pop Switch | `@State` flipped on a threshold, `.spring` pop (native) |
 | State/memory (Switch, Sample and Hold) | `@State` + update logic |
 | Animation (Classic Animation, Pop/Spring) | `withAnimation` / `.animation(.spring)` |
 
