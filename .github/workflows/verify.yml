@@ -419,15 +419,29 @@ jobs:
             sleep 3
             xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot "out/swami/${slug}.png"
 
+            # The full-device sim capture carries an iOS status bar (carrier/time/
+            # battery) the Origami artboard has no equivalent for. It is a capture
+            # artifact, not a fidelity difference — but it is a pixel one, so both SSIM
+            # and a vision Reviewer flag it (`.statusBarHidden(true)` does NOT remove it
+            # from the simctl framebuffer). Chop the top status-bar band off BOTH the
+            # Swami capture and the Origami reference so the published triplet and the
+            # compare are artboard-to-artboard. Chopping both keeps them the same height
+            # (the resize below stays a no-op) and the centered pattern content sits well
+            # below this band. Tune STATUS_BAR_CROP_PX if the render device changes.
+            STATUS_BAR_CROP_PX="${STATUS_BAR_CROP_PX:-50}"
+            for side in swami origami; do
+              [ -f "out/${side}/${slug}.png" ] && \
+                convert "out/${side}/${slug}.png" -chop "0x${STATUS_BAR_CROP_PX}" "out/${side}/${slug}.png"
+            done
+
             # The SwamiHost capture is a full-device simulator screenshot; Origami's
             # "Take Screenshot" is the artboard at its own pixel size. Comparing them
             # raw makes `compare` score two differently-sized canvases, so SSIM
             # collapses to ~0 regardless of visual fidelity — the long-standing
             # "Origami and the sim aren't the same device" failure (AGENTS.md
-            # "Learned rules — Origami rendering"). Normalize the Swami capture to the
-            # Origami reference's exact dimensions first, so SSIM measures content,
-            # not the size/canvas offset. The published Swami evidence stays the raw
-            # full-device capture; only the comparison input is resized.
+            # "Learned rules — Origami rendering"). Normalize the (chrome-cropped) Swami
+            # capture to the Origami reference's exact dimensions so SSIM measures
+            # content, not the size/canvas offset.
             sw_dims=$(identify -format '%wx%h' "out/swami/${slug}.png" 2>/dev/null || echo '?')
             read og_w og_h <<< "$(identify -format '%w %h' "out/origami/${slug}.png" 2>/dev/null || echo '')" || true
             echo "  dims: swami ${sw_dims}  origami ${og_w:-?}x${og_h:-?}"
