@@ -425,9 +425,10 @@ jobs:
             # collapses to ~0 regardless of visual fidelity — the long-standing
             # "Origami and the sim aren't the same device" failure (AGENTS.md
             # "Learned rules — Origami rendering"). Normalize the Swami capture to the
-            # Origami reference's exact dimensions first, so SSIM measures content,
-            # not the size/canvas offset. The published Swami evidence stays the raw
-            # full-device capture; only the comparison input is resized.
+            # Origami reference's exact dimensions so SSIM measures content, not the
+            # size/canvas offset. (iOS chrome in the Swami capture, e.g. the status bar,
+            # is a capture artifact the Reviewer judges around — AGENTS.md "System chrome
+            # is not fidelity" — not something this step crops.)
             sw_dims=$(identify -format '%wx%h' "out/swami/${slug}.png" 2>/dev/null || echo '?')
             read og_w og_h <<< "$(identify -format '%w %h' "out/origami/${slug}.png" 2>/dev/null || echo '')" || true
             echo "  dims: swami ${sw_dims}  origami ${og_w:-?}x${og_h:-?}"
