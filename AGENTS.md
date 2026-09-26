@@ -181,6 +181,28 @@ Note: this rule is an example of what the V4 self-improving loop would surface
 automatically — agents observing recurring offset across 3+ PRs would propose
 the rule and land it here.
 
+**Points vs pixels (render scale)**: the verify sim renders on a 375×667 pt
+device at **@2×** — 750×1334 px, the same size Origami exports. Size shapes in
+SwiftUI **points**; when you take a *pixel* measurement off the Origami
+reference, divide by the 2× render scale to get points (a 153×141 px shape →
+~76×70 pt). Never put a pixel count into a `.frame(...)`. This is the usual
+cause of a shape that is the right form but visibly too large/small in the
+diff. If the reference render dimensions ever change, this ratio changes with
+them — keep it in sync (or read the scale once verify emits it).
+
+**System chrome is not fidelity** (reviewer + arbiter rule): the Swami capture
+is a full-device screenshot; the Origami artboard is not. A status bar / home
+indicator / Dynamic Island present on one side and absent on the other is a
+**capture artifact, not a fidelity defect** — do not treat it as a finding or a
+reason to block. Judge the artboard *content* region. (A status bar that is
+part of the Origami design itself is content, not chrome — distinguish the two.)
+
+**SSIM is evidence, not a verdict** (ADR-0014, reviewer rule): the ImageMagick
+SSIM number is unreliable on our flat-color, full-bleed renders and routinely
+reads near-zero for near-identical images. Do **not** cite the SSIM score as a
+fidelity finding or a reason to request changes; judge fidelity from the
+published Swami/Origami/diff triplet.
+
 ### Beats
 
 Reframe first: **each pattern that lands is a deliverable, not a test.** The
