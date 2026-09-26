@@ -3,6 +3,7 @@
 @Metadata {
     @PageKind(sampleCode)
     @PageImage(purpose: card, source: "Interaction_Drag")
+    @CallToAction(url: "https://origami.design/public/origami_files/patterns/Interaction_Drag.origami", purpose: download, label: "Open in Origami")
 }
 
 A card you can drag anywhere on screen. It carries momentum when you let go and
@@ -42,18 +43,8 @@ RoundedRectangle(cornerRadius: 20)
 
 ## Downloads
 
-- **Swift sample** — the source for `Interaction_DragView`, ready to paste into a project.
-- **Origami source** — `Interaction_Drag.origami`, the pattern this view was translated from.
-
-@Comment {
-    TODO(downloads): wire these to a `@CallToAction(url:, purpose: download, label:)`
-    in the @Metadata block above once the artifacts have a stable home. The Swift
-    sample is bundled by post-merge.yml as `dist/Interaction_Drag.zip` (currently
-    an ephemeral workflow artifact, no public URL). The `.origami` is deliberately
-    not committed to this repo (private corpus) — a home is proposed in the PR that
-    introduced this page. Until then this section names what will be downloadable
-    without shipping a broken button.
-}
+- **Swift sample** — [`Interaction_Drag.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Drag.swift), the source for `Interaction_DragView`, ready to paste into a project.
+- **Origami source** — [`Interaction_Drag.origami`](https://origami.design/public/origami_files/patterns/Interaction_Drag.origami), the original prototype (opens in Origami Studio).
 
 ## See Also
 

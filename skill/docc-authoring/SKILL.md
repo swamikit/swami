@@ -237,10 +237,18 @@ developer lands on from the gallery. Write it in this order, and stop there:
 2. **Usage** — a copy-pasteable SwiftUI snippet showing how a developer actually
    uses the view (`import <Module>` then `<PatternID>View()`), plus the helper
    call if they'd want the same behavior on their own layers.
-3. **Downloads** — the Swift sample and, when hosted, the source pattern. Wire a
-   real download to `@CallToAction` once the artifact has a stable URL; until
-   then name what will be downloadable and leave the TODO in a `@Comment` (which
-   doesn't render), not as visible apology.
+3. **Downloads** — two links, both already public for every corpus pattern, no
+   TODO:
+   - **Origami source** — `https://origami.design/public/origami_files/patterns/<PatternID>.origami`
+     — the original prototype, and the exact file `verify.yml` fetches to render
+     the reference. Opens in Origami Studio.
+   - **Swift sample** — the pattern's own `.swift` in this repo:
+     `https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift`.
+
+   Wire the Origami source as the page's `@CallToAction(purpose: download)` and
+   list both under a `## Downloads` heading. Never leave a downloads TODO — these
+   URLs resolve for every pattern (the `.origami` is public on origami.design; the
+   `.swift` ships in this repo).
 4. **Behavior** — two or three plain bullets on what the gesture/interaction
    does, in a person's words ("drag it and it keeps moving, then springs back"),
    not the patch graph.
@@ -253,6 +261,7 @@ Template:
 @Metadata {
     @PageKind(sampleCode)
     @PageImage(purpose: card, source: "<PatternID>")
+    @CallToAction(url: "https://origami.design/public/origami_files/patterns/<PatternID>.origami", purpose: download, label: "Open in Origami")
 }
 
 <One human sentence: what this pattern is.>
@@ -279,8 +288,8 @@ struct ContentView: View {
 
 ## Downloads
 
-- **Swift sample** — the source for `<PatternID>View`.
-- **Origami source** — `<PatternID>.origami`, if hosted.
+- **Swift sample** — [`<PatternID>.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift), the source for `<PatternID>View`.
+- **Origami source** — [`<PatternID>.origami`](https://origami.design/public/origami_files/patterns/<PatternID>.origami), the original prototype (opens in Origami Studio).
 
 ## See Also
 
@@ -308,9 +317,9 @@ for an authoring note or TODO that must not render on the page.
 
 - **`@Metadata { ... }`** — page-level config wrapper. `@PageKind`, `@PageImage`,
   `@CallToAction` sit inside it.
-- **`@Comment { ... }`** — authoring note that never renders. Use it to park a
-  TODO (e.g. a download URL that has no home yet) in source without putting
-  machinery prose on the reader's page.
+- **`@Comment { ... }`** — authoring note that never renders. Use it to park an
+  authoring TODO in source without putting machinery prose on the reader's page.
+  (Downloads are not a TODO — both URLs above are public for every pattern.)
 - **`@PageKind(article)` / `@PageKind(sampleCode)`** — page classification.
   `sampleCode` gives the sample-code chrome (download slot, code-forward layout).
   For sample-code pages, prefer a **standalone `.md`** in the catalog — see the
@@ -319,9 +328,9 @@ for an authoring note or TODO that must not render on the page.
   won't render.
 - **`@PageImage(purpose: card, source: "<PatternID>")`** — gallery-card preview.
   `source` is the resource basename, no extension (see "Resources" below).
-- **`@CallToAction(url: "<zip-url>", purpose: download, label: "Download")`** —
-  download button on a pattern page, pointing at the Xcode-project zip
-  published alongside the site.
+- **`@CallToAction(url: "https://origami.design/public/origami_files/patterns/<PatternID>.origami", purpose: download, label: "Open in Origami")`** —
+  download button on a pattern page, pointing at the public Origami source file
+  (the same artifact `verify.yml` fetches for the compare).
 - **`@Links(visualStyle: detailedGrid)`** — content-aware gallery cards. Each
   card pulls its preview from the linked page's own `@PageImage`. Do not
   hand-build the grid.

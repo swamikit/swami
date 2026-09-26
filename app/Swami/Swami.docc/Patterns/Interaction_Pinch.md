@@ -3,6 +3,7 @@
 @Metadata {
     @PageKind(sampleCode)
     @PageImage(purpose: card, source: "Interaction_Pinch")
+    @CallToAction(url: "https://origami.design/public/origami_files/patterns/Interaction_Pinch.origami", purpose: download, label: "Open in Origami")
 }
 
 Pinch a shape to scale it. Past a threshold it pops to an enlarged size with a
@@ -35,18 +36,8 @@ struct ContentView: View {
 
 ## Downloads
 
-- **Swift sample** — the source for `Interaction_PinchView`, ready to paste into a project.
-- **Origami source** — `Interaction_Pinch.origami`, the pattern this view was translated from.
-
-@Comment {
-    TODO(downloads): wire these to a `@CallToAction(url:, purpose: download, label:)`
-    in the @Metadata block above once the artifacts have a stable home. The Swift
-    sample is bundled by post-merge.yml as `dist/Interaction_Pinch.zip` (currently
-    an ephemeral workflow artifact, no public URL). The `.origami` is deliberately
-    not committed to this repo (private corpus) — a home is proposed in the PR that
-    introduced this page. Until then this section names what will be downloadable
-    without shipping a broken button.
-}
+- **Swift sample** — [`Interaction_Pinch.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Pinch.swift), the source for `Interaction_PinchView`, ready to paste into a project.
+- **Origami source** — [`Interaction_Pinch.origami`](https://origami.design/public/origami_files/patterns/Interaction_Pinch.origami), the original prototype (opens in Origami Studio).
 
 ## See Also
 
