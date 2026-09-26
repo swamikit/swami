@@ -28,9 +28,14 @@ struct ContentView: View {
 ```
 
 The drag physics come from the ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)``
-modifier, so you can reuse the same behavior on your own layers:
+modifier, so you can reuse the same behavior on your own layers — `bounds` and
+`position` are your own values (the drag stays inside `bounds` and writes the
+live position back to your `@State`):
 
 ```swift
+@State private var position: CGPoint = .zero
+let bounds = CGRect(origin: .zero, size: CGSize(width: 320, height: 640))
+
 RoundedRectangle(cornerRadius: 20)
     .drag(momentum: true, bounds: bounds, position: $position)
 ```
