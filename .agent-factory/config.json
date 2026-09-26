@@ -53,7 +53,7 @@
     "max_model_cost_usd": 2.0,
     "input_cost_per_million": 10.0,
     "output_cost_per_million": 50.0,
-    "visual_revision_context": false,
+    "visual_revision_context": true,
     "fallback_visual_revision_context": false
   },
   "review": {
