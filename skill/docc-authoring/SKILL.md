@@ -1,6 +1,6 @@
 ---
 name: docc-authoring
-description: Everything the DocC surface for a translated pattern needs. The emitted `.swift` file's shape (filename, struct, symbol-comment header, public API, verification-host switch) AND the DocC catalog conventions that receive it (directive whitelist, collection/gallery page shape, `Resources/Patterns/<PatternID>.png` basename contract, GFM patch→SwiftUI mapping table). Community-portable, sibling to `skill/pattern-translation`. Load whenever you're about to write a pattern's `.swift` file, a catalog page, or a mapping-table row.
+description: Everything the DocC surface for a translated pattern needs. The reader-facing catalog page shape (preview → usage → downloads → behavior, for a human browsing the gallery), the emitted `.swift` file's shape (filename, struct, symbol-comment header, public API, verification-host switch), and the catalog conventions that tie them together (directive whitelist, gallery page shape, `Resources/Patterns/<PatternID>.png` basename contract, GFM patch→SwiftUI mapping table). Community-portable, sibling to `skill/pattern-translation`. Load whenever you're about to write a pattern's `.swift` file, a catalog page, or a mapping-table row.
 metadata:
   type: procedural
 ---
@@ -17,6 +17,15 @@ mapping table).
 Repo-specific details (env var names, workflow filenames, `sed`/`tr` slug
 derivation) are marked as the reference project's — community ports mirror the
 shape, not the identifiers. No PR flow, no issue numbers.
+
+**Who the catalog page is for.** A developer browsing a SwiftUI pattern gallery
+— not the harness, not a future translator. They want to see the pattern, copy
+the view into their project, and read one plain sentence about what it does.
+Write every catalog page in that voice. The parser IR, the fidelity debts, the
+"flag, don't fake" caveats, and the render-pipeline mechanics are real, but they
+belong in the `.swift` source as code comments, never in the reader-facing page.
+The consumer page shape below is the target; the `.swift`/workflow rules that
+follow are the plumbing that makes it render.
 
 ## One file per pattern
 
@@ -144,22 +153,12 @@ struct ContentView: View {
 }
 ```
 
-- **Slug.** Whatever the reference project's builder + verify workflows agree
-  the slug is — no more, no less. The rule is symmetric with the workflow, not
-  a category-stripping heuristic invented here. In the reference project,
-  `builder.yml`'s "Resolve pattern name" step runs
-  `sed -E 's/^Interaction_//' | tr '[:upper:]' '[:lower:]'`, which strips only
-  the literal `Interaction_` prefix before lowercasing;
-  `.github/patterns.txt` pairs the same slug to the stem. So today:
-  `Interaction_Touch` → `touch`, `Interaction_Drag` → `drag`, but
-  `Layer_Frame` → `layer_frame` (underscore kept — the `Layer_` prefix is not
-  stripped) and `Animation_ClassicAnimation` → `animation_classicanimation`.
-  Read the current builder convention and pattern registry before adding a case; a case labelled
-  `interaction-touch` or `frame` (guessing a broader strip than the builder
-  actually does) is unreachable and the host renders the default view instead.
-  A community port that wants a broader rule (strip every category, or a
-  hyphen-separated slug) changes builder + the registry atomically in the same PR
-  and updates this bullet.
+- **Slug.** Whatever the builder and verify workflows agree it is — read the
+  current convention and pattern registry before adding a case, don't invent a
+  strip rule. In the reference project the builder strips only the literal
+  `Interaction_` prefix then lowercases (`Interaction_Drag` → `drag`;
+  `Layer_Frame` → `layer_frame`), and `.github/patterns.txt` pairs that slug to
+  the stem. A guessed slug is unreachable and the host renders the default view.
 - **One case per pattern.** Do not fold multiple patterns behind one slug. Each
   case renders exactly one pattern's view, with no host chrome around it.
 - **Register the slug where the verify workflow reads it, in the same commit.**
@@ -222,17 +221,96 @@ struct ContentView: View {
 
 The catalog is the human-facing surface: gallery pages, per-pattern sample-code
 pages, mapping references. Pattern `.swift` files carry a symbol-comment header
-(above); catalog `.md` files carry the gallery shape, resource bindings, and
-the patch→SwiftUI mapping table. In a Swami-shaped module the catalog lives at
-`<Module>.docc/`.
+(above); catalog `.md` files carry the reader-facing page, the gallery shape,
+resource bindings, and the patch→SwiftUI mapping table. In a Swami-shaped module
+the catalog lives at `<Module>.docc/`.
+
+### The reader-facing page (consumer shape)
+
+Each standalone pattern page (`<Module>.docc/Patterns/<PatternID>.md`) is what a
+developer lands on from the gallery. Write it in this order, and stop there:
+
+1. **Preview first** — the rendered pattern, so they see it before they read
+   anything. The `@PageImage(purpose: card, …)` gives the header/card image;
+   embed the same render inline with a Markdown image (`![alt](<PatternID>)`,
+   basename only) under a `## Preview` heading so it leads the body.
+2. **Usage** — a copy-pasteable SwiftUI snippet showing how a developer actually
+   uses the view (`import <Module>` then `<PatternID>View()`), plus the helper
+   call if they'd want the same behavior on their own layers.
+3. **Downloads** — the Swift sample and, when hosted, the source pattern. Wire a
+   real download to `@CallToAction` once the artifact has a stable URL; until
+   then name what will be downloadable and leave the TODO in a `@Comment` (which
+   doesn't render), not as visible apology.
+4. **Behavior** — two or three plain bullets on what the gesture/interaction
+   does, in a person's words ("drag it and it keeps moving, then springs back"),
+   not the patch graph.
+
+Template:
+
+~~~markdown
+# <Category> — <Pattern name>
+
+@Metadata {
+    @PageKind(sampleCode)
+    @PageImage(purpose: card, source: "<PatternID>")
+}
+
+<One human sentence: what this pattern is.>
+
+## Preview
+
+![<one-line description of the rendered interaction>](<PatternID>)
+
+## Usage
+
+```swift
+import <Module>
+
+struct ContentView: View {
+    var body: some View {
+        <PatternID>View()
+    }
+}
+```
+
+## Behavior
+
+- <what the gesture does, in plain words>
+
+## Downloads
+
+- **Swift sample** — the source for `<PatternID>View`.
+- **Origami source** — `<PatternID>.origami`, if hosted.
+
+## See Also
+
+- ``<PatternID>View``
+- <doc:OrigamiMappings>
+~~~
+
+An optional `## Translation notes` may close the page with **one or two human
+sentences** that point at the `.swift` source for the parser/fidelity detail.
+That is the only place translation-machinery language is allowed on the page, and
+it stays at the bottom, brief, and pointer-only.
+
+**Keep off the reader-facing page:** the CI render pipeline (which workflow makes
+the PNG), parser IR / node-and-edge counts, fidelity-debt disclaimers,
+"flag, don't fake", and any `// TODO: parser-decoded token` prose. All of that
+lives in the `.swift` file's comments where it travels with the code — the page
+is for the person using the view.
 
 ### Directives — the whole allowed set
 
 Everything else stops and asks. In particular, no ad-hoc HTML, no custom card
-grids by hand.
+grids by hand. Two non-directive allowances: a **Markdown image**
+(`![alt](<PatternID>)`) for the inline preview, and a **`@Comment { ... }`** block
+for an authoring note or TODO that must not render on the page.
 
 - **`@Metadata { ... }`** — page-level config wrapper. `@PageKind`, `@PageImage`,
   `@CallToAction` sit inside it.
+- **`@Comment { ... }`** — authoring note that never renders. Use it to park a
+  TODO (e.g. a download URL that has no home yet) in source without putting
+  machinery prose on the reader's page.
 - **`@PageKind(article)` / `@PageKind(sampleCode)`** — page classification.
   `sampleCode` gives the sample-code chrome (download slot, code-forward layout).
   For sample-code pages, prefer a **standalone `.md`** in the catalog — see the
@@ -259,7 +337,8 @@ grids by hand.
   sidebar category (Featured, Animation, Interaction, Layer, …). These are the
   gallery pages that host `@TabNavigator` + `@Links`.
 - **Standalone sample-code pages.** `<Module>.docc/Patterns/<PatternID>.md`.
-  One file per pattern. Filename basename = pattern ID = image basename = doc
+  One file per pattern, written in the consumer shape above (preview → usage →
+  downloads → behavior). Filename basename = pattern ID = image basename = doc
   link. Same `PatternID` the pattern's `.swift` file uses.
 - **Preview images.** `<Module>.docc/Resources/Patterns/<PatternID>.png`.
   Basename = `PatternID`; keep the `.swift` file, the standalone catalog page,
@@ -329,9 +408,16 @@ correctness, the mapping table enforces *reachability* by a reader.
 
 ### Catalog: what NOT to do
 
-- **No per-pattern prose articles.** Sample-code pages are image + code + a
-  sentence or two of context. If it starts to read like a walkthrough, delete
-  it — the render and the code are the walkthrough.
+- **No per-pattern prose articles.** Sample-code pages are preview + usage +
+  downloads + a couple of behavior bullets. If it starts to read like a
+  walkthrough, delete it — the render and the code are the walkthrough.
+- **No harness or machinery prose on the page.** No description of the CI render
+  pipeline, no parser IR (node/edge counts), no fidelity-debt disclaimers, no
+  "flag, don't fake", no `TODO: parser-decoded token`. That belongs in the
+  `.swift` comments. A page that explains how the PNG is produced instead of
+  showing the pattern has the wrong reader in mind.
+- **No page without a usage snippet.** The point of a sample-code page is to be
+  copied. If a developer can't paste `<PatternID>View()` out of it, it's not done.
 - **No `@Row`/`@Column` for the gallery.** `@Links` auto-cards from
   `@PageImage`. Rows and columns are for one-off layouts.
 - **No hand-added binaries in `Resources/Patterns/`.** Those PNGs come from

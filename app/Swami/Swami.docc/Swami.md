@@ -1,33 +1,36 @@
 # ``Swami``
 
-An Origami → SwiftUI translator: a deterministic parser reads Facebook's `.origami`
-patch graph into a semantic IR, and a codegen writes that IR out as SwiftUI. Swami
-is also the patch-matched helper library that fills gaps between Origami patches
-and native SwiftUI — one helper per Origami patch, named after the patch, sized by
-Origami's patch surface. Every pattern that lands is a deliverable, verified against
-Origami's own render, and shipped as a DocC-embedded example.
+A gallery of Origami patterns rebuilt in SwiftUI — each one a small, self-contained
+view you can drop into a project and use.
 
 ## Overview
 
-Origami's patch graph and SwiftUI are both reactive dataflow. Swami targets SwiftUI's
-state graph (computed properties, `@State`, `withAnimation`) rather than imperative
-functions, so the two graphs stay aligned. Where a native SwiftUI construct maps
-cleanly, Swami uses it. Where Origami's semantics need a helper — for example the
-Interaction patch's four discrete output ports, or Drag's momentum + rubber-band
-physics — Swami ships a helper named after the Origami patch and shaped like it.
+Every entry in the gallery started life as an Origami prototype and was translated
+into an idiomatic SwiftUI view. Browse the previews, copy the usage snippet, and
+reach for the matching helper when you want the same behavior on your own layers.
 
-## Corpus (in progress — 3 of 69)
+`Swami` is also the library those views are built on: one helper per Origami patch,
+named after the patch, so a Drag stays a ``Drag`` and an Interaction stays an
+``Interaction``. Where SwiftUI already has the right tool, the translation uses it
+directly; where it doesn't, the helper fills the gap.
 
-The translated corpus is the gallery and the training set. Each entry is a
-verified SwiftUI translation of an Origami pattern.
+## Gallery
 
-### Interaction
+@Links(visualStyle: detailedGrid) {
+    - <doc:Interaction_Drag>
+    - <doc:Interaction_Pinch>
+}
 
-- <doc:Interaction_Touch>
-- <doc:Interaction_Drag>
-- <doc:Interaction_Pinch>
+The Touch demo — tap, press, double-tap, and long-press on a card — lives as the
+``TouchOrigamiExampleView`` example.
 
 ## Topics
+
+### Patterns
+
+- <doc:Interaction_Drag>
+- <doc:Interaction_Pinch>
+- ``TouchOrigamiExampleView``
 
 ### Reference
 
@@ -41,6 +44,5 @@ verified SwiftUI translation of an Origami pattern.
 
 ### Examples
 
-- ``TouchOrigamiExampleView``
 - ``Interaction_DragView``
 - ``Interaction_PinchView``
