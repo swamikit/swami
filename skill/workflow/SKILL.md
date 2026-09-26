@@ -168,3 +168,32 @@ write a rule down — a rule in the wrong surface is a rule nobody finds.
 The agent-factory model — how skills, PR templates, verify.yml, and the reviewer
 loop compose — is diagrammed in the Architecture section of AGENTS.md. Read it
 before touching the harness or adding a new skill.
+
+## Bumping the Agent Factory pin
+
+The `factory_ref` (and `uses: …@<sha>`) in `.github/workflows/agent-*.yml` pins
+which agent-factory commit each role runs. Changing it has three rules, learned
+the hard way:
+
+1. **All callers, one commit.** Bump *every* caller — `agent-builder`,
+   `agent-review`, `agent-gate`, `agent-steward`, `provider-tool-smoke`,
+   `publish-builder-delivery`, `verify` — to the same SHA in one change. A split
+   pin (one role ahead of the rest) crashes the lagging roles at config-load the
+   moment the config uses a capability their older code rejects — e.g. turning on
+   `builder.visual_revision_context` while the Reviewer/Gate still pin the commit
+   whose validator forbids it. Symptom: role jobs fail in ~10s at the "Detect …"
+   step with a `ConfigError`.
+2. **Both branches.** Bump `development` *and* `main`. `issues`-triggered roles
+   (Builder, Steward) resolve their workflow file from the default branch
+   (`main`); `pull_request`-triggered roles (Reviewer, Gate) resolve it from the
+   PR head. Leave one stale and that trigger path breaks.
+3. **Quiet window — no open Builder PR.** The Builder App has no `workflows`
+   permission (deliberate: an agent must never rewrite the control plane that
+   governs it), so it cannot push a commit that touches `.github/workflows/**`.
+   If a Builder PR is open when you bump, its next base-merge tries to adopt the
+   new pins and the App's push is rejected — the loop wedges. Prefer bumping when
+   no Builder PR is open. If one already is, a **workflows-capable identity** (a
+   human, or an operator with `workflows` scope — never the Builder App) must
+   merge the updated base into the PR branch so it adopts the pins.
+
+The same discipline applies to any agent-factory consumer (e.g. REM).
