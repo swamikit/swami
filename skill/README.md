@@ -63,8 +63,11 @@ Swift file with its DocC page. Principles the pair codifies:
   ADR-0009), emits a compilable `.swift` file. Community-portable — no
   swamikit/swami-specific PR flow; pair with `workflow/` when opening a PR
   here.
-- **`docc-authoring/`** *(stub)* — how a translated pattern gets documented in
-  DocC (article, tutorial, code listing, screenshot). Not written yet.
+- **`docc-authoring/`** — how a translated pattern gets documented in DocC: the
+  reader-facing catalog page shape (preview → usage → downloads → behavior), the
+  pattern `.swift` file conventions, the gallery/mapping-table shape, and the
+  `Resources/Patterns/<PatternID>.png` basename contract. Load with
+  `pattern-translation/` when writing a pattern's `.swift` or its catalog page.
 - **`review/`** *(stub)* — how the Reviewer GA runs its checks (visual,
   structural, methodology) — the Reviewer's skill. Not written yet.
 
