@@ -8,13 +8,14 @@
 //
 // Fidelity debts (flag, don't fake — AGENTS.md):
 // - Artboard background: magenta. The macOS runner's compare confirms Origami's
-//   Pinch render carries a magenta background. Exact token not parser-decoded →
-//   uses the Origami Core "Purple" family value with a TODO.
+//   Pinch render carries a magenta background (rgb 221,112,223 — pixel-equal to
+//   Origami's render). Exact token not parser-decoded → uses that value with a TODO.
 // - Shape: builtin.layer.shape is a white rounded triangle — read from the
 //   resting-state render (the pixel oracle for this pattern), not from a decoded
-//   port default. Geometry (≈80×74, corner radius ≈14, centered) is measured off
-//   that render; fill is white. TODO markers inline pending Inspector / port-value
-//   decoding to lock exact size, radius, and fill token.
+//   port default. Geometry re-measured off Origami's own render: the visible
+//   triangle is 153×141 px @2x, matching a 90×80 pt frame at corner radius 20 pt,
+//   its visible bounds centered on the artboard. Fill is white. TODO markers inline
+//   pending Inspector / port-value decoding to lock exact size, radius, and fill token.
 // - PopSwitch enlarged value: lives as a port default the parser can't read yet.
 import SwiftUI
 
@@ -59,12 +60,20 @@ public struct Interaction_PinchView: View {
     private let popThreshold: CGFloat = 1.25
 
     // Central shape geometry — a rounded triangle, centered at rest.
-    // Measured from the resting-state render (the pixel oracle for Interaction_Pinch):
-    // ≈80pt wide, ≈74pt tall, corner radius ≈14pt.
+    // Re-measured from Origami's own render (the pixel oracle for Interaction_Pinch):
+    // the visible triangle is 153×141 px at 2× scale. Fitting the RoundedTriangle path
+    // back to that profile (apex-up, flat base) gives a 90×80 pt vertex frame at a
+    // 20 pt corner radius — reproducing Origami's width, height, and mid-height span exactly.
     // TODO: parser-decoded token when available — exact size and corner radius live as
     // shape-layer port defaults the parser can't read yet; these are oracle-derived.
-    private let shapeSize = CGSize(width: 80, height: 74)
-    private let shapeCornerRadius: CGFloat = 14
+    private let shapeSize = CGSize(width: 90, height: 80)
+    private let shapeCornerRadius: CGFloat = 20
+
+    // The rounded apex trims the top of the triangle's bounding box while its base
+    // stays flat, so a frame-centered RoundedTriangle renders ≈4.4 pt low. Origami
+    // centers the shape's *visible* bounds on the artboard, so lift by half the apex
+    // trim (measured apex trim ≈8.7 px @2× → 4.4 pt) to line the two renders up.
+    private let visibleCenteringLift: CGFloat = 4.4
 
     public var body: some View {
         // builtin.layer.layer (artboard background) — magenta, full-bleed.
@@ -79,6 +88,8 @@ public struct Interaction_PinchView: View {
                 RoundedTriangle(cornerRadius: shapeCornerRadius)
                     .fill(.white)
                     .frame(width: shapeSize.width, height: shapeSize.height)
+                    // Center the shape's visible bounds on the artboard (see comment above).
+                    .offset(y: -visibleCenteringLift)
                     // builtin.point3D Transform Scale ← origami.PopSwitch, driven by the pinch.
                     .scaleEffect(currentScale)
                     // origami.PopSwitch pop → spring (Pop Animation → SwiftUI spring, per
@@ -88,6 +99,7 @@ public struct Interaction_PinchView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea() // Origami renders the artboard without safe-area chrome
+            .statusBarHidden(true) // Origami's artboard render has no iOS status bar
     }
 
     // Live scale: during a pinch, follow the finger off the current popped state; at

@@ -40,10 +40,13 @@ agent — the cloud loop does not write there.
   exists). Fidelity debts flagged inline (flag, don't fake):
   - Artboard background: magenta confirmed by the runner's compare (verify.yml render note);
     exact token TODO (uses Origami Core "Purple" family value pending extraction).
-  - Shape fill + geometry: not readable from the placed-graph walk → white fill, ≈80×74 at
-    corner radius ≈14 measured off the oracle render, with `// TODO: parser-decoded token`.
+  - Shape fill + geometry: not readable from the placed-graph walk → white fill, re-measured
+    off Origami's own render (visible triangle 153×141 px @2× → 90×80 pt frame at corner
+    radius 20 pt, visible bounds centered), with `// TODO: parser-decoded token`.
   - PopSwitch enlarged value: FlatBuffers port default the parser can't read yet → 2× placeholder.
-  Pending: pixel triplet from verify.yml + Reviewer verdict on current head.
+  Render matched to Origami's oracle: status bar hidden (Origami's artboard has none), triangle
+  geometry and centering re-fit to the reference. Pending: pixel triplet from verify.yml +
+  Reviewer verdict on current head.
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)
 - **Path B pivot** ✅ landed. Superseded ADR-0012's cache approach. Runner fetches
