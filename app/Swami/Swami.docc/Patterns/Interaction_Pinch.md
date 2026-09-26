@@ -8,15 +8,15 @@
 Pinch to scale a shape. A `MagnifyGesture` (Origami's magnification/pinch input)
 drives two `origami.PopSwitch` nodes that flip the shape between its base and an
 enlarged state; the switch state feeds a `builtin.point3D` Transform Scale, and the
-pop is animated with a spring. At rest the shape sits at base scale on the magenta
-artboard.
+pop is animated with a spring. At rest a white rounded triangle sits at base scale,
+centered on the magenta artboard.
 
 ## Patch → SwiftUI mapping
 
 | Origami patch                       | SwiftUI                                                   |
 |-------------------------------------|----------------------------------------------------------|
 | `ios.Screen` — Artboard             | full-bleed background + `.ignoresSafeArea()` (native)    |
-| `builtin.layer.shape` — Shape       | `RoundedRectangle` (native)                              |
+| `builtin.layer.shape` — Shape       | ``RoundedTriangle`` (helper)                             |
 | Magnification / Pinch               | ``MagnifyGesture`` (native)                              |
 | `origami.PopSwitch` — Pop Switch    | `@State` flipped on a threshold, `.spring` pop (native)  |
 | `builtin.point3D` — Transform Scale | ``scaleEffect(_:)`` (native)                             |

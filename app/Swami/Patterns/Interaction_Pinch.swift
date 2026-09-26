@@ -8,11 +8,13 @@
 //
 // Fidelity debts (flag, don't fake — AGENTS.md):
 // - Artboard background: magenta. The macOS runner's compare confirms Origami's
-//   Pinch render carries a magenta background (verify.yml render note). Exact token
-//   not parser-decoded → uses the Origami Core "Purple" family value with a TODO.
-// - Shape fill + size: not readable from the placed-graph walk (raw layer, not a
-//   ColorKit token; port default sizes need FlatBuffers port-value decoding).
-//   TODO markers inline; centered rest-position derived geometrically.
+//   Pinch render carries a magenta background. Exact token not parser-decoded →
+//   uses the Origami Core "Purple" family value with a TODO.
+// - Shape: builtin.layer.shape is a white rounded triangle — read from the
+//   resting-state render (the pixel oracle for this pattern), not from a decoded
+//   port default. Geometry (≈80×74, corner radius ≈14, centered) is measured off
+//   that render; fill is white. TODO markers inline pending Inspector / port-value
+//   decoding to lock exact size, radius, and fill token.
 // - PopSwitch enlarged value: lives as a port default the parser can't read yet.
 import SwiftUI
 
@@ -26,8 +28,8 @@ import SwiftUI
 /// Pinch to scale a shape. A `MagnifyGesture` (Origami's magnification/pinch input)
 /// drives two `origami.PopSwitch` nodes that flip the shape between its base and an
 /// enlarged state; the switch state feeds a `builtin.point3D` Transform Scale, and
-/// the pop is animated with a spring. At rest the shape sits at base scale on the
-/// magenta artboard.
+/// the pop is animated with a spring. At rest a white rounded triangle sits at base
+/// scale, centered on the magenta artboard.
 ///
 /// - Origami source: https://origami.design/public/origami_files/patterns/Interaction_Pinch.origami
 /// - Translated: 2026-09-26
@@ -56,11 +58,13 @@ public struct Interaction_PinchView: View {
     // `popThreshold` pops in, pinch back in past its reciprocal pops out.
     private let popThreshold: CGFloat = 1.25
 
-    // Central shape geometry — centered rest-position on the artboard.
-    // TODO: parser-decoded token when available — shape size lives as a port default
-    // the parser can't read yet; 220×220 is a centered placeholder pending Inspector
-    // readout or port-value decoding.
-    private let shapeSize = CGSize(width: 220, height: 220)
+    // Central shape geometry — a rounded triangle, centered at rest.
+    // Measured from the resting-state render (the pixel oracle for Interaction_Pinch):
+    // ≈80pt wide, ≈74pt tall, corner radius ≈14pt.
+    // TODO: parser-decoded token when available — exact size and corner radius live as
+    // shape-layer port defaults the parser can't read yet; these are oracle-derived.
+    private let shapeSize = CGSize(width: 80, height: 74)
+    private let shapeCornerRadius: CGFloat = 14
 
     public var body: some View {
         // builtin.layer.layer (artboard background) — magenta, full-bleed.
@@ -69,10 +73,10 @@ public struct Interaction_PinchView: View {
         // "Purple" family value (rgb 221,112,223) pending token extraction.
         Color(red: 221 / 255.0, green: 112 / 255.0, blue: 223 / 255.0)
             .overlay {
-                // builtin.layer.shape inside builtin.layer.layer (container).
+                // builtin.layer.shape — a white rounded triangle, apex up.
                 // TODO: parser-decoded token when available — shape fill not readable
-                // from the placed-graph walk; white placeholder pending Inspector readout.
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                // from the placed-graph walk; white is read from the oracle render.
+                RoundedTriangle(cornerRadius: shapeCornerRadius)
                     .fill(.white)
                     .frame(width: shapeSize.width, height: shapeSize.height)
                     // builtin.point3D Transform Scale ← origami.PopSwitch, driven by the pinch.

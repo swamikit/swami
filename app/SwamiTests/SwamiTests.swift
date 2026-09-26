@@ -36,4 +36,29 @@ struct SwamiTests {
         _ = Interaction_PinchView()
     }
 
+    // Interaction_Pinch's shape (builtin.layer.shape) is a rounded triangle, not a
+    // rectangle. The path must be non-empty, closed, and stay within its bounding
+    // rect — a triangle apex-up fills the top-center and both bottom corners.
+    @Test func roundedTriangleFillsItsRect() {
+        let rect = CGRect(x: 0, y: 0, width: 80, height: 74)
+        let path = RoundedTriangle(cornerRadius: 14).path(in: rect)
+        #expect(!path.isEmpty)
+        // The path stays inside the frame it is asked to fill.
+        #expect(rect.insetBy(dx: -0.5, dy: -0.5).contains(path.boundingRect))
+        // Apex-up: the top center is filled, and so is the bottom edge.
+        #expect(path.contains(CGPoint(x: rect.midX, y: rect.minY + 10)))
+        #expect(path.contains(CGPoint(x: rect.midX, y: rect.maxY - 2)))
+        // The top corners are empty and the triangle narrows toward the apex —
+        // this is a triangle, not a rectangle.
+        #expect(!path.contains(CGPoint(x: rect.minX + 2, y: rect.minY + 2)))
+        #expect(!path.contains(CGPoint(x: rect.maxX - 2, y: rect.minY + 2)))
+        #expect(!path.contains(CGPoint(x: rect.midX - 25, y: rect.minY + 18)))
+    }
+
+    // A zero corner radius still yields a valid closed triangle.
+    @Test func roundedTriangleZeroRadiusIsValid() {
+        let path = RoundedTriangle(cornerRadius: 0).path(in: CGRect(x: 0, y: 0, width: 100, height: 100))
+        #expect(!path.isEmpty)
+    }
+
 }

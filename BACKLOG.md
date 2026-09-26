@@ -34,12 +34,14 @@ agent — the cloud loop does not write there.
   builtin.point3D ×1. Mechanism: a magnification (pinch) gesture drives origami.PopSwitch
   state that scales the shape; the resting frame (what the pixel gate screenshots) is the
   shape at base scale on the magenta artboard. TRANSLATION COMPLETE — native-first
-  (MagnifyGesture → @State PopSwitch → scaleEffect on point3D, spring pop). Fidelity debts
-  flagged inline (flag, don't fake):
+  (MagnifyGesture → @State PopSwitch → scaleEffect on point3D, spring pop). Shape is a
+  white rounded triangle (builtin.layer.shape), read from the resting-state pixel oracle
+  and rendered via the `RoundedTriangle` module helper (no native triangle primitive
+  exists). Fidelity debts flagged inline (flag, don't fake):
   - Artboard background: magenta confirmed by the runner's compare (verify.yml render note);
     exact token TODO (uses Origami Core "Purple" family value pending extraction).
-  - Shape fill + size: not readable from the placed-graph walk → white/220×220 placeholders
-    with `// TODO: parser-decoded token when available`.
+  - Shape fill + geometry: not readable from the placed-graph walk → white fill, ≈80×74 at
+    corner radius ≈14 measured off the oracle render, with `// TODO: parser-decoded token`.
   - PopSwitch enlarged value: FlatBuffers port default the parser can't read yet → 2× placeholder.
   Pending: pixel triplet from verify.yml + Reviewer verdict on current head.
 
