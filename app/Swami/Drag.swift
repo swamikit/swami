@@ -17,6 +17,10 @@ import SwiftUI
 /// port-value decoding, which the parser doesn't do yet. Until then the momentum decay uses the
 /// system's velocity projection (`predictedEndTranslation`) and rubber-band uses the iOS-standard
 /// constant (0.55). Mark these for replacement once the parser extracts DragSettings' real defaults.
+///
+/// Hidden from the docs — this `ViewModifier` is the mechanism; the documented patch is the
+/// `.drag(…)` modifier below.
+@_documentation(visibility: internal)
 public struct Drag: ViewModifier {
     var enable: Bool
     var momentum: Bool
@@ -99,8 +103,26 @@ public struct Drag: ViewModifier {
 }
 
 public extension View {
-    /// Attach Origami-style **Drag**. Pass only the outputs you need; each maps to a Drag output
-    /// port (`position`, `translation`, `velocity`). `bounds` is the Clip / Start+End boundary.
+    /// Origami's **Drag** patch — drag a layer with momentum and rubber-band bounds.
+    ///
+    /// Attach it to any layer and pass only what you need:
+    ///
+    /// - term `momentum`: carries the throw after you let go, then eases to a stop.
+    /// - term `bounds`: a `min`/`max` extent the layer rubber-bands back inside.
+    /// - term `position` / `translation` / `velocity`: write the live Drag outputs back to your own state.
+    /// - term `enable` / `reset`: turn the gesture off, or snap back to the start.
+    ///
+    /// ```swift
+    /// @State private var position: CGSize = .zero
+    /// RoundedRectangle(cornerRadius: 20)
+    ///     .drag(momentum: true, bounds: bounds, position: $position)
+    /// ```
+    ///
+    /// ## Topics
+    ///
+    /// ### Used in
+    ///
+    /// - <doc:Interaction_Drag>
     func drag(
         enable: Bool = true,
         momentum: Bool = true,

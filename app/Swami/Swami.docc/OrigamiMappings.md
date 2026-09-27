@@ -20,7 +20,7 @@ library, named after the patch it stands in for.
 | Origami patch | SwiftUI |
 |---|---|
 | Pure value patch (Add, interpolate, logic) | computed property / expression (native) |
-| Interaction (Tap, Press, Double Tap, Long Press) | gesture + `@State` via ``Interaction`` (helper) |
+| Interaction (Tap, Press, Double Tap, Long Press) | gesture + `@State` via ``View/interaction(down:position:onTap:onDoubleTap:onLongPress:)`` (helper) |
 | `origami.Drag` — Drag | ``drag(enable:momentum:bounds:position:translation:velocity:reset:)`` (helper) |
 | Magnification / Pinch | `MagnifyGesture` (native) |
 | `origami.PopSwitch` — Pop Switch | `@State` flipped on a threshold, `.spring` pop (native) |
@@ -38,7 +38,7 @@ inline expression.
 
 **Interaction** exposes discrete outputs: `down`, `position`, `onTap`,
 `onDoubleTap`, `onLongPress`. Each becomes a SwiftUI gesture whose result lands in
-`@State` or fires a callback. The ``Interaction`` helper attaches only the
+`@State` or fires a callback. The `.interaction(…)` modifier attaches only the
 recognizers you ask for, so gesture arbitration stays clean.
 
 **State and memory** — `Switch`, `Sample and Hold`, `Pop Switch` — remember a value
