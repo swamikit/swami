@@ -17,9 +17,9 @@ springs back from the edges.
 
 The behavior is Origami's `origami.Drag`, ported as the
 ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)`` modifier.
-Attach it to any layer: `momentum` carries the throw after release, `bounds`
-rubber-bands it back inside a rect, and `position` writes the live offset back to your
-own `@State`.
+Attach it to any layer: `momentum` carries the throw after release, `bounds` is the
+min/max extent it rubber-bands back inside, and `position` writes the live offset back
+to your own `@State`.
 
 ```swift
 @State private var position: CGSize = .zero

@@ -32,6 +32,10 @@ fills the gap.
 - ``Interaction``
 - ``Drag``
 
+### Shapes
+
+- ``RoundedTriangle``
+
 ### Reference
 
 - <doc:OrigamiMappings>
