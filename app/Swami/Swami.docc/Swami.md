@@ -6,12 +6,12 @@ the same patch on your own layers.
 
 ## Overview
 
-`Swami` is a set of patch helpers — one per Origami patch, named after the patch, so a
-Drag stays a ``Drag`` and an Interaction stays an ``Interaction`` — plus a gallery of
-Origami prototypes translated to SwiftUI. The patches are the reusable part; each entry
-in the gallery shows those patches composed into a working view. Where SwiftUI already
-has the right tool the translation uses it directly; where it doesn't, a patch helper
-fills the gap.
+`Swami` is a set of patch helpers — one per Origami patch, named after the patch, so an
+`origami.Drag` becomes a `.drag(…)` modifier and an Interaction becomes `.interaction(…)`
+— plus a gallery of Origami prototypes translated to SwiftUI. The patches are the reusable
+part; each entry in the gallery shows those patches composed into a working view. Where
+SwiftUI already has the right tool the translation uses it directly; where it doesn't, a
+patch helper fills the gap.
 
 ## Gallery
 
@@ -29,8 +29,8 @@ fills the gap.
 
 ### Patches
 
-- ``Interaction``
-- ``Drag``
+- ``View/interaction(down:position:onTap:onDoubleTap:onLongPress:)``
+- ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)``
 
 ### Shapes
 

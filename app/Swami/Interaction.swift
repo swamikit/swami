@@ -14,6 +14,11 @@ import SwiftUI
 ///
 /// Only the gesture for an output you actually request is attached — so a tap-only layer
 /// carries only a tap recognizer (no stray drag), which keeps gesture arbitration clean.
+///
+/// Hidden from the docs — this `ViewModifier` is the mechanism; the documented patch is the
+/// `.interaction(…)` modifier below (SwiftUI hands every `ViewModifier` a page full of
+/// `animation`/`concat`/`transaction` conformance methods that aren't this patch's API).
+@_documentation(visibility: internal)
 public struct Interaction: ViewModifier {
     var down: Binding<Bool>?
     var position: Binding<CGPoint?>?
@@ -75,8 +80,20 @@ private struct LongPressOutput: ViewModifier {
 }
 
 public extension View {
-    /// Attach Origami-style **Interaction** outputs. Pass only the outputs you need; each maps
-    /// to an Interaction output port, and only its gesture is attached.
+    /// Origami's **Interaction** patch — touch outputs you wire straight into your view's state.
+    ///
+    /// Attach it to any layer and pass only the outputs you care about. Each one mirrors an
+    /// Interaction output port, and only that output's gesture is attached — so a tap-only layer
+    /// carries just a tap recognizer, with no stray drag to fight it:
+    ///
+    /// - term `down`: `true` while a finger is on the layer.
+    /// - term `position`: the touch point, in the layer's own coordinate space.
+    /// - term `onTap` / `onDoubleTap` / `onLongPress`: fire once, on that gesture.
+    ///
+    /// ```swift
+    /// Circle()
+    ///     .interaction(down: $isPressed, position: $touch, onTap: { pop() })
+    /// ```
     func interaction(
         down: Binding<Bool>? = nil,
         position: Binding<CGPoint?>? = nil,

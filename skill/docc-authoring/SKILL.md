@@ -375,13 +375,19 @@ for an authoring note or TODO that must not render on the page.
 - **Preview images.** `<Module>.docc/Resources/Patterns/<PatternID>.png`.
   Basename = `PatternID`; keep the `.swift` file, the standalone catalog page,
   and the resource in lockstep so the gallery card resolves.
-- **Symbol docs are for the patches, not the pattern-views.** DocC auto-generates
-  symbol pages for the public, visible surface — the patch helpers (``Interaction``,
-  ``Drag``, the ``View`` patch extensions). Those are the API; curate them under a
-  **Patches** topic group on the landing page. The pattern view structs carry
-  `@_documentation(visibility: internal)` and never appear as symbols — do not add
-  an "Examples" topic group for them, and do not link `` ``<PatternID>View`` `` from
-  any page.
+- **The documented patch is the modifier method, not the `ViewModifier` behind it.**
+  A patch helper is usually a `public struct <Patch>: ViewModifier` plus a
+  `public extension View { func <patch>(...) }` entry point. Document the **method** —
+  it's the call a reader actually writes (`.drag(…)`, `.interaction(…)`) — and hide the
+  struct with `@_documentation(visibility: internal)`. Otherwise DocC renders the struct's
+  `ViewModifier` conformance (`animation` / `concat` / `transaction` under "Default
+  Implementations"), which is SwiftUI's surface, not this patch's API, and buries the point.
+  The method's `///` carries: a reader-voice overview (what it does, not how it's built),
+  the parameters as a `- term <name>:` list, a short usage example, and a `## Topics` →
+  `### Used in` section linking the pattern page(s) that use it. Curate the methods under a
+  **Patches** topic group on the landing page (`` ``View/drag(enable:…)`` ``, not
+  `` ``Drag`` ``). The pattern view structs are hidden the same way — never add an
+  "Examples" topic group, never link `` ``<PatternID>View`` `` from any page.
 
 ### Landing page shape
 
@@ -389,8 +395,10 @@ The module landing page (`<Module>.docc/<Module>.md`) leads with a one-line fram
 that puts the patches first, a `@Links` gallery grid, then a `## Topics` split into:
 
 - **Patterns** — the standalone pattern pages (`<doc:Interaction_Drag>`, …).
-- **Patches** — the helper symbols (``Interaction``, ``Drag``, …). This is the
-  reusable API; it is named "Patches", not "Helpers" or "Examples".
+- **Patches** — the modifier methods (``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)``,
+  ``View/interaction(down:position:onTap:onDoubleTap:onLongPress:)``, …), in reader voice.
+  This is the reusable API; it is named "Patches", not "Helpers" or "Examples". The
+  `ViewModifier` structs behind them stay hidden from the docs.
 - **Reference** — `<doc:OrigamiMappings>` and any other reference article.
 
 No "Examples" group (the view structs are hidden), and no internal/dev-process
