@@ -26,6 +26,12 @@ import Swami
 ///
 /// - Origami source: https://origami.design/public/origami_files/patterns/Interaction_Drag.origami
 /// - Translated: 2026-09-07
+///
+/// This view is a worked example of the `origami.Drag` patch, not shipped API. It stays
+/// `public` only so the verification host can instantiate it, and is hidden from the
+/// generated docs (`@_documentation`) — the reader-facing page is the standalone
+/// `Swami.docc/Patterns/Interaction_Drag.md`, which centers the patch, not this struct.
+@_documentation(visibility: internal)
 public struct Interaction_DragView: View {
     public init() {}
 

@@ -59,6 +59,12 @@ struct InteractionCard: View {
 }
 
 /// Artboard 1 → Group (vertical stack of cards).
+///
+/// A worked example of the `origami.Interaction` patch, not shipped API. It stays
+/// `public` only so the verification host can instantiate it, and is hidden from the
+/// generated docs (`@_documentation`) — patterns are shown through their standalone
+/// gallery pages, not as promoted view symbols.
+@_documentation(visibility: internal)
 public struct TouchOrigamiExampleView: View {
     public init() {}
     public var body: some View {

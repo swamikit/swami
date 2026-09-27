@@ -13,19 +13,38 @@ spring; pinch back in and it pops home.
 
 ![A white rounded triangle centered on a magenta background. Pinching out springs it to a larger size; pinching in springs it back.](Interaction_Pinch)
 
-## Usage
+## The patch
 
-Drop the view into any SwiftUI hierarchy:
+Origami drives this with an `origami.PopSwitch` — a remembered on/off state — flipped by
+a pinch and fed into a Transform Scale. There's no helper to reach for: it maps straight
+onto native SwiftUI, which is the reusable idea worth taking away. A `MagnifyGesture`
+reads the pinch, a `@State` flag flips at a threshold, and a `.spring` animates the
+scale between the two states (see the State/memory → `@State` row in
+<doc:OrigamiMappings>).
 
 ```swift
-import Swami
+@State private var popped = false
 
-struct ContentView: View {
-    var body: some View {
-        Interaction_PinchView()
-    }
-}
+RoundedTriangle(cornerRadius: 20)
+    .frame(width: 90, height: 80)
+    .scaleEffect(popped ? 2 : 1)
+    .animation(.spring(response: 0.35, dampingFraction: 0.7), value: popped)
+    .gesture(
+        MagnifyGesture().onEnded { value in
+            if value.magnification > 1.25 { popped = true }
+            else if value.magnification < 0.8 { popped = false }
+        }
+    )
 ```
+
+The pop is the point: a discrete state the gesture toggles, animated with a spring — not
+a scale that tracks your fingers continuously.
+
+## How it's built
+
+The full view sits the white rounded triangle on the magenta artboard and adds a live
+`@GestureState` so the shape follows your fingers mid-pinch before it settles on the
+popped state. Read the source (below) for the whole thing.
 
 ## Behavior
 
@@ -36,20 +55,9 @@ struct ContentView: View {
 
 ## Downloads
 
-- **Swift sample** — [`Interaction_Pinch.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Pinch.swift), the source for `Interaction_PinchView`, ready to paste into a project.
-- **Origami source** — [`Interaction_Pinch.origami`](https://origami.design/public/origami_files/patterns/Interaction_Pinch.origami), the original prototype (opens in Origami Studio).
+- **Swift sample** — [`Interaction_Pinch.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Pinch.swift) — the full source. Read it to see how the pop maps to `@State` + a spring; paste it to run it.
+- **Origami source** — [`Interaction_Pinch.origami`](https://origami.design/public/origami_files/patterns/Interaction_Pinch.origami) — the original prototype (opens in Origami Studio).
 
 ## See Also
 
-- ``Interaction_PinchView``
 - <doc:OrigamiMappings>
-
-## Translation notes
-
-This view was translated from Origami by Swami. The pinch drives an
-`origami.PopSwitch` (a remembered on/off state) that feeds a Transform Scale;
-Swami maps that to a `MagnifyGesture`, a `@State` flag flipped on a threshold, and
-a `.spring` animation. Where a value could not yet be read from the `.origami`
-graph (the enlarged scale, the shape's exact size and fill), the source file marks
-it with an inline `TODO`. Those parser and fidelity details live in the comments of
-`Interaction_Pinch.swift`, not on this page.
