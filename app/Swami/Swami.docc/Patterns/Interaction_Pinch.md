@@ -3,7 +3,7 @@
 @Metadata {
     @PageKind(sampleCode)
     @PageImage(purpose: card, source: "Interaction_Pinch")
-    @CallToAction(url: "https://origami.design/public/origami_files/patterns/Interaction_Pinch.origami", purpose: download, label: "Open in Origami")
+    @CallToAction(url: "SWAMI_DOWNLOAD_BASE/Interaction_Pinch.zip", purpose: download, label: "Download Xcode sample")
 }
 
 Pinch a shape to scale it. Past a threshold it pops to an enlarged size with a
@@ -55,7 +55,8 @@ popped state. Read the source (below) for the whole thing.
 
 ## Downloads
 
-- **Swift sample** — [`Interaction_Pinch.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Pinch.swift) — the full source. Read it to see how the pop maps to `@State` + a spring; paste it to run it.
+- **Xcode sample** — [`Interaction_Pinch.swiftpm`](SWAMI_DOWNLOAD_BASE/Interaction_Pinch.zip) — a runnable App Playground. Unzip, open in Xcode 15+, and press Run to launch this pattern as an app.
+- **Swift source** — [`Interaction_Pinch.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Pinch.swift) — the single source file, to read how the pop maps to `@State` + a spring.
 - **Origami source** — [`Interaction_Pinch.origami`](https://origami.design/public/origami_files/patterns/Interaction_Pinch.origami) — the original prototype (opens in Origami Studio).
 
 ## See Also

@@ -3,7 +3,7 @@
 @Metadata {
     @PageKind(sampleCode)
     @PageImage(purpose: card, source: "Interaction_Drag")
-    @CallToAction(url: "https://origami.design/public/origami_files/patterns/Interaction_Drag.origami", purpose: download, label: "Open in Origami")
+    @CallToAction(url: "SWAMI_DOWNLOAD_BASE/Interaction_Drag.zip", purpose: download, label: "Download Xcode sample")
 }
 
 A card you can drag anywhere on screen. It carries momentum when you let go and
@@ -47,7 +47,8 @@ thing.
 
 ## Downloads
 
-- **Swift sample** — [`Interaction_Drag.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Drag.swift) — the full source. Read it to see how the patch composes into a view; paste it to run it.
+- **Xcode sample** — [`Interaction_Drag.swiftpm`](SWAMI_DOWNLOAD_BASE/Interaction_Drag.zip) — a runnable App Playground. Unzip, open in Xcode 15+, and press Run to launch this pattern as an app.
+- **Swift source** — [`Interaction_Drag.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Drag.swift) — the single source file, to read how the patch composes into the view.
 - **Origami source** — [`Interaction_Drag.origami`](https://origami.design/public/origami_files/patterns/Interaction_Drag.origami) — the original prototype (opens in Origami Studio).
 
 ## See Also
