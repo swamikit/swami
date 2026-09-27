@@ -26,7 +26,6 @@ jobs:
       factory_ref: 8a3fa219bd1d9acba5d3f0059f931eb22159e35e
       runner: macos-15
       base_ref: development
-      gemini_cli_version: 0.55.1
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
