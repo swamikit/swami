@@ -378,19 +378,24 @@ for an authoring note or TODO that must not render on the page.
 - **Preview images.** `<Module>.docc/Resources/Patterns/<PatternID>.png`.
   Basename = `PatternID`; keep the `.swift` file, the standalone catalog page,
   and the resource in lockstep so the gallery card resolves.
-- **The documented patch is the modifier method, not the `ViewModifier` behind it.**
-  A patch helper is usually a `public struct <Patch>: ViewModifier` plus a
-  `public extension View { func <patch>(...) }` entry point. Document the **method** —
-  it's the call a reader actually writes (`.drag(…)`, `.interaction(…)`) — and hide the
-  struct with `@_documentation(visibility: internal)`. Otherwise DocC renders the struct's
-  `ViewModifier` conformance (`animation` / `concat` / `transaction` under "Default
-  Implementations"), which is SwiftUI's surface, not this patch's API, and buries the point.
-  The method's `///` carries: a reader-voice overview (what it does, not how it's built),
-  the parameters as a `- term <name>:` list, a short usage example, and a `## Topics` →
-  `### Used in` section linking the pattern page(s) that use it. Curate the methods under a
-  **Patches** topic group on the landing page (`` ``View/drag(enable:…)`` ``, not
-  `` ``Drag`` ``). The pattern view structs are hidden the same way — never add an
-  "Examples" topic group, never link `` ``<PatternID>View`` `` from any page.
+- **The documented patch is the modifier method, not the `ViewModifier` behind it — and
+  it's featured through a per-patch article.** A patch helper is usually a
+  `public struct <Patch>: ViewModifier` plus a `public extension View { func <patch>(...) }`
+  entry point. Hide the struct with `@_documentation(visibility: internal)` — otherwise DocC
+  renders its `ViewModifier` conformance (`animation` / `concat` / `transaction` under
+  "Default Implementations"), which is SwiftUI's surface, not this patch's API. The method's
+  `///` is the canonical reference — a reader-voice overview (what it does, not how it's
+  built), the parameters as a `- term <name>:` list, and a short example. It renders under
+  **Extended Modules → SwiftUICore → View**, because DocC files anything you add to an
+  external type there. **DocC will not let you curate that method into a top-level "Patches"
+  group** — it silently drops it and the group renders empty. So feature each patch with a
+  short **article** at `<Module>.docc/Patches/<Patch>.md` (`# Drag`, `# Interaction`): what
+  the patch is, one call, a link to the canonical `` ``View/<patch>(…)`` `` for the full
+  signature, and — when a pattern uses it — a `## Topics → ### Used in` link to that pattern.
+  Give the article a filename that can't collide with the hidden struct's name
+  (`DragPatch.md`, not `Drag.md`); the `# Drag` heading is what the reader sees. The landing
+  "Patches" group lists those articles, not the methods. The pattern view structs are hidden
+  the same way — never add an "Examples" topic group, never link `` ``<PatternID>View`` ``.
 
 ### Landing page shape
 
@@ -398,10 +403,12 @@ The module landing page (`<Module>.docc/<Module>.md`) leads with a one-line fram
 that puts the patches first, a `@Links` gallery grid, then a `## Topics` split into:
 
 - **Patterns** — the standalone pattern pages (`<doc:Interaction_Drag>`, …).
-- **Patches** — the modifier methods (``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)``,
-  ``View/interaction(down:position:onTap:onDoubleTap:onLongPress:)``, …), in reader voice.
-  This is the reusable API; it is named "Patches", not "Helpers" or "Examples". The
-  `ViewModifier` structs behind them stay hidden from the docs.
+- **Patches** — the per-patch article pages (`<doc:DragPatch>`, `<doc:InteractionPatch>`,
+  …), each featuring one patch in reader voice and linking its canonical modifier. This is
+  the reusable API; the group is named "Patches", not "Helpers" or "Examples". (DocC can't
+  curate the `View` extension methods directly into this group — see above — so the articles
+  stand in; the methods stay under Extended Modules, linked from each article. The
+  `ViewModifier` structs behind them stay hidden.)
 - **Reference** — `<doc:OrigamiMappings>` and any other reference article.
 
 No "Examples" group (the view structs are hidden), and no internal/dev-process
