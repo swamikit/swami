@@ -1,6 +1,6 @@
 ---
 name: docc-authoring
-description: Everything the DocC surface for a translated pattern needs. The reader-facing catalog page shape (preview → usage → downloads → behavior, for a human browsing the gallery), the emitted `.swift` file's shape (filename, struct, symbol-comment header, public API, verification-host switch), and the catalog conventions that tie them together (directive whitelist, gallery page shape, `Resources/Patterns/<PatternID>.png` basename contract, GFM patch→SwiftUI mapping table). Community-portable, sibling to `skill/pattern-translation`. Load whenever you're about to write a pattern's `.swift` file, a catalog page, or a mapping-table row.
+description: Everything the DocC surface for a translated pattern needs. The reader-facing catalog page shape (preview → the patch → how it's built → downloads → behavior, for a human browsing the gallery), the emitted `.swift` file's shape (filename, struct, doc-hidden symbol comment, public API, verification-host switch), and the catalog conventions that tie them together (directive whitelist, gallery page shape, `Resources/Patterns/<PatternID>.png` basename contract, GFM patch→SwiftUI mapping table). The page centers the Origami patch and how the view is written — never the `<PatternID>View()` symbol. Community-portable, sibling to `skill/pattern-translation`. Load whenever you're about to write a pattern's `.swift` file, a catalog page, or a mapping-table row.
 metadata:
   type: procedural
 ---
@@ -10,7 +10,7 @@ metadata:
 Sibling to `skill/pattern-translation`. That skill decides *what* the SwiftUI
 looks like (patch-to-construct mapping, ISAT staging, native-first). This skill
 decides *what reaches the reader*: the pattern file on disk (filename, struct,
-symbol-comment DocC header, public API, verification-host switch) and the DocC
+doc-hidden symbol comment, public API, verification-host switch) and the DocC
 catalog that renders it (directives, gallery shape, resource naming, patch→SwiftUI
 mapping table).
 
@@ -18,14 +18,25 @@ Repo-specific details (env var names, workflow filenames, `sed`/`tr` slug
 derivation) are marked as the reference project's — community ports mirror the
 shape, not the identifiers. No PR flow, no issue numbers.
 
-**Who the catalog page is for.** A developer browsing a SwiftUI pattern gallery
-— not the harness, not a future translator. They want to see the pattern, copy
-the view into their project, and read one plain sentence about what it does.
-Write every catalog page in that voice. The parser IR, the fidelity debts, the
-"flag, don't fake" caveats, and the render-pipeline mechanics are real, but they
-belong in the `.swift` source as code comments, never in the reader-facing page.
-The consumer page shape below is the target; the `.swift`/workflow rules that
-follow are the plumbing that makes it render.
+**The one principle: the patch is the product, the pattern-view is a worked
+example.** A reader comes to the gallery to learn a behavior they can reuse — the
+Origami patch and the SwiftUI it maps to (`origami.Drag` → ``View/drag(...)``; a
+`origami.PopSwitch` pinch → `@State` + a spring). The `<PatternID>View` struct is
+*not* that — it's one arrangement of the patch on a demo layer, interesting only as
+a demonstration of how the patch is written. So the catalog page centers the patch
+and shows how the view is built; it does **not** promote `<PatternID>View()` as an
+API, and the struct is **hidden from the generated docs** so it never shows up as a
+second, symbol-shaped copy of the same example. The full source is a download away
+for anyone who wants to read the whole thing.
+
+**Who the catalog page is for.** A developer browsing a SwiftUI pattern gallery —
+not the harness, not a future translator. They want to see the pattern, understand
+the patch behind it, and reach for that patch on their own layers. Write every
+catalog page in that voice. The parser IR, the fidelity debts, the "flag, don't
+fake" caveats, and the render-pipeline mechanics are real, but they belong in the
+`.swift` source as code comments, never in the reader-facing page. The consumer
+page shape below is the target; the `.swift`/workflow rules that follow are the
+plumbing that makes it render.
 
 ## One file per pattern
 
@@ -41,6 +52,7 @@ follow are the plumbing that makes it render.
 ## Struct shape
 
 ```swift
+@_documentation(visibility: internal)
 public struct <PatternID>View: View {
     public init() {}
     public var body: some View {
@@ -51,72 +63,66 @@ public struct <PatternID>View: View {
 
 - **`PatternID`** = the Origami source stem, verbatim. `Interaction_Touch.origami`
   produces `public struct Interaction_TouchView`. Keep the underscore. The 1:1
-  mapping from Origami's filename to the Swift type is deliberate; readers use
-  it to find one from the other.
+  mapping from Origami's filename to the Swift type is deliberate; the pattern's
+  `.swift` file and its catalog page share the stem so a reader can find one from
+  the other.
 - **`View` suffix.** Every pattern struct ends in `View`. `Interaction_TouchView`,
   not `Interaction_Touch`. The suffix disambiguates from Swami helpers that
   share a patch name (`Interaction` the helper vs. `Interaction_TouchView` the
   pattern).
-- **`public`.** The struct and its `init()` are public. A pattern that can't be
-  instantiated from outside the module can't be verified by the host and can't
-  be embedded from a downstream DocC.
+- **`public`.** The struct and its `init()` are public — the verification host is
+  a separate target that `import`s the module and instantiates the view across the
+  module boundary, so a non-public view can't be screenshot by the pixel gate.
+- **`@_documentation(visibility: internal)`.** The view is public for the host but
+  hidden from the generated docs. This is what keeps the gallery clean: without it,
+  DocC emits a full symbol page for `<PatternID>View` (its `init()`, `var body`, an
+  auto "Default Implementations" block) that duplicates the standalone pattern page
+  and buries the patch under codebase surface. The reader-facing artifact is the
+  standalone `.md` page; the symbol is not. (Longer term these example views move
+  out of the shipped library entirely, into a downloadable example/host target —
+  hiding them from docs is the same rendered outcome with none of the build risk.)
 - **Single-expression body.** The body renders the Origami artboard and nothing
   else. No `NavigationStack`, no `NavigationView`, no toolbar, no debug HUD, no
   safe-area filler. The verification screenshot must be pixel-comparable to the
   Origami artboard; host chrome would break the compare.
 
-## DocC sample-code header
+## Symbol comment on the struct
 
-Every pattern file opens with a `///` doc-comment block on the public struct.
-That comment is the pattern's DocC symbol page.
+The `///` comment on the pattern struct is a **note for someone reading the
+source**, not a rendered DocC page — the struct is hidden from the docs, so the
+reader-facing page is the standalone `.md` (below), which owns the title,
+`@PageImage`, and `@CallToAction`. Keep the symbol comment short and factual:
 
 ```swift
-/// # <Category> — <Pattern name>
-///
-/// @Metadata {
-///     @PageKind(sampleCode)
-///     @PageImage(purpose: card, source: "<PatternID>")
-/// }
-///
-/// <One or two sentences describing what the pattern does, matching how the
-/// Origami editor's canvas reads. Name the patches that drive it.>
+/// <Category> — <Pattern name>: a worked example of <the patch(es) that drive it>.
 ///
 /// - Origami source: <URL to the .origami file in the corpus, if hosted>
 /// - Translated: <YYYY-MM-DD>, when known
-public struct <PatternID>View: View { ... }
 ```
 
-Rules:
-
-- **Title.** `# <Category> — <Pattern name>`, matching Origami's own naming
-  (e.g. `# Interaction — Touch`).
-- **`@PageKind(sampleCode)`.** Gives the page the sample-code chrome. `sampleCode`
-  on a Swift symbol comment has been unreliable in some DocC versions; when a
-  standalone sample-code page is authored in the DocC catalog, mirror the
-  metadata there and let the symbol comment stand as-is.
-- **`@PageImage(purpose: card, source: "<PatternID>")`.** `source` is the
-  basename (no extension) of the pattern's preview image, which ships from the
-  DocC catalog's `Resources/Patterns/` directory. Basename = `PatternID`;
-  keep them in lockstep so the gallery card resolves.
-- **Prose description.** One or two sentences. Names the patches driving the
-  pattern; matches what the Origami editor's canvas shows. Not a walkthrough.
-- **Origami source URL.** When the pattern's `.origami` is hosted (a corpus
-  release, a mirror), link it in a bullet under the prose. Skip if not hosted.
+- **Name the patch, not a walkthrough.** One or two sentences: what the pattern is
+  and which Origami patch(es) drive it. This is the same fact the page's "The patch"
+  section leads with.
+- **Do not put `@Metadata`/`@PageKind`/`@PageImage` in the symbol comment.** Those
+  render nothing on a doc-hidden symbol; page metadata lives on the standalone `.md`.
+- **Origami source URL.** When the pattern's `.origami` is hosted, link it. Skip if
+  not hosted.
 - **Translation date.** `YYYY-MM-DD`, when known. Skip if not known; do not
   fabricate a date.
 
 ## Public API surface
 
-- **Pattern struct: `public`.** Always.
-- **Any helper the pattern calls must also be `public`.** The pattern lives in
-  the same module as the helpers today, but the DocC catalog and any downstream
-  embedder see only the public surface. A translator who needs a helper that
-  currently ships `internal` must promote it to `public` in the helper's own
-  file (its own commit), not paper over it with a local re-implementation in
-  the pattern file.
-- **No new private helpers in a pattern file.** Pattern files hold one struct
-  and its private computed properties. Reusable state or view logic is a helper
-  in the module.
+- **Pattern struct: `public` + `@_documentation(visibility: internal)`.** Public so
+  the host can instantiate it, hidden so it is not documented. Always both.
+- **The documented API is the patches.** The helpers a pattern calls — ``Interaction``,
+  ``Drag``, the ``View`` patch extensions — are the public, *visible* surface. Those
+  are what the catalog promotes and what a reader reaches for.
+- **Any helper the pattern calls must be `public`.** A translator who needs a helper
+  that currently ships `internal` promotes it to `public` in the helper's own file
+  (its own commit), not with a local re-implementation in the pattern file.
+- **No new private helpers in a pattern file.** Pattern files hold one struct and
+  its private computed properties. Reusable state or view logic is a helper in the
+  module.
 
 ## Naming rules
 
@@ -202,13 +208,16 @@ struct ContentView: View {
 ## Cross-checks before you commit
 
 - Filename stem matches the `.origami` stem, verbatim.
-- Struct name = `<filename stem>View`, `public`, with `public init() {}`.
-- DocC header on the struct: title, `@Metadata { @PageKind(sampleCode);
-  @PageImage(source: "<filename stem>") }`, prose, source URL if known,
-  translation date if known.
+- Struct name = `<filename stem>View`, `public`, with `public init() {}`, carrying
+  `@_documentation(visibility: internal)`.
+- Symbol comment on the struct: one factual line naming the patch, source URL if
+  known, translation date if known. No `@Metadata` in the symbol comment.
 - Every helper the pattern calls is `public` in the module today.
 - Body is one expression. No host chrome. No debug output. No release-path
   `fatalError`.
+- Standalone catalog page exists at `<Module>.docc/Patterns/<PatternID>.md`, in the
+  consumer shape below, and centers the patch (no `<PatternID>View()` usage snippet,
+  no `` ``<PatternID>View`` `` in See Also).
 - If the pattern is under a verification-host switch, one new case has been
   added AND the matching `<slug>:<stem>` pair is registered where the verify
   workflow reads it (in the reference project, `.github/patterns.txt`). The
@@ -220,10 +229,10 @@ struct ContentView: View {
 ## DocC catalog
 
 The catalog is the human-facing surface: gallery pages, per-pattern sample-code
-pages, mapping references. Pattern `.swift` files carry a symbol-comment header
-(above); catalog `.md` files carry the reader-facing page, the gallery shape,
-resource bindings, and the patch→SwiftUI mapping table. In a Swami-shaped module
-the catalog lives at `<Module>.docc/`.
+pages, mapping references. Pattern `.swift` files carry a short doc-hidden symbol
+comment (above); catalog `.md` files carry the reader-facing page, the gallery
+shape, resource bindings, and the patch→SwiftUI mapping table. In a Swami-shaped
+module the catalog lives at `<Module>.docc/`.
 
 ### The reader-facing page (consumer shape)
 
@@ -234,16 +243,29 @@ developer lands on from the gallery. Write it in this order, and stop there:
    anything. The `@PageImage(purpose: card, …)` gives the header/card image;
    embed the same render inline with a Markdown image (`![alt](<PatternID>)`,
    basename only) under a `## Preview` heading so it leads the body.
-2. **Usage** — a copy-pasteable SwiftUI snippet showing how a developer actually
-   uses the view (`import <Module>` then `<PatternID>View()`), plus the helper
-   call if they'd want the same behavior on their own layers.
-3. **Downloads** — two links, both already public for every corpus pattern, no
+2. **The patch** — the reusable point of the page. Name the Origami patch and the
+   SwiftUI it maps to; link the patch symbol when there is a helper
+   (``View/drag(...)``) or the mapping row in <doc:OrigamiMappings> when it lands
+   on native SwiftUI. Then a **short snippet showing the patch applied** — a few
+   lines centered on the modifier/gesture, not the whole file, not
+   `<PatternID>View()`. This is "the patches I use to get to that configuration."
+3. **How it's built** — one or two sentences on how the view arranges the patch
+   (the state it feeds, the layout, the animation), then point at the full source
+   in Downloads. Do **not** paste `<PatternID>View()` as usage — the view is a
+   demonstration of the patch, not the thing to promote. If the whole build is
+   already clear from the patch snippet, this section can be a single sentence.
+4. **Behavior** — two or three plain bullets on what the gesture/interaction
+   does, in a person's words ("drag it and it keeps moving, then springs back"),
+   not the patch graph.
+5. **Downloads** — two links, both already public for every corpus pattern, no
    TODO:
+   - **Swift sample** — the pattern's own `.swift` in this repo:
+     `https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift`
+     — the full source; read it to see how the patch composes into a view, paste
+     it to run it.
    - **Origami source** — `https://origami.design/public/origami_files/patterns/<PatternID>.origami`
      — the original prototype, and the exact file `verify.yml` fetches to render
      the reference. Opens in Origami Studio.
-   - **Swift sample** — the pattern's own `.swift` in this repo:
-     `https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift`.
 
    Wire the Origami source as the page's `@CallToAction(purpose: download)` and
    list both under a `## Downloads` heading. Never leave a downloads TODO — the
@@ -251,9 +273,6 @@ developer lands on from the gallery. Write it in this order, and stop there:
    pixel compare** (`curl -sL … origami.design/public/origami_files/patterns/<PatternID>.origami`,
    `verify.yml`), so if the gate can render a pattern its `.origami` URL resolves;
    the `.swift` ships in this repo.
-4. **Behavior** — two or three plain bullets on what the gesture/interaction
-   does, in a person's words ("drag it and it keeps moving, then springs back"),
-   not the patch graph.
 
 Template:
 
@@ -272,17 +291,20 @@ Template:
 
 ![<one-line description of the rendered interaction>](<PatternID>)
 
-## Usage
+## The patch
+
+<Which Origami patch drives it and what it becomes in SwiftUI — link ``View/…`` for a
+helper, or <doc:OrigamiMappings> for native. One or two sentences: this is the reusable
+part.>
 
 ```swift
-import <Module>
-
-struct ContentView: View {
-    var body: some View {
-        <PatternID>View()
-    }
-}
+<a few lines: the patch applied — the modifier or gesture, with the @State it writes to.
+Not the whole view, not <PatternID>View().>
 ```
+
+## How it's built
+
+<One or two sentences on how the view arranges the patch; the full source is in Downloads.>
 
 ## Behavior
 
@@ -290,12 +312,12 @@ struct ContentView: View {
 
 ## Downloads
 
-- **Swift sample** — [`<PatternID>.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift), the source for `<PatternID>View`.
-- **Origami source** — [`<PatternID>.origami`](https://origami.design/public/origami_files/patterns/<PatternID>.origami), the original prototype (opens in Origami Studio).
+- **Swift sample** — [`<PatternID>.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift) — the full source. Read it to see how the patch composes into a view; paste it to run it.
+- **Origami source** — [`<PatternID>.origami`](https://origami.design/public/origami_files/patterns/<PatternID>.origami) — the original prototype (opens in Origami Studio).
 
 ## See Also
 
-- ``<PatternID>View``
+- ``View/<patch method>`` — the patch this pattern uses   <!-- or <doc:OrigamiMappings> when native -->
 - <doc:OrigamiMappings>
 ~~~
 
@@ -324,10 +346,9 @@ for an authoring note or TODO that must not render on the page.
   (Downloads are not a TODO — both URLs above are public for every pattern.)
 - **`@PageKind(article)` / `@PageKind(sampleCode)`** — page classification.
   `sampleCode` gives the sample-code chrome (download slot, code-forward layout).
-  For sample-code pages, prefer a **standalone `.md`** in the catalog — see the
-  caveat under "DocC sample-code header" above; symbol comments carry the
-  metadata, the standalone page carries the layout when the symbol version
-  won't render.
+  Sample-code pages are **standalone `.md`** in the catalog — the pattern view
+  struct is hidden from the docs, so the standalone page is the only rendered
+  surface for the pattern.
 - **`@PageImage(purpose: card, source: "<PatternID>")`** — gallery-card preview.
   `source` is the resource basename, no extension (see "Resources" below).
 - **`@CallToAction(url: "https://origami.design/public/origami_files/patterns/<PatternID>.origami", purpose: download, label: "Open in Origami")`** —
@@ -348,15 +369,33 @@ for an authoring note or TODO that must not render on the page.
   sidebar category (Featured, Animation, Interaction, Layer, …). These are the
   gallery pages that host `@TabNavigator` + `@Links`.
 - **Standalone sample-code pages.** `<Module>.docc/Patterns/<PatternID>.md`.
-  One file per pattern, written in the consumer shape above (preview → usage →
-  downloads → behavior). Filename basename = pattern ID = image basename = doc
-  link. Same `PatternID` the pattern's `.swift` file uses.
+  One file per pattern, written in the consumer shape above (preview → the patch →
+  how it's built → behavior → downloads). Filename basename = pattern ID = image
+  basename = doc link. Same `PatternID` the pattern's `.swift` file uses.
 - **Preview images.** `<Module>.docc/Resources/Patterns/<PatternID>.png`.
   Basename = `PatternID`; keep the `.swift` file, the standalone catalog page,
   and the resource in lockstep so the gallery card resolves.
-- **Framework symbol docs.** The `///` comments on public symbols in Swift
-  source. DocC auto-generates the symbol pages; do not shadow them with a
-  hand-authored article carrying the same title.
+- **Symbol docs are for the patches, not the pattern-views.** DocC auto-generates
+  symbol pages for the public, visible surface — the patch helpers (``Interaction``,
+  ``Drag``, the ``View`` patch extensions). Those are the API; curate them under a
+  **Patches** topic group on the landing page. The pattern view structs carry
+  `@_documentation(visibility: internal)` and never appear as symbols — do not add
+  an "Examples" topic group for them, and do not link `` ``<PatternID>View`` `` from
+  any page.
+
+### Landing page shape
+
+The module landing page (`<Module>.docc/<Module>.md`) leads with a one-line framing
+that puts the patches first, a `@Links` gallery grid, then a `## Topics` split into:
+
+- **Patterns** — the standalone pattern pages (`<doc:Interaction_Drag>`, …).
+- **Patches** — the helper symbols (``Interaction``, ``Drag``, …). This is the
+  reusable API; it is named "Patches", not "Helpers" or "Examples".
+- **Reference** — `<doc:OrigamiMappings>` and any other reference article.
+
+No "Examples" group (the view structs are hidden), and no internal/dev-process
+articles in the published catalog (contributor docs like the build discipline live
+in the repo's `docs/`, not in `<Module>.docc/`).
 
 ### Gallery article shape
 
@@ -419,16 +458,20 @@ correctness, the mapping table enforces *reachability* by a reader.
 
 ### Catalog: what NOT to do
 
-- **No per-pattern prose articles.** Sample-code pages are preview + usage +
-  downloads + a couple of behavior bullets. If it starts to read like a
-  walkthrough, delete it — the render and the code are the walkthrough.
+- **No per-pattern prose articles.** Sample-code pages are preview + the patch +
+  how it's built + behavior + downloads. If it starts to read like a walkthrough,
+  delete it — the render and the code are the walkthrough.
+- **No promoting the view symbol.** Don't paste `<PatternID>View()` as a usage
+  snippet, don't link `` ``<PatternID>View`` `` from a page, don't add an "Examples"
+  topic group. The page centers the patch; the view is a download. (The struct is
+  `@_documentation(visibility: internal)` for exactly this reason.)
 - **No harness or machinery prose on the page.** No description of the CI render
   pipeline, no parser IR (node/edge counts), no fidelity-debt disclaimers, no
   "flag, don't fake", no `TODO: parser-decoded token`. That belongs in the
   `.swift` comments. A page that explains how the PNG is produced instead of
   showing the pattern has the wrong reader in mind.
-- **No page without a usage snippet.** The point of a sample-code page is to be
-  copied. If a developer can't paste `<PatternID>View()` out of it, it's not done.
+- **No page without a patch snippet.** The point of a sample-code page is to teach
+  the patch. If a reader can't see the modifier/gesture applied, it's not done.
 - **No `@Row`/`@Column` for the gallery.** `@Links` auto-cards from
   `@PageImage`. Rows and columns are for one-off layouts.
 - **No hand-added binaries in `Resources/Patterns/`.** Those PNGs come from
@@ -444,5 +487,5 @@ correctness, the mapping table enforces *reachability* by a reader.
   becomes in SwiftUI, how state, animation, and interpolation are staged. Read
   before deciding *what* to emit; read this skill for *how the file is shaped*
   and how it lands in the catalog.
-- **`skill/unslop/SKILL.md`**. Style rules for the prose in the DocC header
+- **`skill/unslop/SKILL.md`**. Style rules for the prose in the symbol comment
   and in the catalog's collection pages.

@@ -1,18 +1,17 @@
 # ``Swami``
 
-A gallery of Origami patterns rebuilt in SwiftUI — each one a small, self-contained
-view you can drop into a project and use.
+Origami patterns, rebuilt as SwiftUI you can read — each one a worked example of the
+patches behind it, so you can see how a prototype's behavior is written and reach for
+the same patch on your own layers.
 
 ## Overview
 
-Every entry in the gallery started life as an Origami prototype and was translated
-into an idiomatic SwiftUI view. Browse the previews, copy the usage snippet, and
-reach for the matching helper when you want the same behavior on your own layers.
-
-`Swami` is also the library those views are built on: one helper per Origami patch,
-named after the patch, so a Drag stays a ``Drag`` and an Interaction stays an
-``Interaction``. Where SwiftUI already has the right tool, the translation uses it
-directly; where it doesn't, the helper fills the gap.
+`Swami` is a set of patch helpers — one per Origami patch, named after the patch, so a
+Drag stays a ``Drag`` and an Interaction stays an ``Interaction`` — plus a gallery of
+Origami prototypes translated to SwiftUI. The patches are the reusable part; each entry
+in the gallery shows those patches composed into a working view. Where SwiftUI already
+has the right tool the translation uses it directly; where it doesn't, a patch helper
+fills the gap.
 
 ## Gallery
 
@@ -21,28 +20,18 @@ directly; where it doesn't, the helper fills the gap.
     - <doc:Interaction_Pinch>
 }
 
-The Touch demo — tap, press, double-tap, and long-press on a card — lives as the
-``TouchOrigamiExampleView`` example.
-
 ## Topics
 
 ### Patterns
 
 - <doc:Interaction_Drag>
 - <doc:Interaction_Pinch>
-- ``TouchOrigamiExampleView``
 
-### Reference
-
-- <doc:OrigamiMappings>
-- <doc:Beats>
-
-### Helpers
+### Patches
 
 - ``Interaction``
 - ``Drag``
 
-### Examples
+### Reference
 
-- ``Interaction_DragView``
-- ``Interaction_PinchView``
+- <doc:OrigamiMappings>

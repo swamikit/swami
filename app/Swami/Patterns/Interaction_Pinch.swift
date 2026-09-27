@@ -34,6 +34,12 @@ import SwiftUI
 ///
 /// - Origami source: https://origami.design/public/origami_files/patterns/Interaction_Pinch.origami
 /// - Translated: 2026-09-26
+///
+/// This view is a worked example of the `origami.PopSwitch` pinch mapping, not shipped
+/// API. It stays `public` only so the verification host can instantiate it, and is
+/// hidden from the generated docs (`@_documentation`) — the reader-facing page is the
+/// standalone `Swami.docc/Patterns/Interaction_Pinch.md`, which centers the patch.
+@_documentation(visibility: internal)
 public struct Interaction_PinchView: View {
     public init() {}
 

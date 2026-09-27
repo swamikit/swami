@@ -13,32 +13,31 @@ springs back from the edges.
 
 ![A rounded card centered on the artboard that follows your finger, keeps gliding after release, and rubber-bands back inside the edges.](Interaction_Drag)
 
-## Usage
+## The patch
 
-Drop the view into any SwiftUI hierarchy:
-
-```swift
-import Swami
-
-struct ContentView: View {
-    var body: some View {
-        Interaction_DragView()
-    }
-}
-```
-
-The drag physics come from the ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)``
-modifier, so you can reuse the same behavior on your own layers — `bounds` and
-`position` are your own values (the drag stays inside `bounds` and writes the
-live position back to your `@State`):
+The behavior is Origami's `origami.Drag`, ported as the
+``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)`` modifier.
+Attach it to any layer: `momentum` carries the throw after release, `bounds`
+rubber-bands it back inside a rect, and `position` writes the live offset back to your
+own `@State`.
 
 ```swift
-@State private var position: CGPoint = .zero
-let bounds = CGRect(origin: .zero, size: CGSize(width: 320, height: 640))
+@State private var position: CGSize = .zero
 
-RoundedRectangle(cornerRadius: 20)
-    .drag(momentum: true, bounds: bounds, position: $position)
+RoundedRectangle(cornerRadius: 20, style: .continuous)
+    .frame(width: 220, height: 140)
+    .drag(momentum: true, bounds: dragBounds, position: $position)
 ```
+
+That one modifier is the reusable piece. The pattern is just it dropped onto a centered
+card whose `bounds` come from the artboard.
+
+## How it's built
+
+The full view centers the card on the Origami artboard, derives `bounds` from the card
+size, and hands the `origami.Drag` output straight to the card's offset — the view is
+interesting only as a demonstration of the patch. Read the source (below) for the whole
+thing.
 
 ## Behavior
 
@@ -48,19 +47,10 @@ RoundedRectangle(cornerRadius: 20)
 
 ## Downloads
 
-- **Swift sample** — [`Interaction_Drag.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Drag.swift), the source for `Interaction_DragView`, ready to paste into a project.
-- **Origami source** — [`Interaction_Drag.origami`](https://origami.design/public/origami_files/patterns/Interaction_Drag.origami), the original prototype (opens in Origami Studio).
+- **Swift sample** — [`Interaction_Drag.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Drag.swift) — the full source. Read it to see how the patch composes into a view; paste it to run it.
+- **Origami source** — [`Interaction_Drag.origami`](https://origami.design/public/origami_files/patterns/Interaction_Drag.origami) — the original prototype (opens in Origami Studio).
 
 ## See Also
 
-- ``Interaction_DragView``
-- ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)`` — the ``View`` extension that ports `origami.Drag`'s momentum and rubber-band ports
+- ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)`` — the patch this pattern uses, ready for your own layers
 - <doc:OrigamiMappings>
-
-## Translation notes
-
-This view was translated from Origami by Swami. Where a value could not yet be
-read from the `.origami` graph (the card and artboard colors, exact bounds), the
-source file marks it with an inline `TODO` next to the placeholder. Those parser
-and fidelity details live in the comments of `Interaction_Drag.swift`, not on this
-page.

@@ -4,9 +4,9 @@ The four-beat discipline that keeps the translator honest: one pattern per branc
 compile-clean before opening a PR, visual gate against Origami's own render, ship
 only on Reviewer approval plus a human spot-check.
 
-@Metadata {
-    @PageKind(article)
-}
+> Internal contributor doc — the translator's development discipline. Moved out of the
+> published DocC catalog (which is for the Origami-community reader), it lives here in
+> `docs/` alongside the other process notes.
 
 ## Overview
 
