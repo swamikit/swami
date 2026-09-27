@@ -3,12 +3,22 @@
 
 Given a pattern stem (or `--all`, driven by .github/patterns.txt), this gathers:
 
-  * the pattern's own `.swift` (copied verbatim, so the download IS the gallery view),
+  * the pattern's own `.swift`,
   * the Swami helper sources it needs (vendored so the sample is self-contained),
   * a generated `@main` App entry, a templated `Package.swift`, a README, a manifest,
 
 and writes a `<PatternID>.swiftpm` directory plus a `<PatternID>.zip` that opens in
-Xcode 15+ and runs as an iOS app showing exactly that one pattern.
+Xcode 15+ (and Swift Playgrounds on iPad) and runs as an iOS app showing exactly that
+one pattern.
+
+SINGLE-TARGET, ONE MODULE. In the Swami repo, patterns AND helpers all live in the one
+`Swami` framework module, so a pattern references a helper (e.g. `RoundedTriangle`, the
+`.drag` modifier) with NO import. To reproduce that reality — and to compile both the
+import-Swami patterns (Interaction_Drag) and the no-import ones (Interaction_Pinch) —
+the sample is a single `.executableTarget`: SampleApp.swift + the pattern view + every
+vendored helper `.swift`, all in one module. The ONE deterministic edit to a copied
+source is stripping any `^import Swami$` line (no separate Swami module exists here, so
+that import would error "no such module 'Swami'"); everything else is verbatim.
 
 Why `.swiftpm` and not `.xcodeproj`: an App Playground is a directory of Swift files
 plus a hand-writable `Package.swift`. There is no pbxproj (no UUID surgery), so it is
@@ -34,7 +44,9 @@ from pathlib import Path
 TOOLS_VERSION = "5.9"
 DEPLOYMENT_IOS = "17.0"
 BUNDLE_PREFIX = "samatwork.samples"
-GENERATOR_VERSION = "1.0"
+GENERATOR_VERSION = "2.0"  # 2.x = single-target layout
+
+IMPORT_SWAMI = re.compile(r"^\s*import\s+Swami\s*$")
 
 # ----------------------------------------------------------------------------- templates
 
@@ -44,6 +56,10 @@ PACKAGE_SWIFT = """\
 // Swami sample — {pattern}.
 // App Playground package (.swiftpm). Open in Xcode 15+ (double-click, or File > Open)
 // and press Run to launch this one Origami pattern as an iOS app.
+//
+// Single app target, one module: the pattern view and every vendored Swami helper
+// compile together — the same single-module arrangement the Swami repo uses, so the
+// pattern reaches helpers (RoundedTriangle, the .drag modifier, ...) with no import.
 //
 // `.iOSApplication` comes from AppleProductTypes, provided by Xcode's and Swift
 // Playgrounds' SwiftPM. That is why this package builds/runs through Xcode (or Swift
@@ -76,18 +92,13 @@ let package = Package(
         )
     ],
     targets: [
-        // The app: the @main entry (SampleApp.swift) plus the pattern view,
-        // copied verbatim from the Swami repo.
         .executableTarget(
             name: "AppModule",
-            dependencies: ["Swami"],
-            path: "App"
-        ),
-        // The vendored slice of the Swami helper library the pattern imports.
-        // Copied verbatim so `import Swami` in the pattern resolves with no edits.
-        .target(
-            name: "Swami",
-            path: "Swami"
+            path: ".",
+            exclude: [
+                "README.md",
+                "sample-manifest.json"
+            ]
         )
     ]
 )
@@ -98,14 +109,13 @@ import SwiftUI
 
 // Downloadable Swami sample — {pattern}.
 //
-// This is a self-contained App Playground: open the enclosing `.swiftpm` in Xcode 15+
-// and press Run to launch the pattern as an iOS app in the Simulator (or on a device).
-// The one screen renders `{view}` — the exact pattern view from the Swami gallery — and
-// nothing else.
+// This is a self-contained, single-target App Playground: open the enclosing `.swiftpm`
+// in Xcode 15+ and press Run to launch the pattern as an iOS app in the Simulator (or on
+// a device). The one screen renders `{view}` — the exact pattern view from the Swami
+// gallery — and nothing else.
 //
-// The pattern view lives in `{pattern}.swift` (copied verbatim from the repo) and reaches
-// its behaviour through `import Swami`, whose sources are vendored under `../Swami/`. No
-// external package or checkout is required.
+// The pattern view (`{pattern}.swift`) and the Swami helper sources it uses are all in
+// this one module, so no `import Swami` is needed and no external checkout is required.
 @main
 struct SampleApp: App {{
     var body: some Scene {{
@@ -127,21 +137,26 @@ A runnable Xcode sample for one Swami pattern.
 2. Double-click **`{pattern}.swiftpm`** (or Xcode > File > Open...). Requires **Xcode 15+**.
 3. Pick an iOS Simulator (or your device) and press **Run** (Cmd-R).
 
-You can also open the `.swiftpm` in **Swift Playgrounds** on iPad. If it will not open
-there, flatten to a single target: move `Swami/*.swift` into `App/`, delete the `Swami`
-target from `Package.swift`, set the `AppModule` `path` to `"."`, and remove the
-`import Swami` line from `{pattern}.swift`.
+This is a standard **single-target App Playground**, so it also opens directly in
+**Swift Playgrounds on iPad** — no restructuring needed.
 
 ## What's inside
 
-- `Package.swift` — App Playground manifest (`.iOSApplication` product).
-- `App/SampleApp.swift` — `@main`; hosts the pattern view and nothing else.
-- `App/{pattern}.swift` — the pattern view, copied verbatim from Swami.
-- `Swami/*.swift` — the Swami helper sources the pattern imports (vendored).
+One app target (one module); everything compiles together:
 
-`App/{pattern}.swift` is byte-for-byte the file from the Swami repo, so what you run is
-exactly the gallery pattern. Because the helper sources are vendored under `Swami/`, the
-sample builds with no extra checkout or package dependency.
+- `Package.swift` — App Playground manifest (`.iOSApplication` product).
+- `SampleApp.swift` — `@main`; hosts the pattern view and nothing else.
+- `{pattern}.swift` — the pattern view, from the Swami repo.
+{helpers}
+
+## One edit from the repo source
+
+Swami ships patterns and helpers in a single module, so a pattern refers to helpers
+(e.g. `RoundedTriangle`, the `.drag` modifier) with no import. This sample is also a
+single module. The only change from the repo file is that a leading `import Swami` line
+(present in some patterns, absent in others) is removed — with no separate `Swami`
+module here it would fail to build with "no such module 'Swami'". Everything else is
+byte-for-byte the repo source. See `sample-manifest.json` for which files were touched.
 
 ## Learn more
 
@@ -178,8 +193,7 @@ def top_level_helpers(repo: Path) -> list[Path]:
     swami = repo / "app" / "Swami"
     out: list[Path] = []
     for p in sorted(swami.glob("*.swift")):
-        text = p.read_text()
-        if re.search(r"^\s*@main\b", text, re.MULTILINE):
+        if re.search(r"^\s*@main\b", p.read_text(), re.MULTILINE):
             continue  # never vendor an app entry point
         out.append(p)
     return out
@@ -220,53 +234,87 @@ def strip_noncode(text: str) -> str:
         out.append(c)
         i += 1
     code = "".join(out)
-    # Import lines name modules, not the helper types they might share a name with.
     code = re.sub(r"^\s*import\s+.*$", "", code, flags=re.MULTILINE)
     return code
 
 
-def _exported_symbols(text: str) -> set[str]:
-    """Identifiers a helper file exposes: top-level type names + View-extension methods."""
-    text = strip_noncode(text)
-    syms: set[str] = set()
-    for m in re.finditer(
-        r"\b(?:struct|class|enum|protocol|actor)\s+([A-Za-z_][A-Za-z0-9_]*)", text
-    ):
-        syms.add(m.group(1))
-    # `public extension View { func drag(...) }` and `func interaction(...)` etc.
-    for block in re.finditer(r"extension\s+View\s*\{(.*?)\n\}", text, re.DOTALL):
-        for fm in re.finditer(r"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", block.group(1)):
-            syms.add(fm.group(1))
-    return syms
+def helper_symbols(text: str) -> tuple[set[str], set[str], set[tuple[str, str]]]:
+    """What a helper file exposes, as (types, members, inits).
+
+    - types:   struct/class/enum/protocol/actor/typealias names   -> used as `\\bName\\b`
+    - members: func/var names declared inside any `extension`      -> used as `.name`
+    - inits:   (ExtendedType, firstLabel) from `extension T { init(l: ...) }`
+               (e.g. Color.init(hex:))                             -> used as `T(l:`
+    """
+    code = strip_noncode(text)
+    types = set(re.findall(
+        r"\b(?:struct|class|enum|protocol|actor|typealias)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        code))
+    members: set[str] = set()
+    inits: set[tuple[str, str]] = set()
+    # Match each `extension T ... { ... }` body up to its column-0 closing brace.
+    for m in re.finditer(r"extension\s+([A-Za-z_][A-Za-z0-9_]*)[^\{]*\{(.*?)\n\}",
+                         code, re.DOTALL):
+        target, body = m.group(1), m.group(2)
+        members |= set(re.findall(r"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*[<(]", body))
+        # Computed properties only (`var name: T {`); excludes stored/local vars.
+        members |= set(re.findall(
+            r"\bvar\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*[^={\n]+\{", body))
+        inits |= {(target, lbl) for lbl in
+                  re.findall(r"\binit\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", body)}
+    return types, members, inits
+
+
+def provided_tokens(texts: list[str]) -> set[tuple]:
+    """The set of reference tokens the given sources DEFINE."""
+    toks: set[tuple] = set()
+    for t in texts:
+        types, members, inits = helper_symbols(t)
+        toks |= {("type", x) for x in types}
+        toks |= {("member", x) for x in members}
+        toks |= {("init", a, b) for (a, b) in inits}
+    return toks
+
+
+def used_tokens(code: str, universe: set[tuple]) -> set[tuple]:
+    """Which of `universe`'s tokens the given code actually references."""
+    code = strip_noncode(code)
+    hit: set[tuple] = set()
+    for tok in universe:
+        if tok[0] == "type" and re.search(rf"\b{re.escape(tok[1])}\b", code):
+            hit.add(tok)
+        elif tok[0] == "member" and re.search(rf"\.{re.escape(tok[1])}\b", code):
+            hit.add(tok)
+        elif tok[0] == "init" and re.search(
+                rf"\b{re.escape(tok[1])}\s*\(\s*{re.escape(tok[2])}\s*:", code):
+            hit.add(tok)
+    return hit
 
 
 def prune_helpers(pattern_text: str, helpers: list[Path]) -> list[Path]:
-    """Best-effort minimal set: keep a helper if its symbols are referenced, transitively.
+    """Minimal set: keep a helper if any token it provides is used by the pattern or by
+    an already-kept helper (transitive fixpoint).
 
-    Correct for Swami's flat, self-contained helpers. If it ever under-includes, the
-    Xcode build fails loudly in CI -> fall back to the default (vendor all).
+    Reliable for Swami's flat, self-contained helpers. If it ever under-includes, the
+    strengthened static_check below fails the ASSEMBLY (not the Xcode build), so the CI
+    error is clear; the safe fallback is the default (vendor all).
     """
-    index = {p: _exported_symbols(p.read_text()) for p in helpers}
-
-    def referenced(text: str, syms: set[str]) -> bool:
-        text = strip_noncode(text)
-        for s in syms:
-            if re.search(rf"\.{re.escape(s)}\s*\(", text):  # .drag( / .interaction(
-                return True
-            if re.search(rf"\b{re.escape(s)}\b", text):  # RoundedTriangle, Drag, ...
-                return True
-        return False
-
-    kept: dict[Path, str] = {}
-    frontier = [(p, syms) for p, syms in index.items() if referenced(pattern_text, syms)]
-    while frontier:
-        p, _ = frontier.pop()
-        if p in kept:
-            continue
-        kept[p] = p.read_text()
-        for q, syms in index.items():
-            if q not in kept and referenced(kept[p], syms):
-                frontier.append((q, syms))
+    texts = {p: p.read_text() for p in helpers}
+    provides = {p: provided_tokens([texts[p]]) for p in helpers}
+    kept: list[Path] = []
+    corpus = [pattern_text]
+    while True:
+        combined = "\n".join(corpus)
+        added = False
+        for p in helpers:
+            if p in kept:
+                continue
+            if used_tokens(combined, provides[p]):
+                kept.append(p)
+                corpus.append(texts[p])
+                added = True
+        if not added:
+            break
     return sorted(kept, key=lambda p: p.name)
 
 
@@ -284,6 +332,14 @@ def git_sha(repo: Path) -> str | None:
 def sanitize_bundle(stem: str) -> str:
     ident = re.sub(r"[^A-Za-z0-9]+", "-", stem).strip("-")
     return f"{BUNDLE_PREFIX}.{ident}"
+
+
+def copy_stripping_swami_import(src: Path, dst: Path) -> bool:
+    """Copy src -> dst, dropping any `import Swami` line. Returns True if a line was cut."""
+    lines = src.read_text().splitlines(keepends=True)
+    kept = [ln for ln in lines if not IMPORT_SWAMI.match(ln.rstrip("\r\n"))]
+    dst.write_text("".join(kept))
+    return len(kept) != len(lines)
 
 
 # ----------------------------------------------------------------------------- assembly
@@ -305,43 +361,44 @@ def assemble(repo: Path, stem: str, out_dir: Path, vendor_all: bool, make_zip: b
     helpers_all = top_level_helpers(repo)
     helpers = helpers_all if vendor_all else prune_helpers(pattern_text, helpers_all)
     if not helpers:
-        # A pattern that touches no helper still needs the Swami target to exist;
-        # vendor the smallest real helper set rather than emit an empty module.
-        helpers = helpers_all
+        helpers = helpers_all  # never emit an empty helper set
 
     pkg_dir = out_dir / f"{stem}.swiftpm"
     if pkg_dir.exists():
         shutil.rmtree(pkg_dir)
-    (pkg_dir / "App").mkdir(parents=True)
-    (pkg_dir / "Swami").mkdir(parents=True)
+    pkg_dir.mkdir(parents=True)
 
-    # Pattern view — verbatim.
-    shutil.copyfile(pattern_src, pkg_dir / "App" / f"{stem}.swift")
-    # Helpers — verbatim.
+    # Single module: pattern view + helpers + @main all at the package root.
+    transformed: list[str] = []
+    if copy_stripping_swami_import(pattern_src, pkg_dir / f"{stem}.swift"):
+        transformed.append(f"{stem}.swift")
     for h in helpers:
-        shutil.copyfile(h, pkg_dir / "Swami" / h.name)
+        if copy_stripping_swami_import(h, pkg_dir / h.name):
+            transformed.append(h.name)
 
-    # Generated files.
+    helper_bullets = "\n".join(
+        f"- `{h.name}` — vendored Swami helper source." for h in helpers)
     (pkg_dir / "Package.swift").write_text(PACKAGE_SWIFT.format(
         tools_version=TOOLS_VERSION, pattern=stem, deployment=DEPLOYMENT_IOS,
         bundle_id=sanitize_bundle(stem)))
-    (pkg_dir / "App" / "SampleApp.swift").write_text(APP_SWIFT.format(
-        pattern=stem, view=view))
-    (pkg_dir / "README.md").write_text(README_MD.format(pattern=stem))
+    (pkg_dir / "SampleApp.swift").write_text(APP_SWIFT.format(pattern=stem, view=view))
+    (pkg_dir / "README.md").write_text(README_MD.format(pattern=stem, helpers=helper_bullets))
     (pkg_dir / "sample-manifest.json").write_text(json.dumps({
         "patternID": stem,
         "view": view,
         "generator": "package_sample.py",
         "generatorVersion": GENERATOR_VERSION,
+        "layout": "single-target",
         "toolsVersion": TOOLS_VERSION,
         "deploymentTarget": f"iOS {DEPLOYMENT_IOS}",
         "vendorMode": "all" if vendor_all else "prune",
         "vendoredHelpers": [h.name for h in helpers],
+        "transform": r"removed lines matching ^\s*import\s+Swami\s*$",
+        "transformedFiles": transformed,
         "sourceCommit": sha,
     }, indent=2) + "\n")
 
-    # Static sanity checks (no compiler available in generic CI).
-    problems = static_check(pkg_dir, stem, view)
+    problems = static_check(pkg_dir, stem, view, helpers_all)
     if problems:
         die(f"{stem}: static check failed:\n  " + "\n  ".join(problems))
 
@@ -360,35 +417,43 @@ def assemble(repo: Path, stem: str, out_dir: Path, vendor_all: bool, make_zip: b
     return zip_path
 
 
-def static_check(pkg_dir: Path, stem: str, view: str) -> list[str]:
-    """Toolchain-free correctness gate: entry, imports, and referenced symbols resolve."""
+def static_check(pkg_dir: Path, stem: str, view: str,
+                 repo_helpers: list[Path]) -> list[str]:
+    """Toolchain-free correctness gate for the single-target sample."""
     problems: list[str] = []
-    app = (pkg_dir / "App").glob("*.swift")
-    app_texts = {p.name: p.read_text() for p in app}
-    swami_texts = {p.name: p.read_text() for p in (pkg_dir / "Swami").glob("*.swift")}
+    srcs = {p.name: p.read_text() for p in pkg_dir.glob("*.swift")}
+    pattern_name = f"{stem}.swift"
+    pattern_text = srcs.get(pattern_name, "")
+    joined = "\n".join(srcs.values())
 
-    joined_app = "\n".join(app_texts.values())
-
-    if "@main" not in joined_app:
-        problems.append("no @main in App/")
-    if view + "()" not in joined_app:
+    # (0) structural: exactly one @main, and SampleApp instantiates the pattern view.
+    if "SampleApp.swift" not in srcs:
+        problems.append("SampleApp.swift missing")
+    if not pattern_text:
+        problems.append(f"{pattern_name} missing")
+    main_count = len(re.findall(r"^\s*@main\b", joined, re.MULTILINE))
+    if main_count != 1:
+        problems.append(f"expected exactly one @main, found {main_count}")
+    if f"{view}()" not in srcs.get("SampleApp.swift", ""):
         problems.append(f"SampleApp does not instantiate {view}()")
 
-    # If the pattern imports Swami, the vendored Swami target must be non-empty.
-    if re.search(r"^\s*import\s+Swami\b", app_texts.get(f"{stem}.swift", ""),
-                 re.MULTILINE) and not swami_texts:
-        problems.append("pattern imports Swami but no helper sources vendored")
+    # (a) no leftover `import Swami` anywhere (single module has no such module).
+    for name, text in srcs.items():
+        if any(IMPORT_SWAMI.match(ln) for ln in text.splitlines()):
+            problems.append(f"{name}: leftover `import Swami` (single-target has no Swami module)")
 
-    # Every Swami-qualified / patch-modifier symbol the pattern uses must be defined
-    # somewhere in the vendored sources. Check the View-extension methods it calls.
-    provided_methods: set[str] = set()
-    for t in swami_texts.values():
-        provided_methods |= _exported_symbols(t)
-    for m in re.finditer(r"\.([A-Za-z_][A-Za-z0-9_]*)\s*\(", app_texts.get(f"{stem}.swift", "")):
-        name = m.group(1)
-        # Only worry about names that look like Swami patch modifiers we know of.
-        if name in ("drag", "interaction") and name not in provided_methods:
-            problems.append(f"pattern calls .{name}(...) but no vendored helper defines it")
+    # (b) every Swami helper symbol referenced (types, members, inits) is vendored.
+    #     Scan the pattern AND the vendored helpers, so a vendored helper that needs an
+    #     un-vendored one is caught here, not by Xcode.
+    universe = provided_tokens([p.read_text() for p in repo_helpers])
+    vendored = provided_tokens([t for n, t in srcs.items()
+                                if n not in (pattern_name, "SampleApp.swift")])
+    consumer = pattern_text + "\n" + "\n".join(
+        t for n, t in srcs.items() if n not in (pattern_name, "SampleApp.swift"))
+    missing = used_tokens(consumer, universe) - vendored
+    for tok in sorted(missing):
+        label = tok[1] if tok[0] != "init" else f"{tok[1]}(init:{tok[2]})"
+        problems.append(f"references Swami {tok[0]} `{label}` but no vendored source defines it")
     return problems
 
 
