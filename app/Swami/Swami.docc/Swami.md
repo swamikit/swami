@@ -29,8 +29,8 @@ patch helper fills the gap.
 
 ### Patches
 
-- ``View/interaction(down:position:onTap:onDoubleTap:onLongPress:)``
-- ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)``
+- <doc:DragPatch>
+- <doc:InteractionPatch>
 
 ### Shapes
 
