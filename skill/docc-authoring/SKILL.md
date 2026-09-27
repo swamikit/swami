@@ -114,9 +114,12 @@ reader-facing page is the standalone `.md` (below), which owns the title,
 
 - **Pattern struct: `public` + `@_documentation(visibility: internal)`.** Public so
   the host can instantiate it, hidden so it is not documented. Always both.
-- **The documented API is the patches.** The helpers a pattern calls — ``Interaction``,
-  ``Drag``, the ``View`` patch extensions — are the public, *visible* surface. Those
-  are what the catalog promotes and what a reader reaches for.
+- **The documented API is the patch modifier methods.** What the catalog promotes and
+  what a reader reaches for is the ``View`` patch extensions — ``View/drag(…)``,
+  ``View/interaction(…)`` — not the `ViewModifier` structs behind them. Those structs stay
+  `public` (the methods apply them internally) but carry `@_documentation(visibility:
+  internal)`, so DocC never renders their `ViewModifier` conformance surface. See "the
+  documented patch is the modifier method, not the `ViewModifier` behind it" below.
 - **Any helper the pattern calls must be `public`.** A translator who needs a helper
   that currently ships `internal` promotes it to `public` in the helper's own file
   (its own commit), not with a local re-implementation in the pattern file.
