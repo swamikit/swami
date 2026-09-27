@@ -76,6 +76,24 @@ jobs:
             echo "public_url=https://${GITHUB_REPOSITORY_OWNER}.github.io/${SITE_REPO}/documentation/swami/" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Point sample-download links at this publish target
+        env:
+          DOWNLOAD_BASE: https://${{ github.repository_owner }}.github.io${{ steps.target.outputs.hosting_base }}/downloads
+        run: |
+          set -euo pipefail
+          # Pattern pages carry a SWAMI_DOWNLOAD_BASE placeholder in their download
+          # links; bind it to THIS target's URL so the .zip a reader downloads is the
+          # one this same run publishes — co-versioned: root from main, /dev from
+          # development, /pr-<N> per PR. BSD sed on the macOS runner needs the empty
+          # -i backup arg.
+          files=$(grep -rl 'SWAMI_DOWNLOAD_BASE' app/Swami/Swami.docc || true)
+          if [ -n "$files" ]; then
+            printf '%s\n' "$files" | while IFS= read -r f; do
+              sed -i '' -e "s#SWAMI_DOWNLOAD_BASE#${DOWNLOAD_BASE}#g" "$f"
+            done
+            echo "bound SWAMI_DOWNLOAD_BASE -> ${DOWNLOAD_BASE}"
+          fi
+
       - name: Build DocC archive
         run: |
           set -euo pipefail
@@ -131,6 +149,17 @@ jobs:
           python3 scripts/validate_docc_site.py site \
             --hosting-base "${{ steps.target.outputs.hosting_base }}" \
             --landing-path documentation/swami
+
+      - name: Assemble downloadable Xcode samples
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          # One runnable .swiftpm App Playground per registered pattern, zipped into
+          # the same site/ tree the publish step copies to gh-pages — so the download
+          # URLs are versioned exactly like the docs (the CTA step above points here).
+          # Runs after Validate so the doc-site validator never sees the .zip files.
+          python3 scripts/package_sample.py --repo . --out site/downloads --all
+          ls -la site/downloads || true
 
       - name: Bind the published site to its source head
         if: steps.guard.outputs.skip != 'true'

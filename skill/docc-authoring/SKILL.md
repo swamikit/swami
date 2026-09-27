@@ -260,22 +260,29 @@ developer lands on from the gallery. Write it in this order, and stop there:
 4. **Behavior** — two or three plain bullets on what the gesture/interaction
    does, in a person's words ("drag it and it keeps moving, then springs back"),
    not the patch graph.
-5. **Downloads** — two links, both already public for every corpus pattern, no
-   TODO:
-   - **Swift sample** — the pattern's own `.swift` in this repo:
+5. **Downloads** — three links, all public for every corpus pattern, no TODO. Lead
+   with the runnable sample (the Apple-sample experience), then the raw source to
+   read, then the Origami original:
+   - **Xcode sample** — `SWAMI_DOWNLOAD_BASE/<PatternID>.zip` — a runnable `.swiftpm`
+     App Playground (the pattern view + its Swami helpers, self-contained). Unzip,
+     open in Xcode 15+, press Run. `publish-docs.yml` assembles and hosts this zip in
+     the same run that ships the page (`scripts/package_sample.py`).
+   - **Swift source** — the pattern's own `.swift` in this repo:
      `https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift`
-     — the full source; read it to see how the patch composes into a view, paste
-     it to run it.
+     — the single file, to read how the patch composes into the view.
    - **Origami source** — `https://origami.design/public/origami_files/patterns/<PatternID>.origami`
      — the original prototype, and the exact file `verify.yml` fetches to render
      the reference. Opens in Origami Studio.
 
-   Wire the Origami source as the page's `@CallToAction(purpose: download)` and
-   list both under a `## Downloads` heading. Never leave a downloads TODO — the
-   `.origami` link is the **same public endpoint `verify.yml` downloads for the
-   pixel compare** (`curl -sL … origami.design/public/origami_files/patterns/<PatternID>.origami`,
-   `verify.yml`), so if the gate can render a pattern its `.origami` URL resolves;
-   the `.swift` ships in this repo.
+   Wire the **Xcode sample** as the page's `@CallToAction(purpose: download)` (DocC
+   allows one hero button; the runnable sample is the headline) and list all three
+   under a `## Downloads` heading. Use the literal `SWAMI_DOWNLOAD_BASE` placeholder
+   for the zip URL, in both the CTA and the Downloads link — `publish-docs.yml`
+   rewrites it to this publish target's base (root from main, `/dev` from
+   development, `/pr-<N>` per PR), so the zip a reader downloads is the one that same
+   run published. Never leave a downloads TODO: the `.zip` is co-versioned with the
+   page by the publish workflow, the `.origami` is the same public endpoint
+   `verify.yml` fetches for the pixel compare, and the `.swift` ships in this repo.
 
 Template:
 
@@ -285,7 +292,7 @@ Template:
 @Metadata {
     @PageKind(sampleCode)
     @PageImage(purpose: card, source: "<PatternID>")
-    @CallToAction(url: "https://origami.design/public/origami_files/patterns/<PatternID>.origami", purpose: download, label: "Open in Origami")
+    @CallToAction(url: "SWAMI_DOWNLOAD_BASE/<PatternID>.zip", purpose: download, label: "Download Xcode sample")
 }
 
 <One human sentence: what this pattern is.>
@@ -315,7 +322,8 @@ Not the whole view, not <PatternID>View().>
 
 ## Downloads
 
-- **Swift sample** — [`<PatternID>.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift) — the full source. Read it to see how the patch composes into a view; paste it to run it.
+- **Xcode sample** — [`<PatternID>.swiftpm`](SWAMI_DOWNLOAD_BASE/<PatternID>.zip) — a runnable App Playground. Unzip, open in Xcode 15+, and press Run to launch this pattern as an app.
+- **Swift source** — [`<PatternID>.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift) — the single source file, to read how the patch composes into the view.
 - **Origami source** — [`<PatternID>.origami`](https://origami.design/public/origami_files/patterns/<PatternID>.origami) — the original prototype (opens in Origami Studio).
 
 ## See Also
@@ -346,7 +354,7 @@ for an authoring note or TODO that must not render on the page.
   `@CallToAction` sit inside it.
 - **`@Comment { ... }`** — authoring note that never renders. Use it to park an
   authoring TODO in source without putting machinery prose on the reader's page.
-  (Downloads are not a TODO — both URLs above are public for every pattern.)
+  (Downloads are not a TODO — the sample zip is co-versioned by the publish workflow, and the Origami/source URLs are public for every pattern.)
 - **`@PageKind(article)` / `@PageKind(sampleCode)`** — page classification.
   `sampleCode` gives the sample-code chrome (download slot, code-forward layout).
   Sample-code pages are **standalone `.md`** in the catalog — the pattern view
@@ -354,9 +362,11 @@ for an authoring note or TODO that must not render on the page.
   surface for the pattern.
 - **`@PageImage(purpose: card, source: "<PatternID>")`** — gallery-card preview.
   `source` is the resource basename, no extension (see "Resources" below).
-- **`@CallToAction(url: "https://origami.design/public/origami_files/patterns/<PatternID>.origami", purpose: download, label: "Open in Origami")`** —
-  download button on a pattern page, pointing at the public Origami source file
-  (the same artifact `verify.yml` fetches for the compare).
+- **`@CallToAction(url: "SWAMI_DOWNLOAD_BASE/<PatternID>.zip", purpose: download, label: "Download Xcode sample")`** —
+  the page's one hero download button, pointing at the runnable `.swiftpm` sample.
+  `SWAMI_DOWNLOAD_BASE` is a literal placeholder `publish-docs.yml` rewrites to this
+  publish target's base, so the zip is co-versioned with the page (the Origami and
+  raw-source links live in the `## Downloads` section, not the hero).
 - **`@Links(visualStyle: detailedGrid)`** — content-aware gallery cards. Each
   card pulls its preview from the linked page's own `@PageImage`. Do not
   hand-build the grid.
