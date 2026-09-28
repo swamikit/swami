@@ -62,4 +62,31 @@ struct SwamiTests {
         #expect(!path.isEmpty)
     }
 
+    // Interaction_Swipe is instantiable from outside the module — the host and the DocC
+    // catalog both need the public surface.
+    @Test func swipeViewIsPublic() {
+        _ = Interaction_SwipeView()
+    }
+
+    // Interaction_Swipe: the swipe is horizontal-only paging. The origami.Drag bounds
+    // must pin the vertical extent to 0 (a swipe never drifts up/down) and let the row
+    // travel left by one page width per extra page, resting page 0 at offset 0.
+    @Test func swipeBoundsAreHorizontalOnly() {
+        let width: CGFloat = 393
+        let bounds = Interaction_SwipeView.horizontalSwipeBounds(pageWidth: width, pageCount: 2)
+        // Vertical travel is pinned to zero — swipe stays on the horizontal axis.
+        #expect(bounds.min.height == 0)
+        #expect(bounds.max.height == 0)
+        // Page 0 rests at offset 0; the row can travel left by one page width.
+        #expect(bounds.max.width == 0)
+        #expect(bounds.min.width == -width)
+    }
+
+    // Three pages travel two page widths; a single page has no travel at all.
+    @Test func swipeBoundsScaleWithPageCount() {
+        let width: CGFloat = 100
+        #expect(Interaction_SwipeView.horizontalSwipeBounds(pageWidth: width, pageCount: 3).min.width == -200)
+        #expect(Interaction_SwipeView.horizontalSwipeBounds(pageWidth: width, pageCount: 1).min.width == 0)
+    }
+
 }
