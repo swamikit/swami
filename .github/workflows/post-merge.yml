@@ -1,21 +1,34 @@
 name: post-merge
 
 # Runs after a PR touching app/Swami/Patterns/** lands on development or main.
-# 1. Figure out which pattern the merge changed.
-# 2. Grab the PR's evidence PNGs from the ci-screenshots branch (or re-render
-#    if the cache is empty), copy them into the DocC catalog, and commit back
-#    to main. publish-docs then picks the commit up and re-publishes to
-#    gh-pages/.
-# 3. Package the pattern source as a workflow artifact. Release publishing is
-#    intentionally outside this workflow's current authority.
+# For each pattern the merge changed it renders the SwiftUI view in a booted
+# simulator, wraps that screenshot in a device frame, and commits the framed
+# PNG into the DocC catalog's Resources/Patterns/. publish-docs then picks the
+# commit up and re-publishes the gallery to gh-pages/.
+#
+# Self-contained by design: an earlier version fetched cached renders from a
+# `ci-screenshots` branch that nothing populated, so every run hit "no cached
+# render" and the gallery stayed empty. This renders fresh from SwamiHost
+# (the same mechanics verify.yml uses for the pixel gate) so there is no
+# cross-branch cache to keep alive.
+#
+# workflow_dispatch `patterns` lets a maintainer backfill: "all" re-renders
+# every registered pattern that has a DocC page; a space/comma list re-renders
+# just those stems.
 
 on:
   push:
     branches: [main, development]
     paths:
       # Pattern sources are flat *.swift files, one per pattern
-      # (e.g. app/Swami/Patterns/Touch.swift). Trigger on those only.
+      # (e.g. app/Swami/Patterns/Interaction_Drag.swift). Trigger on those only.
       - 'app/Swami/Patterns/*.swift'
+  workflow_dispatch:
+    inputs:
+      patterns:
+        description: 'Stems to (re)render: "all", or a comma/space list like "Interaction_Drag Interaction_Pinch". Empty = detect from the push diff.'
+        required: false
+        default: 'all'
 
 permissions:
   contents: read
@@ -28,11 +41,14 @@ concurrency:
 
 env:
   APP_PROJECT: app/Swami.xcodeproj
+  SCHEME: SwamiHost
   DOCC_RESOURCES: app/Swami/Swami.docc/Resources/Patterns
+  DOCC_PATTERNS: app/Swami/Swami.docc/Patterns
 
 jobs:
-  renders-and-zip:
+  renders:
     runs-on: macos-15
+    timeout-minutes: 40
     steps:
       - name: Mint Builder installation token
         id: builder-token
@@ -49,99 +65,188 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.builder-token.outputs.token }}
 
-      - name: Identify changed patterns
+      - name: Resolve target patterns
         id: patterns
+        env:
+          # Pass untrusted/event values through the environment, never inlined
+          # into the script body (Actions injection hygiene).
+          EVENT_NAME: ${{ github.event_name }}
+          PATTERNS_INPUT: ${{ github.event.inputs.patterns }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # Flat pattern-source layout: app/Swami/Patterns/<Name>.swift.
-          # Extract <Name> as the pattern id — the basename minus the .swift suffix.
-          changed=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" \
-                    -- 'app/Swami/Patterns/*.swift' || true)
-          if [ -z "${changed}" ]; then
-            echo "no pattern files changed"
-            echo "names=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          names=$(printf '%s\n' "${changed}" \
-                    | awk -F/ '{print $4}' \
-                    | sed 's/\.swift$//' \
-                    | sort -u \
-                    | grep -v '^$' \
-                    | paste -sd, -)
-          echo "changed patterns: ${names}"
-          echo "names=${names}" >> "$GITHUB_OUTPUT"
+          # Build a newline list of "slug:Stem" pairs to render. Sources:
+          #   * workflow_dispatch input "patterns": "all" = every registry entry;
+          #     otherwise the given stems (comma/space separated).
+          #   * push: the stems whose Patterns/<Stem>.swift changed in this merge.
+          # In every case we keep only stems that own a DocC page
+          # (Patterns/<Stem>.md) — those are the ones whose @PageImage consumes a
+          # card, so Touch (no page) is skipped without a special case.
+          #
+          # .github/patterns.txt lines are "slug:Stem" (comments start with #).
+          # We resolve slug<->stem by splitting on ":" the same portable way
+          # verify.yml does, with no bash-4 associative array (macOS /bin/bash is
+          # 3.2).
+          registry() { grep -vE '^[[:space:]]*(#|$)' .github/patterns.txt; }
 
-      - name: Extract PR number from merge commit
-        id: pr
-        if: steps.patterns.outputs.names != ''
-        run: |
-          set -euo pipefail
-          # Merge commits from squash-merge PRs land as "… (#N)"; pull the N.
-          msg=$(git log -1 --pretty=%s "${{ github.sha }}")
-          pr=$(echo "$msg" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
-          head=""
-          if [ -n "$pr" ]; then
-            head=$(GH_TOKEN="${{ steps.builder-token.outputs.token }}" gh pr view "$pr" \
-              --repo "${{ github.repository }}" --json headRefOid --jq '.headRefOid')
-          fi
-          echo "pr=${pr}" >> "$GITHUB_OUTPUT"
-          echo "head=${head}" >> "$GITHUB_OUTPUT"
-          echo "merge commit PR: ${pr:-<none>}"
-
-      - name: Fetch evidence PNGs from ci-screenshots
-        id: evidence
-        if: steps.patterns.outputs.names != ''
-        run: |
-          set -euo pipefail
-          # Materialize ci-screenshots in a sibling worktree so the main
-          # checkout's index and working tree stay untouched — the previous
-          # `git --work-tree=.evidence checkout ci-screenshots -- .` pattern
-          # would stage every file from ci-screenshots into the main index,
-          # which then had to be cleaned up before we could commit renders.
-          if [ -d .evidence ]; then
-            git worktree remove --force .evidence 2>/dev/null || rm -rf .evidence
-          fi
-          if git ls-remote --exit-code --heads origin ci-screenshots >/dev/null; then
-            git fetch origin ci-screenshots:ci-screenshots
-            git worktree add --detach .evidence ci-screenshots
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ -z "${PATTERNS_INPUT:-}" ] || [ "${PATTERNS_INPUT}" = "all" ]; then
+              want=$(registry | awk -F: 'NF>=2{print $2}')
+            else
+              want=$(printf '%s' "$PATTERNS_INPUT" | tr ',' ' ')
+            fi
           else
-            echo "ci-screenshots branch does not exist — nothing cached"
-            mkdir -p .evidence
+            changed=$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" \
+                      -- 'app/Swami/Patterns/*.swift' || true)
+            want=$(printf '%s\n' "$changed" | awk -F/ 'NF{print $4}' | sed 's/\.swift$//')
           fi
-          ls -la .evidence || true
 
-      - name: Copy PR renders into DocC Resources
-        if: steps.patterns.outputs.names != ''
-        run: |
-          set -euo pipefail
-          mkdir -p "${DOCC_RESOURCES}"
-          IFS=',' read -ra names <<<"${{ steps.patterns.outputs.names }}"
-          for name in "${names[@]}"; do
-            # verify.yml writes to out/{origami,swami,diff}/<slug>.png and pushes
-            # the tree under pr-<N>/ on the ci-screenshots branch. Ours = swami/.
-            # slug is the lowercased pattern name (matches verify.yml's PATTERNS
-            # env: "touch:Interaction_Touch" → slug "touch").
-            slug=$(echo "$name" | tr '[:upper:]' '[:lower:]')
-            src=""
-            for candidate in \
-              ".evidence/pr-${{ steps.pr.outputs.pr }}/${{ steps.pr.outputs.head }}/swami/${slug}.png" \
-              ".evidence/pr-${{ steps.pr.outputs.pr }}/swami/${slug}.png" \
-              ".evidence/swami/${slug}.png"; do
-              if [ -f "$candidate" ]; then src="$candidate"; break; fi
-            done
-            if [ -z "$src" ]; then
-              echo "::warning::no cached render for ${name} — TODO: re-render via SwamiHost sim"
-              # TODO: boot SwamiHost sim with SWAMI_PATTERN=$slug and screenshot,
-              # mirroring verify.yml. Skipped for the first version.
+          pairs=""
+          for stem in $want; do
+            [ -n "$stem" ] || continue
+            if [ ! -f "${DOCC_PATTERNS}/${stem}.md" ]; then
+              echo "skip ${stem}: no DocC page ${DOCC_PATTERNS}/${stem}.md"
               continue
             fi
-            dest="${DOCC_RESOURCES}/${name}.png"
-            echo "copy ${src} -> ${dest}"
-            cp "$src" "$dest"
+            slug=$(registry | awk -F: -v s="$stem" '$2==s{print $1; exit}')
+            if [ -z "$slug" ]; then
+              echo "skip ${stem}: not in .github/patterns.txt"
+              continue
+            fi
+            pairs="${pairs}${slug}:${stem}"$'\n'
           done
+          pairs=$(printf '%s' "$pairs" | sed '/^$/d' | sort -u)
+          echo "target pairs:"; printf '%s\n' "$pairs"
+          {
+            echo "pairs<<PAIRS_EOF"
+            printf '%s\n' "$pairs"
+            echo "PAIRS_EOF"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Commit renders back to the integration branch
-        if: steps.patterns.outputs.names != ''
+      - name: Stop if nothing to render
+        id: gate
+        run: |
+          if [ -z "$(printf '%s' '${{ steps.patterns.outputs.pairs }}' | tr -d '[:space:]')" ]; then
+            echo "no renderable patterns — nothing to do"
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "empty=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python (device-frame compositor)
+        if: steps.gate.outputs.empty != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Pillow
+        if: steps.gate.outputs.empty != 'true'
+        run: python3 -m pip install --quiet --disable-pip-version-check Pillow
+
+      - name: Pick + boot a simulator
+        id: sim
+        if: steps.gate.outputs.empty != 'true'
+        run: |
+          # Render the gallery on a consistent, current-generation iPhone so every
+          # card matches. Rank the scheme's iOS-Simulator destinations by tier
+          # (Pro Max = Plus > Pro > iPhone > Air > SE) then model number, newest
+          # first. `set +e`/`set -e` guards the pipeline so a nonzero xcodebuild
+          # exit still reaches the alphabetic fallback below.
+          set +e
+          UDID=$(xcodebuild -showdestinations \
+                   -project "$APP_PROJECT" -scheme "$SCHEME" 2>/dev/null \
+            | awk '
+                /platform:iOS Simulator/ {
+                  id=""; name=""
+                  if (match($0, /id:[^,]+/))   { id   = substr($0, RSTART+3, RLENGTH-3) }
+                  if (match($0, /name:[^}]+/)) { name = substr($0, RSTART+5, RLENGTH-5) }
+                  gsub(/^ +| +$/, "", id); gsub(/^ +| +$/, "", name)
+                  if (id == "" || name == "") next
+                  if (index(id, "dvtdevice-") == 1) next
+                  # Gallery cards are iPhone-framed; never let an iPad win the rank.
+                  if (name !~ /iPhone/) next
+                  tier = 2
+                  if      (name ~ /Pro Max/) tier = 4
+                  else if (name ~ /Plus/)    tier = 4
+                  else if (name ~ /Pro/)     tier = 3
+                  else if (name ~ /Air/)     tier = 1
+                  else if (name ~ /SE/)      tier = 0
+                  model = 0
+                  if (match(name, /iPhone[ ]+[0-9]+/)) {
+                    tok = substr(name, RSTART, RLENGTH); sub(/^iPhone[ ]+/, "", tok); model = tok + 0
+                  }
+                  printf "%d\t%d\t%s\t%s\n", tier, model, id, name
+                }
+              ' \
+            | sort -k1,1nr -k2,2nr \
+            | head -n1 \
+            | cut -f3)
+          set -e
+          if [ -z "$UDID" ]; then
+            echo "  ranking produced nothing — alphabetic fallback"
+            UDID=$(xcrun simctl list devices available -j | python3 -c "import sys,json;d=json.load(sys.stdin)['devices'];ios=sorted(k for k in d if 'iOS' in k);devs=[x for k in ios for x in d[k] if x.get('isAvailable') and 'iPhone' in x['name']];print(devs[-1]['udid'] if devs else '')")
+          fi
+          test -n "$UDID" || { echo 'No iOS simulator on this runner image'; exit 1; }
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true
+
+      - name: Build SwamiHost (once)
+        if: steps.gate.outputs.empty != 'true'
+        run: |
+          set -o pipefail
+          xcodebuild build -project "$APP_PROJECT" -scheme "$SCHEME" \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO | tee build.log
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Install SwamiHost to sim
+        id: app
+        if: steps.gate.outputs.empty != 'true'
+        run: |
+          APP=$(find build/Build/Products -name 'SwamiHost.app' -maxdepth 3 | head -1)
+          xcrun simctl install "${{ steps.sim.outputs.udid }}" "$APP"
+          echo "bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" >> "$GITHUB_OUTPUT"
+
+      - name: Render + frame each pattern
+        if: steps.gate.outputs.empty != 'true'
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+          APP_ID: ${{ steps.app.outputs.bid }}
+          PAIRS: ${{ steps.patterns.outputs.pairs }}
+        run: |
+          set -uo pipefail
+          # NB: not `-e`. One flaky sim launch/screenshot must not abort the whole
+          # loop and throw away cards that already rendered — each pattern's risky
+          # steps are guarded and `continue` on failure, mirroring verify.yml's
+          # per-pattern resilience.
+          mkdir -p out/raw "${DOCC_RESOURCES}"
+          # Read the pairs into an array first so the loop body runs in THIS shell,
+          # not a `while`-in-a-pipe subshell.
+          pairs=$(printf '%s\n' "$PAIRS" | sed '/^$/d')
+          for pair in $pairs; do
+            slug="${pair%%:*}"; stem="${pair##*:}"
+            echo "==> ${stem} (slug ${slug})"
+            xcrun simctl terminate "$UDID" "$APP_ID" 2>/dev/null || true
+            if ! SIMCTL_CHILD_SWAMI_PATTERN="$slug" xcrun simctl launch "$UDID" "$APP_ID"; then
+              echo "::warning::launch failed for ${stem} — skipping"; continue
+            fi
+            sleep 3
+            if ! xcrun simctl io "$UDID" screenshot "out/raw/${stem}.png"; then
+              echo "::warning::screenshot failed for ${stem} — skipping"; continue
+            fi
+            # --reject-uniform: a blank/solid capture (wrong view, nothing drawn)
+            # is skipped instead of framed and published as a dead card.
+            if ! python3 scripts/frame_render.py --reject-uniform --card-fit \
+                 "out/raw/${stem}.png" "${DOCC_RESOURCES}/${stem}.png"; then
+              echo "::warning::frame/quality-gate rejected ${stem} — skipping"; continue
+            fi
+            echo "framed ${stem}"
+          done
+          echo "framed cards:"; ls -la "${DOCC_RESOURCES}"
+
+      - name: Commit framed renders back to the integration branch
+        if: steps.gate.outputs.empty != 'true'
         run: |
           set -euo pipefail
           git config user.name "Builder"
@@ -151,32 +256,30 @@ jobs:
             echo "no render changes"
             exit 0
           fi
-          git commit -m "docs(patterns): update renders for ${{ steps.patterns.outputs.names }} [skip verify]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-
-      - name: Build pattern .zip bundle
-        id: bundle
-        if: steps.patterns.outputs.names != ''
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          # TODO: real mini-Xcode-project bundling. For now, zip the pattern's
-          # source file so the CTA link resolves to something, and land the
-          # real bundler in a follow-up PR (Option A).
-          IFS=',' read -ra names <<<"${{ steps.patterns.outputs.names }}"
-          for name in "${names[@]}"; do
-            src="app/Swami/Patterns/${name}.swift"
-            if [ ! -f "$src" ]; then continue; fi
-            out="dist/${name}.zip"
-            (cd "$(dirname "$src")" && zip -qr "${GITHUB_WORKSPACE}/${out}" "$(basename "$src")")
-            echo "built ${out}"
+          # [skip verify] — this commit only touches DocC Resources, never a
+          # pattern source, so the pixel gate has nothing new to check.
+          git commit -m "docs(patterns): update gallery renders [skip verify]"
+          # A human merge can land on the branch during the multi-minute render,
+          # which would reject a plain push as non-fast-forward. Rebase our single
+          # Resources-only commit onto the moved tip and retry a few times; the
+          # paths don't overlap normal source changes so this stays conflict-free.
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              echo "pushed on attempt ${attempt}"; exit 0
+            fi
+            echo "push rejected — rebasing onto origin/${GITHUB_REF_NAME} (attempt ${attempt})"
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase "origin/${GITHUB_REF_NAME}" || { git rebase --abort || true; break; }
           done
-          ls -la dist || true
+          echo "::error::could not push gallery renders after rebase retries"
+          exit 1
 
-      - name: Upload as workflow artifact
-        if: steps.patterns.outputs.names != ''
+      - name: Upload framed renders (evidence)
+        if: steps.gate.outputs.empty != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: pattern-bundles
-          path: dist/*.zip
-          if-no-files-found: ignore
+          name: gallery-renders
+          path: |
+            out/raw/*.png
+            app/Swami/Swami.docc/Resources/Patterns/*.png
+          if-no-files-found: warn
