@@ -67,6 +67,13 @@ jobs:
 
       - name: Resolve target patterns
         id: patterns
+        env:
+          # Pass untrusted/event values through the environment, never inlined
+          # into the script body (Actions injection hygiene).
+          EVENT_NAME: ${{ github.event_name }}
+          PATTERNS_INPUT: ${{ github.event.inputs.patterns }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           # Build a newline list of "slug:Stem" pairs to render. Sources:
@@ -76,25 +83,21 @@ jobs:
           # In every case we keep only stems that own a DocC page
           # (Patterns/<Stem>.md) — those are the ones whose @PageImage consumes a
           # card, so Touch (no page) is skipped without a special case.
+          #
+          # .github/patterns.txt lines are "slug:Stem" (comments start with #).
+          # We resolve slug<->stem by splitting on ":" the same portable way
+          # verify.yml does, with no bash-4 associative array (macOS /bin/bash is
+          # 3.2).
+          registry() { grep -vE '^[[:space:]]*(#|$)' .github/patterns.txt; }
 
-          # registry: map stem -> slug from .github/patterns.txt (ignore comments)
-          declare -A slug_of=()
-          while IFS= read -r line || [ -n "$line" ]; do
-            case "$line" in ""|\#*) continue ;; esac
-            s="${line%%:*}"; stem="${line##*:}"
-            slug_of["$stem"]="$s"
-          done < .github/patterns.txt
-
-          want=""
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            input="${{ github.event.inputs.patterns }}"
-            if [ -z "$input" ] || [ "$input" = "all" ]; then
-              want="${!slug_of[*]}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ -z "${PATTERNS_INPUT:-}" ] || [ "${PATTERNS_INPUT}" = "all" ]; then
+              want=$(registry | awk -F: 'NF>=2{print $2}')
             else
-              want="${input//,/ }"
+              want=$(printf '%s' "$PATTERNS_INPUT" | tr ',' ' ')
             fi
           else
-            changed=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" \
+            changed=$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" \
                       -- 'app/Swami/Patterns/*.swift' || true)
             want=$(printf '%s\n' "$changed" | awk -F/ 'NF{print $4}' | sed 's/\.swift$//')
           fi
@@ -106,7 +109,7 @@ jobs:
               echo "skip ${stem}: no DocC page ${DOCC_PATTERNS}/${stem}.md"
               continue
             fi
-            slug="${slug_of[$stem]:-}"
+            slug=$(registry | awk -F: -v s="$stem" '$2==s{print $1; exit}')
             if [ -z "$slug" ]; then
               echo "skip ${stem}: not in .github/patterns.txt"
               continue
@@ -161,6 +164,8 @@ jobs:
                   gsub(/^ +| +$/, "", id); gsub(/^ +| +$/, "", name)
                   if (id == "" || name == "") next
                   if (index(id, "dvtdevice-") == 1) next
+                  # Gallery cards are iPhone-framed; never let an iPad win the rank.
+                  if (name !~ /iPhone/) next
                   tier = 2
                   if      (name ~ /Pro Max/) tier = 4
                   else if (name ~ /Plus/)    tier = 4
@@ -210,17 +215,33 @@ jobs:
           APP_ID: ${{ steps.app.outputs.bid }}
           PAIRS: ${{ steps.patterns.outputs.pairs }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          # NB: not `-e`. One flaky sim launch/screenshot must not abort the whole
+          # loop and throw away cards that already rendered — each pattern's risky
+          # steps are guarded and `continue` on failure, mirroring verify.yml's
+          # per-pattern resilience.
           mkdir -p out/raw "${DOCC_RESOURCES}"
-          printf '%s\n' "$PAIRS" | while IFS= read -r pair; do
-            [ -n "$pair" ] || continue
+          # Read the pairs into an array first so the loop body runs in THIS shell,
+          # not a `while`-in-a-pipe subshell.
+          pairs=$(printf '%s\n' "$PAIRS" | sed '/^$/d')
+          for pair in $pairs; do
             slug="${pair%%:*}"; stem="${pair##*:}"
             echo "==> ${stem} (slug ${slug})"
             xcrun simctl terminate "$UDID" "$APP_ID" 2>/dev/null || true
-            SIMCTL_CHILD_SWAMI_PATTERN="$slug" xcrun simctl launch "$UDID" "$APP_ID"
+            if ! SIMCTL_CHILD_SWAMI_PATTERN="$slug" xcrun simctl launch "$UDID" "$APP_ID"; then
+              echo "::warning::launch failed for ${stem} — skipping"; continue
+            fi
             sleep 3
-            xcrun simctl io "$UDID" screenshot "out/raw/${stem}.png"
-            python3 scripts/frame_render.py "out/raw/${stem}.png" "${DOCC_RESOURCES}/${stem}.png"
+            if ! xcrun simctl io "$UDID" screenshot "out/raw/${stem}.png"; then
+              echo "::warning::screenshot failed for ${stem} — skipping"; continue
+            fi
+            # --reject-uniform: a blank/solid capture (wrong view, nothing drawn)
+            # is skipped instead of framed and published as a dead card.
+            if ! python3 scripts/frame_render.py --reject-uniform \
+                 "out/raw/${stem}.png" "${DOCC_RESOURCES}/${stem}.png"; then
+              echo "::warning::frame/quality-gate rejected ${stem} — skipping"; continue
+            fi
+            echo "framed ${stem}"
           done
           echo "framed cards:"; ls -la "${DOCC_RESOURCES}"
 
@@ -238,7 +259,20 @@ jobs:
           # [skip verify] — this commit only touches DocC Resources, never a
           # pattern source, so the pixel gate has nothing new to check.
           git commit -m "docs(patterns): update gallery renders [skip verify]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          # A human merge can land on the branch during the multi-minute render,
+          # which would reject a plain push as non-fast-forward. Rebase our single
+          # Resources-only commit onto the moved tip and retry a few times; the
+          # paths don't overlap normal source changes so this stays conflict-free.
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              echo "pushed on attempt ${attempt}"; exit 0
+            fi
+            echo "push rejected — rebasing onto origin/${GITHUB_REF_NAME} (attempt ${attempt})"
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase "origin/${GITHUB_REF_NAME}" || { git rebase --abort || true; break; }
+          done
+          echo "::error::could not push gallery renders after rebase retries"
+          exit 1
 
       - name: Upload framed renders (evidence)
         if: steps.gate.outputs.empty != 'true'
