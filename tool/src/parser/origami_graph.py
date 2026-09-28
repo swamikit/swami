@@ -30,6 +30,11 @@ TYPE_RE = re.compile(rb'(builtin|origami|ios)\.[A-Za-z][A-Za-z0-9.]*')
 # See CLAUDE.md "Root field 14 (EdgeSwipe, Velocity, StickyBoundaries, …) is the LIBRARY".
 ROOT_COMPONENTS_FIELD = 14
 
+
+def color_hex(rgba):
+    """(r,g,b,a) floats in 0..1 -> '#RRGGBBAA'."""
+    return "#%02X%02X%02X%02X" % tuple(round(v * 255) for v in rgba)
+
 def read_graph_bytes(path):
     """Read graph FlatBuffers from either a `.origami` zip or a raw catalog `graph` file.
 
@@ -140,6 +145,80 @@ class Graph:
         # entries[0] = the last-serialized component = the current document
         return entries[0]
 
+    # --- Layer color decode (M2-color) -------------------------------------------
+    # An Origami color is a FlatBuffers table carrying an inline 32-byte struct of
+    # four little-endian float64 (RGBA, each 0..1) at vtable field index 4 (table
+    # offset 8), preceded by a 1-byte colorspace tag at field index 0 (offset 7;
+    # 3 = extended/sRGB). Byte-proven against Origami Core "Purple" #DD70DF
+    # (R=0.866667 G=0.439216 B=0.874510 A=1). ColorKit does NOT store colors as the
+    # 8-hex-char strings the palette name list uses — those live in the library
+    # below placed_root and are not the placed layers' values.
+    def color_rgba(self, t):
+        """Return (r, g, b, a) floats if table `t` is an Origami color, else None."""
+        if t < 0 or t + 4 > self.N:
+            return None
+        vt = t - self.i32(t)
+        if vt < 0 or vt + 4 > self.N:
+            return None
+        vs = self.u16(vt)
+        if vs < 12 or vs % 2 or vs > 60 or vt + vs > self.N:
+            return None
+        ts = self.u16(vt + 2)
+        if ts < 40 or ts > 80 or t + ts > self.N:
+            return None
+        if (vs - 4) // 2 < 5:
+            return None
+        if self.u16(vt + 4 + 4 * 2) != 8:   # RGBA struct at table offset 8 (field 4)
+            return None
+        if self.u16(vt + 4 + 0 * 2) != 7:   # 1-byte colorspace tag at offset 7 (field 0)
+            return None
+        if t + 8 + 32 > self.N:
+            return None
+        try:
+            rgba = struct.unpack_from('<4d', self.d, t + 8)
+        except struct.error:
+            return None
+        return rgba if all(0.0 <= v <= 1.0 for v in rgba) else None
+
+    def color_inventory(self, placed_root):
+        """Every placed color table (definitive), as {table, hex, rgba}, in file order.
+
+        Scans the placed region for the color signature — fast, since `color_rgba`
+        rejects a non-color offset in a couple of reads. Colors below `placed_root`
+        (the embedded library, including ColorKit's palette name list) are excluded.
+        """
+        out = []
+        for t in range(placed_root, self.N - 4):
+            rgba = self.color_rgba(t)
+            if rgba is not None:
+                out.append({'table': t, 'hex': color_hex(rgba),
+                            'rgba': [round(v, 6) for v in rgba]})
+        return out
+
+    @staticmethod
+    def palette(inventory):
+        """The chromatic (brand/content) colors, most-used first.
+
+        The render's meaningful fills — the magenta artboard, the purple ovals —
+        are the saturated colors; the grayscale/transparent entries (#000000FF,
+        #FFFFFFFF, #80808000, #00000000, faint white/black) are ColorKit template
+        defaults. A color is chromatic when it is not fully transparent and its
+        channels are not all equal. Returns [{hex, rgba, count}] so codegen can pick
+        the dominant fill (e.g. the artboard background) without a per-layer walk.
+        """
+        rgba_of = {}
+        counts = {}
+        for c in inventory:
+            r, g, b, a = c['rgba']
+            if a <= 0.0:
+                continue
+            if abs(r - g) < 1e-6 and abs(g - b) < 1e-6:  # grayscale template default
+                continue
+            counts[c['hex']] = counts.get(c['hex'], 0) + 1
+            rgba_of.setdefault(c['hex'], c['rgba'])
+        return [{'hex': h, 'rgba': rgba_of[h], 'count': counts[h]}
+                for h in sorted(counts, key=lambda h: (-counts[h], h))]
+
     def placed_nodes(self, tail=None):
         """Enumerate placed-graph nodes.
 
@@ -184,13 +263,22 @@ def parse(origami_path, tail=None):
     kinds = {}
     for n in nodes:
         kinds[n["type"]] = kinds.get(n["type"], 0) + 1
+    inventory = g.color_inventory(tail if tail else 0)
     return {
         "file": str(origami_path), "size": g.N, "identifier": "ORGM",
         "placed_root_offset": (tail if tail else None),
         "placed_node_count": len(nodes),
         "kinds": dict(sorted(kinds.items())),
         "placed_nodes": nodes,
-        "_todo": "edges (ports/connections), layer values vs oracle, walk entry[0] structurally",
+        # Every placed color (definitive), plus the chromatic subset most-used
+        # first — the brand/content fills (e.g. the magenta artboard) the render
+        # actually shows, versus the grayscale ColorKit template defaults. Codegen
+        # renders the real colors instead of a black placeholder. Per-LAYER
+        # attribution (which layer gets which fill) needs the structural
+        # render-tree walk and is left to the TODO below.
+        "color_inventory": inventory,
+        "palette": Graph.palette(inventory),
+        "_todo": "edges (ports/connections), per-layer color/size attribution via entry[0] structural walk",
     }
 
 
