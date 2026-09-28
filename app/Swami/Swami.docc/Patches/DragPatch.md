@@ -9,10 +9,12 @@ one-line SwiftUI modifier.
 
 ## Overview
 
-`.drag(…)` gives any layer the Drag patch's behavior: `momentum` carries the throw after
-you let go and eases it to a stop, `bounds` is a `min`/`max` the layer rubber-bands back
-inside, and `position` / `translation` / `velocity` write the live Drag outputs back to
-your own state. Pass only what you need.
+`.drag(…)` gives any layer the Drag patch's behavior. Attach it and pass only what you need:
+
+- term `momentum`: carries the throw after you let go, then eases to a stop.
+- term `bounds`: a `min`/`max` extent the layer rubber-bands back inside.
+- term `position` / `translation` / `velocity`: write the live Drag outputs back to your own state.
+- term `enable` / `reset`: turn the gesture off, or snap the layer back to its start.
 
 ```swift
 @State private var position: CGSize = .zero
@@ -21,8 +23,8 @@ RoundedRectangle(cornerRadius: 20)
     .drag(momentum: true, bounds: bounds, position: $position)
 ```
 
-The full signature and every parameter live on the modifier itself:
-``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)``.
+Each parameter mirrors a Drag output/input port from the Origami patch. For the full
+declaration, see ``View/drag(enable:momentum:bounds:position:translation:velocity:reset:)``.
 
 ## Topics
 

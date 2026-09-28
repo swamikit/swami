@@ -1,4 +1,4 @@
-# Origami → SwiftUI reference
+# Origami to SwiftUI reference
 
 What each Origami patch becomes in SwiftUI, so you know which construct — or which
 ``Swami`` helper — to reach for.

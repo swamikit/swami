@@ -47,9 +47,9 @@ thing.
 
 ## Downloads
 
-- **Xcode sample** — [`Interaction_Drag.swiftpm`](SWAMI_DOWNLOAD_BASE/Interaction_Drag.zip) — a runnable App Playground. Unzip, open in Xcode 15+, and press Run to launch this pattern as an app.
-- **Swift source** — [`Interaction_Drag.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Drag.swift) — the single source file, to read how the patch composes into the view.
-- **Origami source** — [`Interaction_Drag.origami`](https://origami.design/public/origami_files/patterns/Interaction_Drag.origami) — the original prototype (opens in Origami Studio).
+- **Xcode sample** — [`Interaction_Drag.swiftpm`](SWAMI_DOWNLOAD_BASE/Interaction_Drag.zip) — the runnable project (same as the button above).
+- **Swift source** — [`Interaction_Drag.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Drag.swift) — the single source file to read.
+- **Origami source** — [`Interaction_Drag.origami`](https://origami.design/public/origami_files/patterns/Interaction_Drag.origami)
 
 ## See Also
 
