@@ -53,12 +53,14 @@ agent — the cloud loop does not write there.
   builtin.layer.interaction ×2, builtin.point3D ×2, origami.PopSwitch ×5,
   origami.PinchScale/PinchRotate/PinchPan ×3 each, origami.Slip ×3, origami.Velocity ×3,
   builtin.momentumScrolling ×1, builtin.transition ×1. Mechanism: a horizontal swipe
-  (drag + velocity + momentum + slip) pages the photo layers; the resting frame (what the
-  pixel gate screenshots) is the current photo centered on the background fill, the next
-  photo off-screen. TRANSLATION COMPLETE — the primary swipe reuses the `.drag(…)` helper
-  (origami.Drag's momentum stack = momentumScrolling + Velocity + Slip) with momentum on
-  and bounds locked to the horizontal axis. Secondary gesture machinery flagged, not faked:
-  - origami.PinchScale/PinchRotate/PinchPan (×3 each): photo zoom/rotate/pan layered on the
+  (drag + velocity + momentum + slip) moves a card; the resting frame (what the pixel gate
+  screenshots), read off Origami's own render, is a lighter-pink card (#E6A7E8, ~303×586 pt,
+  corner radius ~28) centered on a magenta artboard (#DD70DF, Origami Core "Purple"), with
+  two white swipe/forward arrows centered on the card. TRANSLATION COMPLETE — the primary
+  swipe reuses the `.drag(…)` helper (origami.Drag's momentum stack = momentumScrolling +
+  Velocity + Slip) with momentum on and bounds locked to the horizontal axis. Secondary
+  gesture machinery flagged, not faked:
+  - origami.PinchScale/PinchRotate/PinchPan (×3 each): zoom/rotate/pan layered on the
     swipe — no faithful native mapping and no helper composes all three with the swipe's
     arbitration → `// unsupported:` inline.
   - origami.PopSwitch ×5: per-page latched snap state; only the primary rest page is
@@ -66,10 +68,13 @@ agent — the cloud loop does not write there.
   - builtin.transition ×1: interpolation on a driven value, driving edge undecoded →
     `// unsupported:` inline.
   Fidelity debts flagged inline (flag, don't fake):
-  - Two builtin.layer.image layers are proprietary photo assets → flagged placeholders
-    (neutral fill + photo glyph), not faked stand-in images.
-  - builtin.layer.fill color, builtin.layer.ellipse geometry, artboard/photo sizes are
-    port defaults the parser can't decode yet → `// TODO: parser-decoded token` placeholders.
+  - The two builtin.layer.image layers are proprietary swipe-arrow assets, but they are
+    simple icons (not photos) → reproduced faithfully with the closest white "forward" SF
+    Symbol, not black-boxed; exact line weight/curvature may differ.
+  - builtin.layer.ellipse ×1 is not visible in the resting frame → flagged, not drawn (a
+    stray dot would be a false difference).
+  - Fill/card colors are read off Origami's reference render since the `.origami` is not in
+    this repo for the parser to decode the tokens directly.
   Pending: pixel triplet from verify.yml + Reviewer verdict on current head.
 
 ## Verify-gate — ADR-0013 (runner installs Origami, live render, no cache)

@@ -6,22 +6,26 @@
 //   origami.PopSwitch ×5, origami.PinchScale/PinchRotate/PinchPan ×3 each,
 //   origami.Slip ×3, origami.Velocity ×3, builtin.momentumScrolling ×1,
 //   builtin.transition ×1.
-// Mechanism: a horizontal swipe (drag with velocity + momentum + slip) drives the
-// photo layers' position between resting pages. The resting frame — what the pixel
-// gate screenshots — is the content at rest on the artboard: the current photo
-// centered on the background fill, the adjacent photo off-screen.
+//
+// Resting frame (what the pixel gate screenshots), read from Origami's own render of
+// this .origami — the file is not in this repo, so exact port defaults are measured
+// off the reference artboard, not decoded:
+// - builtin.layer.fill → a full-bleed magenta background (#DD70DF, Origami Core "Purple").
+// - builtin.layer.layer #1 → a centered lighter-pink card (#E6A7E8), ~303×586 pt, corner
+//   radius ~28 pt.
+// - builtin.layer.image ×2 → two white "swipe / forward" arrow glyphs centered on the card.
+// - builtin.layer.layer #2 → the group that holds the two arrows and takes the swipe.
 //
 // PRIMARY GESTURE (translated): the swipe. builtin.momentumScrolling + origami.Velocity
 // + origami.Slip is exactly Origami's Drag momentum stack, which the Swami `.drag(…)`
 // helper already ports from origami.Drag's own graph — so the swipe maps to `.drag`
-// with momentum on, bounds constrained to the horizontal axis (a swipe pages sideways,
-// not vertically).
+// with momentum on, bounds locked to the horizontal axis (a swipe pages sideways,
+// not vertically). At rest the card sits centered, which is the gated frame.
 //
 // SECONDARY GESTURE MACHINERY (flagged, not faked — AGENTS.md "flag, don't fake"):
 // - origami.PinchScale / PinchRotate / PinchPan (×3 each): a photo-zoom/rotate/pan
 //   gesture layered on top of the swipe. No faithful native mapping and no shipped
-//   Swami helper composes all three with the swipe's arbitration; flagged inline
-//   below rather than approximated.
+//   Swami helper composes all three with the swipe's arbitration; flagged inline below.
 // - origami.PopSwitch ×5: the per-page snap/latched state the swipe lands on. Only the
 //   primary rest page is reproduced; the full snap-state machine is a port-default the
 //   parser can't read yet.
@@ -29,13 +33,15 @@
 //   the driving edge being decoded.
 //
 // Fidelity debts (flag, don't fake — AGENTS.md):
-// - Two builtin.layer.image layers are proprietary photo assets that cannot be
-//   reproduced from the placed-graph walk. Rendered as flagged placeholders (a neutral
-//   fill marked with a photo glyph), NOT faked with a stand-in image. The resting
-//   layout (current photo centered, next photo off-screen right) is structural.
-// - builtin.layer.fill background color, builtin.layer.ellipse geometry, and the exact
-//   artboard/photo sizes live as port defaults the parser can't decode yet → TODO
-//   markers inline, placeholder values chosen structurally.
+// - The two builtin.layer.image layers are proprietary swipe-arrow image assets. They
+//   are simple icons, not photos, so they are reproduced faithfully with the closest
+//   native glyph (a white "forward/share" SF Symbol) rather than a black placeholder —
+//   the exact proprietary asset's line weight/curvature may differ slightly.
+// - builtin.layer.ellipse ×1 is not visible in the resting frame (it appears off-rest or
+//   under the swipe machinery), so it is flagged, not drawn — rendering a stray dot would
+//   add a false difference against Origami's render.
+// - Fill/card colors are read off Origami's reference render (rgba above), since the
+//   .origami is not in this repo for the parser to decode the tokens directly.
 import SwiftUI
 import Swami
 
@@ -46,10 +52,10 @@ import Swami
 ///     @PageImage(purpose: card, source: "Interaction_Swipe")
 /// }
 ///
-/// Swipe horizontally to page between photos. The swipe is Origami's momentum-scrolling
-/// Drag stack (`builtin.momentumScrolling` + `origami.Velocity` + `origami.Slip`), which
-/// maps onto the Swami `.drag(…)` helper with momentum on and bounds locked to the
-/// horizontal axis. At rest the current photo sits centered on the background fill.
+/// A lighter-pink card on a magenta artboard with two white swipe arrows. The swipe is
+/// Origami's momentum-scrolling Drag stack (`builtin.momentumScrolling` + `origami.Velocity`
+/// + `origami.Slip`), which maps onto the Swami `.drag(…)` helper with momentum on and
+/// bounds locked to the horizontal axis. At rest the card is centered — the gated frame.
 ///
 /// - Origami source: https://origami.design/public/origami_files/patterns/Interaction_Swipe.origami
 /// - Translated: 2026-09-28
@@ -63,82 +69,78 @@ public struct Interaction_SwipeView: View {
     public init() {}
 
     // origami.Drag output (Position). The horizontal swipe drives it; momentum + slip
-    // carry the throw after release, then it settles on the nearest page.
+    // carry the throw after release, then it settles back. At rest it is .zero (centered).
     @State private var position: CGSize = .zero
 
-    // Artboard matches Origami's canvas. Exact size is a port default the parser can't
-    // read yet; a page spans the full artboard width.
-    // TODO: parser-decoded token when available — artboard size not decoded.
-    private let artboardSize = CGSize(width: 393, height: 852)
+    // builtin.layer.fill — full-bleed background. Origami Core "Purple" #DD70DF
+    // (RGB 221,112,223), read off Origami's render of this artboard.
+    private let backgroundColor = Color(.sRGB, red: 221 / 255, green: 112 / 255, blue: 223 / 255, opacity: 1)
 
-    // builtin.layer.image ×2 → two paged photos.
-    private let pageCount = 2
+    // builtin.layer.layer #1 — the card. A lighter pink #E6A7E8 (RGB 230,167,232),
+    // measured off the reference render.
+    private let cardColor = Color(.sRGB, red: 230 / 255, green: 167 / 255, blue: 232 / 255, opacity: 1)
+
+    // Card geometry, measured off Origami's render (375×667 pt @2×): centered, generous
+    // margins, softly rounded corners.
+    private let cardSize = CGSize(width: 303, height: 586)
+    private let cardCornerRadius: CGFloat = 28
+
+    // builtin.layer.image ×2 → two swipe-arrow glyphs.
+    private let arrowCount = 2
 
     public var body: some View {
-        // builtin.layer.fill — full-bleed background.
-        // TODO: parser-decoded token when available — the fill's color is a port default
-        // the parser can't read yet; black is a structural placeholder for a photo viewer.
-        Color.black
-            .overlay {
-                // builtin.layer.layer ×2 → container groups (the paged photo row + overlay).
-                ZStack {
-                    // builtin.layer.image ×2, positioned side by side and paged by the swipe.
-                    // builtin.point3D ×2 → each photo's Transform Position; the swipe offsets
-                    // the whole row so page N rests centered.
-                    HStack(spacing: 0) {
-                        ForEach(0..<pageCount, id: \.self) { _ in
-                            photoPlaceholder
-                                .frame(width: artboardSize.width, height: artboardSize.height)
-                        }
-                    }
-                    .frame(width: artboardSize.width, alignment: .leading)
-                    // origami.Drag (swipe): momentum on, bounds locked to the horizontal
-                    // axis so the row pages sideways only. Velocity + Slip + momentumScrolling
-                    // are the helper's momentum stack.
-                    .drag(momentum: true, bounds: swipeBounds, position: $position)
+        ZStack {
+            backgroundColor
+                .ignoresSafeArea() // Origami renders the artboard without safe-area chrome
 
-                    // builtin.layer.ellipse — a single ellipse on the artboard.
-                    // TODO: parser-decoded token when available — the ellipse's size, fill,
-                    // and position are port defaults the parser can't read yet; rendered as a
-                    // small centered indicator dot as a structural placeholder.
-                    Ellipse()
-                        .fill(.white.opacity(0.9))
-                        .frame(width: 8, height: 8)
-                        .offset(y: artboardSize.height / 2 - 40)
+            // builtin.layer.layer #1 (card) with builtin.layer.layer #2 (the arrow group)
+            // as its content. The whole card takes the swipe; builtin.point3D ×2 are the
+            // Transform Positions the swipe offsets.
+            RoundedRectangle(cornerRadius: cardCornerRadius)
+                .fill(cardColor)
+                .frame(width: cardSize.width, height: cardSize.height)
+                .overlay { arrows }
+                // origami.Drag (swipe): momentum on, bounds locked to the horizontal axis
+                // so the card pages sideways only. Velocity + Slip + momentumScrolling are
+                // the helper's momentum stack.
+                .drag(momentum: true, bounds: swipeBounds, position: $position)
 
-                    // unsupported: origami.PinchScale / PinchRotate / PinchPan (×3 each) —
-                    // secondary photo zoom/rotate/pan gesture. No faithful native mapping and
-                    // no shipped Swami helper composes all three with the swipe's arbitration.
-                    // unsupported: origami.PopSwitch ×5 — per-page latched snap state; only the
-                    // primary rest page is reproduced (port defaults undecoded).
-                    // unsupported: builtin.transition ×1 — interpolation on a driven value;
-                    // the driving edge is not decoded yet.
-                }
-                .clipped()
+            // unsupported: builtin.layer.ellipse ×1 — not visible in the resting frame;
+            // drawn as nothing so it adds no false difference against Origami's render.
+            // unsupported: origami.PinchScale / PinchRotate / PinchPan (×3 each) —
+            // secondary photo zoom/rotate/pan gesture. No faithful native mapping and no
+            // shipped Swami helper composes all three with the swipe's arbitration.
+            // unsupported: origami.PopSwitch ×5 — per-page latched snap state; only the
+            // primary rest page is reproduced (port defaults undecoded).
+            // unsupported: builtin.transition ×1 — interpolation on a driven value; the
+            // driving edge is not decoded yet.
+        }
+        .statusBarHidden(true) // Origami's artboard render has no iOS status bar
+    }
+
+    // builtin.layer.image ×2 → the two centered swipe/forward arrows. Simple white icons,
+    // reproduced (not placeholdered) per AGENTS.md — proprietary photo assets get a flagged
+    // placeholder, but a simple icon/shape is reproduced faithfully.
+    private var arrows: some View {
+        HStack(spacing: 24) {
+            ForEach(0..<arrowCount, id: \.self) { _ in
+                swipeArrow
             }
-            .frame(width: artboardSize.width, height: artboardSize.height)
-            .ignoresSafeArea() // Origami renders the artboard without safe-area chrome
-            .statusBarHidden(true) // Origami's artboard render has no iOS status bar
+        }
     }
 
-    // builtin.layer.image → a proprietary photo asset that can't be reproduced from the
-    // placed-graph walk. Flagged placeholder (neutral fill + photo glyph), not a faked
-    // stand-in image (AGENTS.md "flag, don't fake").
-    private var photoPlaceholder: some View {
-        Rectangle()
-            .fill(Color(white: 0.15))
-            .overlay(
-                Image(systemName: "photo")
-                    .font(.system(size: 44, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.35))
-            )
+    private var swipeArrow: some View {
+        Image(systemName: "arrowshape.turn.up.right.fill")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 92, height: 80)
+            .foregroundStyle(.white)
     }
 
-    // origami.Drag bounds for the swipe: horizontal only. The photo row is `pageCount`
-    // pages wide; page 0 rests at offset 0 and each further page shifts the row left by
-    // one artboard width. Vertical extent is pinned to 0 so a swipe never drifts up/down.
+    // origami.Drag bounds for the swipe: horizontal only. Vertical extent is pinned to 0
+    // so a swipe never drifts up/down; the card can travel left by one card width.
     private var swipeBounds: (min: CGSize, max: CGSize) {
-        Self.horizontalSwipeBounds(pageWidth: artboardSize.width, pageCount: pageCount)
+        Self.horizontalSwipeBounds(pageWidth: cardSize.width, pageCount: arrowCount)
     }
 
     // Factored out so the horizontal-only paging math is testable without the view.
