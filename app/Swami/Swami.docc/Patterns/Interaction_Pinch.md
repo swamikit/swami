@@ -55,9 +55,9 @@ popped state. Read the source (below) for the whole thing.
 
 ## Downloads
 
-- **Xcode sample** — [`Interaction_Pinch.swiftpm`](SWAMI_DOWNLOAD_BASE/Interaction_Pinch.zip) — a runnable App Playground. Unzip, open in Xcode 15+, and press Run to launch this pattern as an app.
-- **Swift source** — [`Interaction_Pinch.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Pinch.swift) — the single source file, to read how the pop maps to `@State` + a spring.
-- **Origami source** — [`Interaction_Pinch.origami`](https://origami.design/public/origami_files/patterns/Interaction_Pinch.origami) — the original prototype (opens in Origami Studio).
+- **Xcode sample** — [`Interaction_Pinch.swiftpm`](SWAMI_DOWNLOAD_BASE/Interaction_Pinch.zip) — the runnable project (same as the button above).
+- **Swift source** — [`Interaction_Pinch.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/Interaction_Pinch.swift) — the single source file to read.
+- **Origami source** — [`Interaction_Pinch.origami`](https://origami.design/public/origami_files/patterns/Interaction_Pinch.origami)
 
 ## See Also
 

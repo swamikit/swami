@@ -260,23 +260,21 @@ developer lands on from the gallery. Write it in this order, and stop there:
 4. **Behavior** — two or three plain bullets on what the gesture/interaction
    does, in a person's words ("drag it and it keeps moving, then springs back"),
    not the patch graph.
-5. **Downloads** — three links, all public for every corpus pattern, no TODO. Lead
-   with the runnable sample (the Apple-sample experience), then the raw source to
-   read, then the Origami original:
-   - **Xcode sample** — `SWAMI_DOWNLOAD_BASE/<PatternID>.zip` — a runnable `.swiftpm`
-     App Playground (the pattern view + its Swami helpers, self-contained). Unzip,
-     open in Xcode 15+, press Run. `publish-docs.yml` assembles and hosts this zip in
-     the same run that ships the page (`scripts/package_sample.py`).
-   - **Swift source** — the pattern's own `.swift` in this repo:
-     `https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift`
-     — the single file, to read how the patch composes into the view.
+5. **Downloads** — three links under a `## Downloads` heading, all public for every corpus
+   pattern, no TODO. Keep each to one concise line — the hero button already carries the
+   Xcode download, so don't re-describe it at length — and don't tack on "opens in Origami
+   Studio" or similar chrome:
+   - **Xcode sample** — `SWAMI_DOWNLOAD_BASE/<PatternID>.zip` — the runnable project (same as
+     the hero button). `publish-docs.yml` assembles and hosts it in the same run that ships
+     the page (`scripts/package_sample.py --prune`, so the sample carries only the Swami
+     helpers that pattern actually uses, not the whole library).
+   - **Swift source** — `https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift`
+     — the single source file to read.
    - **Origami source** — `https://origami.design/public/origami_files/patterns/<PatternID>.origami`
-     — the original prototype, and the exact file `verify.yml` fetches to render
-     the reference. Opens in Origami Studio.
+     (the exact file `verify.yml` fetches for the compare).
 
    Wire the **Xcode sample** as the page's `@CallToAction(purpose: download)` (DocC
-   allows one hero button; the runnable sample is the headline) and list all three
-   under a `## Downloads` heading. Use the literal `SWAMI_DOWNLOAD_BASE` placeholder
+   allows one hero button; the runnable sample is the headline). Use the literal `SWAMI_DOWNLOAD_BASE` placeholder
    for the zip URL, in both the CTA and the Downloads link — `publish-docs.yml`
    rewrites it to this publish target's base (root from main, `/dev` from
    development, `/pr-<N>` per PR), so the zip a reader downloads is the one that same
@@ -322,9 +320,9 @@ Not the whole view, not <PatternID>View().>
 
 ## Downloads
 
-- **Xcode sample** — [`<PatternID>.swiftpm`](SWAMI_DOWNLOAD_BASE/<PatternID>.zip) — a runnable App Playground. Unzip, open in Xcode 15+, and press Run to launch this pattern as an app.
-- **Swift source** — [`<PatternID>.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift) — the single source file, to read how the patch composes into the view.
-- **Origami source** — [`<PatternID>.origami`](https://origami.design/public/origami_files/patterns/<PatternID>.origami) — the original prototype (opens in Origami Studio).
+- **Xcode sample** — [`<PatternID>.swiftpm`](SWAMI_DOWNLOAD_BASE/<PatternID>.zip) — the runnable project (same as the button above).
+- **Swift source** — [`<PatternID>.swift`](https://github.com/swamikit/swami/blob/development/app/Swami/Patterns/<PatternID>.swift) — the single source file to read.
+- **Origami source** — [`<PatternID>.origami`](https://origami.design/public/origami_files/patterns/<PatternID>.origami)
 
 ## See Also
 
@@ -400,8 +398,10 @@ for an authoring note or TODO that must not render on the page.
   external type there. **DocC will not let you curate that method into a top-level "Patches"
   group** — it silently drops it and the group renders empty. So feature each patch with a
   short **article** at `<Module>.docc/Patches/<Patch>.md` (`# Drag`, `# Interaction`): what
-  the patch is, one call, a link to the canonical `` ``View/<patch>(…)`` `` for the full
-  signature, and — when a pattern uses it — a `## Topics → ### Used in` link to that pattern.
+  the patch is, the parameters as a `- term <name>:` list, one call, a link to the canonical
+  `` ``View/<patch>(…)`` `` for the full signature, and — when a pattern uses it — a
+  `## Topics → ### Used in` link to that pattern. Make it rich enough to read as the featured
+  page, not a stub that just points at the method.
   Give the article a filename that can't collide with the hidden struct's name
   (`DragPatch.md`, not `Drag.md`); the `# Drag` heading is what the reader sees. The landing
   "Patches" group lists those articles, not the methods. The pattern view structs are hidden

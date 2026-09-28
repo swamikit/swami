@@ -154,11 +154,16 @@ jobs:
         if: steps.guard.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          # One runnable .swiftpm App Playground per registered pattern, zipped into
-          # the same site/ tree the publish step copies to gh-pages — so the download
-          # URLs are versioned exactly like the docs (the CTA step above points here).
-          # Runs after Validate so the doc-site validator never sees the .zip files.
-          python3 scripts/package_sample.py --repo . --out site/downloads --all
+          # One runnable .swiftpm App Playground per registered pattern, pruned to just
+          # the Swami helpers that pattern actually uses (so the Drag sample is only its
+          # view + Drag.swift, not the whole library), zipped into the same site/ tree the
+          # publish step copies to gh-pages — so download URLs are versioned like the docs
+          # (the CTA step above points here). Runs after Validate so the doc-site validator
+          # never sees the .zip files.
+          python3 scripts/package_sample.py --repo . --out site/downloads --all --prune
+          # Publish only the .zip; drop the unzipped .swiftpm working dirs the assembler
+          # leaves beside each zip.
+          find site/downloads -maxdepth 1 -type d -name '*.swiftpm' -exec rm -rf {} +
           ls -la site/downloads || true
 
       - name: Bind the published site to its source head
