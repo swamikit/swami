@@ -237,7 +237,7 @@ jobs:
             fi
             # --reject-uniform: a blank/solid capture (wrong view, nothing drawn)
             # is skipped instead of framed and published as a dead card.
-            if ! python3 scripts/frame_render.py --reject-uniform \
+            if ! python3 scripts/frame_render.py --reject-uniform --card-fit \
                  "out/raw/${stem}.png" "${DOCC_RESOURCES}/${stem}.png"; then
               echo "::warning::frame/quality-gate rejected ${stem} — skipping"; continue
             fi

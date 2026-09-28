@@ -150,6 +150,38 @@ def frame_screenshot(
     return canvas
 
 
+# DocC's detailedGrid card image slot is landscape (~1.58:1). A tall portrait
+# device dropped into it gets object-fit:cover — filled and cropped top/bottom.
+# Seating the device on a card-aspect canvas (transparent margins, so it sits on
+# the card's own background and the device stands out) lets cover show the whole
+# device. Output slightly WIDER than the slot so cover only ever crops the
+# transparent side margin, never the device.
+CARD_ASPECT = 1.6
+CARD_HEIGHT_FRAC = 0.9   # device occupies this fraction of the card height
+CARD_MAX_WIDTH = 1200
+
+
+def fit_to_card(
+    framed: Image.Image,
+    *,
+    aspect: float = CARD_ASPECT,
+    height_frac: float = CARD_HEIGHT_FRAC,
+    max_width: int | None = CARD_MAX_WIDTH,
+) -> Image.Image:
+    """Center the framed device on a transparent landscape card canvas."""
+    fw, fh = framed.size
+    canvas_h = max(1, round(fh / height_frac))
+    canvas_w = max(fw, round(canvas_h * aspect))
+    canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    canvas.alpha_composite(framed, ((canvas_w - fw) // 2, (canvas_h - fh) // 2))
+    if max_width and canvas.width > max_width:
+        scale = max_width / canvas.width
+        canvas = canvas.resize(
+            (max_width, round(canvas.height * scale)), resample=Image.LANCZOS
+        )
+    return canvas
+
+
 def _parse_color(text: str) -> tuple[int, int, int, int]:
     t = text.strip().lstrip("#")
     if len(t) not in (6, 8):
@@ -185,6 +217,18 @@ def main(argv: list[str] | None = None) -> int:
         help="fail (non-zero) if the input is a single solid color, so a blank "
         "capture is skipped instead of framed and published",
     )
+    ap.add_argument(
+        "--card-fit",
+        action="store_true",
+        help="seat the framed device on a landscape card-aspect canvas (transparent "
+        "margins) so it fits a DocC gallery card whole, without cover-cropping",
+    )
+    ap.add_argument(
+        "--card-aspect",
+        type=float,
+        default=CARD_ASPECT,
+        help="width:height ratio of the card canvas (default 1.6)",
+    )
     args = ap.parse_args(argv)
 
     if not args.input.is_file():
@@ -202,15 +246,22 @@ def main(argv: list[str] | None = None) -> int:
             framed = frame_screenshot(
                 im,
                 body_color=args.body_color,
-                max_width=args.max_width or None,
+                # When card-fitting, defer downscaling to the card canvas so the
+                # device isn't scaled twice.
+                max_width=None if args.card_fit else (args.max_width or None),
+            )
+            out_img = (
+                fit_to_card(framed, aspect=args.card_aspect)
+                if args.card_fit
+                else framed
             )
     except Exception as exc:  # noqa: BLE001 - CLI boundary
         sys.stderr.write(f"frame_render: failed to frame {args.input}: {exc}\n")
         return 1
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    framed.save(args.output, "PNG")
-    print(f"framed {args.input} -> {args.output} ({framed.width}x{framed.height})")
+    out_img.save(args.output, "PNG")
+    print(f"framed {args.input} -> {args.output} ({out_img.width}x{out_img.height})")
     return 0
 
 
