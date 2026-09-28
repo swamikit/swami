@@ -39,6 +39,8 @@ Each placed node the parser returns should carry:
 
 Ports, edges, and port defaults may not all be decoded yet in your parser. Where a step below needs them and they are not present, cross-check by hand against the `.origami` in Origami Studio's Inspector, or against the patch's composite `.diamond/graph` when one exists. Comment the gap in the emitted code. Do not fabricate.
 
+**Colors are decoded — use them, do not placeholder.** `parse()` returns two color fields for the placed graph: `color_inventory` (every placed color as `{hex, rgba}`) and `palette` (the chromatic brand/content colors, with the grayscale and transparent ColorKit template defaults dropped, most-used first). The artboard and any full-bleed background take the dominant chromatic color — `palette[0]`; a layer's fill takes the palette color matching its Inspector value. Emit the real color from the `rgba` — `Color(.sRGB, red: r, green: g, blue: b, opacity: a)` — or from the hex. Do **not** emit `Color.black` (or any placeholder) for a fill the palette supplies, and do not comment it as an undecoded gap: it is decoded. The one color gap that remains is per-layer attribution for a non-artboard fill whose color table sits below its node (not yet reachable) — flag only those, never the background.
+
 The parser is deterministic. Run it once. Do not eyeball FlatBuffers.
 
 ## Categorize each patch
@@ -112,7 +114,7 @@ For each unsupported node, emit a comment at the call site naming the patch type
 Compile is table stakes and lives outside this skill. Structural checks belong here.
 
 - **Every placed node is accounted for.** Every entry the parser returned appears in the emitted file as a native construct, a helper call, or an `// unsupported:` comment. Silent drops hide parser gaps.
-- **Constants match the source.** Colors, sizes, durations, and curves in the emitted code match what the Origami Inspector shows for that node. Where the parser has not decoded a port default, read the value by hand and comment the gap.
+- **Constants match the source.** Colors, sizes, durations, and curves in the emitted code match what the Origami Inspector shows for that node. Colors come from the parser's decoded `palette`/`color_inventory` (the background is `palette[0]`) — a black or placeholder fill where the palette has a real color is a defect, not an accepted gap. For a port default the parser still has not decoded (a non-artboard per-layer fill, a size), read the value by hand and comment the gap.
 - **Helper calls match documented signatures.** Every helper is public in the reference module and is called with its exact ports.
 
 The visual check compares the translated SwiftUI, rendered in a host, against Origami's own render of the same `.origami`. **Render both. Compare with your eye or with your project's chosen review path.** A perceptual similarity score, if the project prints one, is evidence, not a verdict; flat-color artboards give false positives on those metrics. The gate is a human read or the project's verify workflow, not a threshold.
