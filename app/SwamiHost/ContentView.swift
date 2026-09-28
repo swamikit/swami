@@ -11,6 +11,7 @@ struct ContentView: View {
         case "touch", nil: TouchOrigamiExampleView()
         case "drag":       Interaction_DragView()
         case "pinch":      Interaction_PinchView()
+        case "swipe":      Interaction_SwipeView()
         default:           TouchOrigamiExampleView()   // add cases as patterns land
         }
     }

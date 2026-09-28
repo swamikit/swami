@@ -18,6 +18,7 @@ patch helper fills the gap.
 @Links(visualStyle: detailedGrid) {
     - <doc:Interaction_Drag>
     - <doc:Interaction_Pinch>
+    - <doc:Interaction_Swipe>
 }
 
 ## Topics
@@ -26,6 +27,7 @@ patch helper fills the gap.
 
 - <doc:Interaction_Drag>
 - <doc:Interaction_Pinch>
+- <doc:Interaction_Swipe>
 
 ### Patches
 

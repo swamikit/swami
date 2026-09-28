@@ -3,3 +3,4 @@
 touch:Interaction_Touch
 drag:Interaction_Drag
 pinch:Interaction_Pinch
+swipe:Interaction_Swipe

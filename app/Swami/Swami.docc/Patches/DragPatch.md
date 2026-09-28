@@ -31,3 +31,4 @@ declaration, see ``View/drag(enable:momentum:bounds:position:translation:velocit
 ### Used in
 
 - <doc:Interaction_Drag>
+- <doc:Interaction_Swipe>

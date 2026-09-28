@@ -123,6 +123,7 @@ public extension View {
     /// ### Used in
     ///
     /// - <doc:Interaction_Drag>
+    /// - <doc:Interaction_Swipe>
     func drag(
         enable: Bool = true,
         momentum: Bool = true,
