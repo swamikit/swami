@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 
 try:
-    from PIL import Image, ImageDraw, ImageFilter
+    from PIL import Image, ImageDraw, ImageFilter, ImageStat
 except ImportError:  # pragma: no cover - environment guard
     sys.stderr.write(
         "frame_render: Pillow is required (pip install Pillow)\n"
@@ -56,6 +56,19 @@ SHADOW_ALPHA = 110             # 0..255 opacity of the drop shadow
 
 BODY_COLOR = (26, 26, 28, 255)     # iOS "system gray 6" dark — near-black body
 RIM_COLOR = (68, 68, 72, 255)      # a hair lighter, reads as the titanium edge
+
+# A capture that is a single solid color (all-channel stddev at or below this)
+# is almost certainly a blank/wrong-view screenshot, not a rendered pattern —
+# even a flat-background pattern has a shape that lifts the spread well above it.
+# Used only when --reject-uniform is passed, so a bad card is skipped instead of
+# published.
+UNIFORM_STDDEV_FLOOR = 2.0
+
+
+def is_near_uniform(image: Image.Image, floor: float = UNIFORM_STDDEV_FLOOR) -> bool:
+    """True when every color channel varies less than ``floor`` (a blank capture)."""
+    stats = ImageStat.Stat(image.convert("RGB"))
+    return max(stats.stddev) <= floor
 
 
 def _rounded_mask(size: tuple[int, int], radius: int) -> Image.Image:
@@ -166,6 +179,12 @@ def main(argv: list[str] | None = None) -> int:
         default=BODY_COLOR,
         help="device body color as #RRGGBB or #RRGGBBAA (default near-black)",
     )
+    ap.add_argument(
+        "--reject-uniform",
+        action="store_true",
+        help="fail (non-zero) if the input is a single solid color, so a blank "
+        "capture is skipped instead of framed and published",
+    )
     args = ap.parse_args(argv)
 
     if not args.input.is_file():
@@ -174,6 +193,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with Image.open(args.input) as im:
             im.load()
+            if args.reject_uniform and is_near_uniform(im):
+                sys.stderr.write(
+                    f"frame_render: {args.input} is near-uniform (likely a blank "
+                    "capture) — refusing to frame it\n"
+                )
+                return 3
             framed = frame_screenshot(
                 im,
                 body_color=args.body_color,
